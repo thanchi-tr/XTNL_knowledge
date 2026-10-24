@@ -47,6 +47,8 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 | GET | /check | the Today board's read, the Review hub's counts, the shell's level, the work tabs' due tasks, the week audit, the credits wallet |
 | POST | /tasks/complete | `completeTask` (actions/tasks.ts) |
 | POST | /tasks/undo | `undoCompletion` (actions/tasks.ts) |
+| POST | /tasks/start | `startTaskTimer` (actions/tasks.ts), a proof task's timer |
+| POST | /tasks/stop | `stopTaskTimer` (actions/tasks.ts), its stop |
 | POST | /work/done | `doneScheduledTask` with no log (actions/scheduled-tasks.ts) |
 | POST | /work/reopen | `reopenScheduledTask` (actions/scheduled-tasks.ts) |
 | GET | /review/queue | the Review hub's due cards in the runner's order |
@@ -61,6 +63,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 | POST | /mall/rewards | `addReward` (actions/mall.ts), the Add sheet's save |
 | POST | /mall/buy | `buyReward` (actions/mall.ts), Buy's Confirm |
 | POST | /mall/undo | `undoBuy` (actions/mall.ts), a purchase's Undo |
+| POST | /exercise | `ingestHealthCore` (health-ingest-server.ts): Health Connect's walks, hikes and weigh-ins, through `logWalkCore` and `logWeightCore` |
 
 ## GET /check: the quick check (the app's home)
 
@@ -71,7 +74,9 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     { "templateId": "…", "title": "Gym legs", "lane": "MUST" | "HABIT" | "TASK",
       "status": "OPEN" | "DONE" | "DONE_MVV" | "SKIPPED" | "HELD" | "LOCKED",
       "minutes": 60, "mvv": "10 squats" | null, "icon": "dumbbell" | null,
-      "dueLabel": "by Fri" | "late 2d" | "from Tue" | null, "xpHint": 8.3 | null }
+      "dueLabel": "by Fri" | "late 2d" | "from Tue" | null, "xpHint": 8.3 | null,
+      "proof": false, "timer": { "sessionId": "…", "templateId": "…", "day": "2026-10-21", "startedAt": "…",
+        "endedAt": "…" | null, "running": true, "priorMinutes": 0 } | null, "pages": { "target": 30 } | null }
   ],
   "tasksSummary": { "open": 3, "done": 2, "allDone": false },
   "daily": { "kept": 3, "total": 4, "full": false, "cap": 5, "minimum": 1, "over": 0,
@@ -105,6 +110,23 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     default. `dueLabel` is the board's own label (a deadline's "by Fri" or "late 2d", a carried task's "from Tue").
   - `xpHint`: a row not done, what a tick at the estimate pays now (the board's ≈ figure); a done row, what it paid
     (null when unknown). Life XP, to one decimal.
+  - `proof` (blueprint 2.6, P23; decision D20): a full tick of this row needs its minutes or its timer (a deep-work
+    task marked proof: `#proof`, or the deep-work set the user approved). The app's tick on such a row opens its
+    minutes sheet instead (unless its timer has run), and `/tasks/complete` without `minutes` or a timer is refused
+    with "Log the minutes: …" (409). The minimum version and every other row still tick in one tap. False on every
+    row while proof of work is switched off (`PROOF_LAUNCH_DAY`, null until the user's go).
+  - `timer`: the row's open timer (`POST /tasks/start`): `running` while it runs, else stopped (`endedAt`) and waiting
+    for the tick that counts it. It is a row on the server, so it survives an app restart and another device. Its
+    minutes are `priorMinutes` (the segments before a Stop and a later start, a Resume, the same day) plus its latest
+    segment's `startedAt` to its `endedAt` (or now). `day` is the life day it started on: today's row carries today's
+    timer, or one still running from yesterday (it ran across 04:00); such a timer, or one past twice the estimate,
+    is not counted in one tap (the app opens the sheet first, where Done counts it). Null with none, and always
+    while proof of work is switched off.
+  - `pages` (blueprint 2.7, P24; decision D21): a reading task (captured with its pages, `read 30 pages` or `30pg`;
+    `30p` is still 30 minutes). Its full tick reports the pages read (`proof` on `/tasks/complete`), at least `target`
+    when it has one (null: the pages are optional), so the app's tick on such a row opens its pages sheet instead. The
+    minimum version still ticks in one tap. Null on every other row, and on every row while proof of work is switched
+    off (`PROOF_LAUNCH_DAY`).
 - `tasksSummary`: the board's own counts: `open` the Must and Today rows still open or locked (a held row is not
   open), `done` the rows above done today, `allDone` the web's "Board clear" (nothing open, at least one done).
 - `daily`: the daily quests (the user's musts, at most 5 due on a day; decisions D14 and D15), as the web's Must
@@ -183,9 +205,30 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 
 ## POST /tasks/complete: check a due task
 
-- Body: `{ "templateId": "…", "day"?: "today" | "yesterday" | "YYYY-MM-DD", "mvv"?: false, "clientId"?: "…" }`.
+- Body: `{ "templateId": "…", "day"?: "today" | "yesterday" | "YYYY-MM-DD", "mvv"?: false, "minutes"?: 45,
+  "sessionId"?: "…", "proof"?: { "kind": "PAGES", "qty": 30 }, "clientId"?: "…" }`.
 - It runs through the same core as the board's tick (`completeTask`: its lock, pricing, momentum and celebrations).
   The server books only today or yesterday by its own clock: another day is refused (409).
+- `minutes` (blueprint P7's phone minutes, decision D34): what it took, a whole number from 1 to 480 (anything else is
+  refused, 400). It is counted with the drawer's own clamp: between half and twice the task's effective estimate, and
+  never above 480, so an estimate of 30 reported as 90 counts 60. Left out, the tick counts the estimate, as before.
+- `sessionId` (blueprint P23): the timer this tick counts (`/tasks/start`'s), every segment of it. Left out with no
+  `minutes`, a proof task's tick counts its own timer of that day that no tick has counted yet, if there is one. A
+  timer is counted once; a named timer that is gone or already counted is refused (404), and one that is not this
+  row's (today's timer named for another day) is refused with "That timer isn't this day's …" (409). On a proof task
+  (`proof` on `/check`'s row) the minutes counted are the plan's min(reported, clock, 480): the report inside the same
+  clamp, then the clock. A timer's count is bounded by the minutes it ran (a 20-minute timer counts 20); a report by
+  the time since the task's previous tick the same day, when ticked live (a record of yesterday and a first tick are
+  never cut). `minutes` sent with a timer open counts the minutes, and the timer is closed counting nothing. A full
+  tick with no minutes and no timer is refused with "Log the minutes: …" (409). Its `line` then names the minutes
+  counted (`+26.7 XP · Craft · 90 min`). Nothing here changes while proof of work is switched off.
+- `proof` (blueprint P24, decision D21): a reading task's pages, `{ "kind": "PAGES", "qty": 30 }`, `qty` a whole number
+  of pages from 1 to 2000 (any other shape, kind or field is refused, 400). On a reading task (`pages` on `/check`'s
+  row) with a day's target, a full tick with fewer pages, or none, is refused with "Log the pages: …" (409); without a
+  target the pages are recorded when given. The pages are recorded with the tick (its receipt and its instance) and
+  never change its price; its `line` names them (`+4.1 XP · Care · 30 pages`). The minimum version needs none. On any
+  other task, and while proof of work is switched off, `proof` is accepted and changes nothing. `30p` is still 30
+  minutes in a captured line, never pages.
 - Then it reads the board again, as the web's tick re-renders Today, for `allDone`, and the character's level (both
   reads also warm the next `/check`), and the skill the task feeds (`competency`, blueprint P5).
 
@@ -226,6 +269,30 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 - It runs `undoCompletion` and returns `{ "xp": -8.3, "level": { … } | null }` (the life XP taken back, 0 when it
   was already undone; and the character's level after it, as `/tasks/complete`'s).
   Past the ten-minute window, or on a day already settled, it is refused (409).
+
+### POST /tasks/start
+- Proof of work (blueprint 2.6, P23; decision D20): a task's timer, as the web row's "Start timer" (`startTaskTimer`).
+- Body: `{ "templateId": "…", "clientId": "…" }`. The `clientId` is required here (a UUID): it is the start's key, so a
+  retry starts the timer once and answers the same one.
+- One timer runs at a time: starting one stops any other that runs (so two tasks never count the same minutes). A
+  task's timer already running (started today or yesterday) is answered as it is; one left running from before that
+  is stopped and a fresh one starts. A start on a task whose timer is stopped is its Resume: a new segment, counted
+  with the earlier ones (`priorMinutes`). Two devices starting at the same moment both get an answer. It runs on a
+  task or a habit on the personal board (not a goal, a work tab's task or a study task), and only while proof of work
+  is switched on (`PROOF_LAUNCH_DAY`; before the user's go it is refused, 409).
+
+```json
+{ "ok": true, "data": { "timer": { "sessionId": "…", "templateId": "…", "day": "2026-10-21", "startedAt": "…",
+  "endedAt": null, "running": true, "priorMinutes": 0 }, "line": "Timer started. Tick the task when you stop: the time it ran counts." } }
+```
+
+### POST /tasks/stop
+- Body: `{ "sessionId": "…", "clientId"?: "…" }`. It runs `stopTaskTimer`: the timer stops, and its minutes wait for
+  the tick that counts them (`/tasks/complete`, which also stops a running one). A stopped timer is answered as it
+  stands; one that is gone is refused (404). A stop works even after proof of work is switched off again, so a timer
+  never stays running.
+- Returns `{ "timer": { … }, "line": "Timer stopped at 34 min. Tick the task to count them." }`, `timer` as
+  `/tasks/start`'s with `running` false and its `endedAt`.
 
 ## POST /work/done and POST /work/reopen: a scheduled task (work tab)
 - Body: `{ "id": "…", "clientId"?: "…" }`. Done uses the core behind the agenda's Done, without a history log;
@@ -687,3 +754,52 @@ Undoes a purchase inside its ten minutes, as Undo in the web's purchases does (`
   false`, `credits.delta` +price); any other repeat (another instance, a double tap with a new `clientId`, the other
   device) is answered by the server with `duplicate: true` and `credits.delta` 0. A purchase is given back once.
 - The credits come back as they were spent; an undo plays no celebration.
+
+## POST /exercise: Health Connect's walks, hikes and weigh-ins
+
+Blueprint 5.1d (P27; decision D22): the app's Health Connect sync, a WorkManager job that is **off until the user turns
+it on** in the app's Settings (Settings › Health Connect), after the permission rationale screen and Health Connect's
+own permission dialog. It reads walking and hiking sessions (with their distance and, for a hike, the climb) and
+weigh-ins, and posts them here 50 at a time. Walks and weight only: no steps, heart rate, sleep or other workouts, and
+no new pay rule.
+
+```json
+{ "since": "2026-10-20T08:00:00.000Z",
+  "walks": [ { "externalId": "a1b2c3d4-…", "kind": "WALK" | "HIKE", "start": "2026-10-21T06:40:00.000Z",
+    "end": "2026-10-21T07:25:00.000Z", "distanceKm": 4.1, "climbM"?: 120, "origin"?: "com.sec.android.app.shealth" } ],
+  "weights": [ { "externalId": "…", "at": "2026-10-21T20:05:00.000Z", "kg": 82.4 } ],
+  "clientId"?: "…" }
+→ { "ok": true, "data": {
+    "walks": { "added": 2, "paid": 1, "recorded": 1, "matched": 1, "duplicate": 3, "xp": 18.4 },
+    "weights": { "added": 1, "kept": 0 },
+    "refused": [ { "kind": "walk" | "weight", "externalId": "…", "error": "A distance between 0.01 and 200 km, please." } ],
+    "line": "Health Connect: 2 walks in (1 paid 18.4 XP, 1 recorded) · 1 already logged · 1 weigh-in" } }
+```
+
+- `since`: when the sync was switched on. **The backfill is record-only** (H17): a walk that started before `since`
+  is saved as a record (Train › Exercise lists it, its minutes count toward an exercise skill's hours) and never paid,
+  and it is never a personal best, whatever its day. Health Connect lets a new app read the 30 days before its first
+  grant; those come in this way.
+- A walk is `logWalkCore` (exercise-server.ts), exactly as Train › Exercise logs one: its life day is the day it
+  started, its incline the climb over its distance, its note "Walk · Health Connect" or "Hike · Health Connect". A
+  walk after `since` is priced by the walk's own rules: on a live day, dated today or yesterday, through the daily
+  knee (`paid`, its `xp`); older or refused walks are records (`recorded`).
+- **One walk lands once:** each carries its dedupe row `ingest:hc:<externalId>` (an `INGEST` ledger row, sink NONE, xp
+  0, never a streak day), written in the session's own transaction. A resend, a retried job or a second phone is a
+  `duplicate`, on any server instance. A walk deleted on Train › Exercise stays deleted (its key is still there).
+- **One session, one payment:** a walk the user already logged by hand that day (its minutes and distance within 20 %,
+  or 5 minutes and 0.3 km) is that walk: its key is recorded against that session and nothing else is written or paid
+  (`matched`). A hand-logged walk absorbs one Health Connect walk at most, so a second walk that day still lands.
+  Two apps' records of the same walk (half of the shorter one's minutes in common) are matched the same way. The
+  other order holds too: a walk typed on Train › Exercise after Health Connect brought the same one in (that day,
+  the same tolerances) is refused with "Already here from Health Connect: …", so it is never paid twice.
+- A weigh-in is `logWeightCore` (weight-server.ts) with source `import`, on the life day it was measured: a record,
+  never a reward. One reading a day: an import never replaces one typed on the phone or the web, and replaces an
+  earlier import only with a later measurement (`kept` counts the ones left as they were).
+- A value a core refuses (a walk with no distance, a weight outside 20–400 kg, a day over a year back) is listed in
+  `refused` with the core's own line; the rest of the batch lands. A wrong shape (a missing `since`, an unknown key, an
+  `end` before its `start`, a start in the future, more than 100 walks or weigh-ins) is `bad` (400).
+- Writes only on the live app: a dev server answers `conflict` (409) "Health Connect imports are recorded by the live
+  app only (this server writes nothing)." (dev and prod share one database).
+- The app shows the reply's `line` under Settings › Health Connect ("Last synced 21 Oct, 18:05 · …"). A sync is never a
+  moment: no celebration plays for it.

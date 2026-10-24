@@ -11,9 +11,20 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Health Connect (blueprint P27, D22): walks, hikes and weight, read only, and only once the user turns the sync
+         on in Settings and allows each one in Health Connect's own dialog. Walking and hiking sessions, their distance
+         and climb, weigh-ins, and (Android 15+, asked separately) reads while the app is closed. Nothing else is read
+         and nothing is written to Health Connect (health/HealthReader, core/HealthLine). -->
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <uses-permission android:name="android.permission.health.READ_DISTANCE" />
+    <uses-permission android:name="android.permission.health.READ_ELEVATION_GAINED" />
+    <uses-permission android:name="android.permission.health.READ_WEIGHT" />
+    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
 
     <!-- Tap-to-call and text open the dialer / messages app (no call permission needed). -->
     <queries>
+        <!-- Health Connect's app on Android 13 and below (from 14 it is part of the system). -->
+        <package android:name="com.google.android.apps.healthdata" />
         <intent>
             <action android:name="android.intent.action.DIAL" />
         </intent>
@@ -70,6 +81,28 @@
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- Health Connect's privacy rationale for XTNL (P27): what is read and why. Android 13 and below open it from
+             Health Connect's permission screen; Android 14+ from Settings › Health Connect (the alias below, which only
+             the system may start). -->
+        <activity
+            android:name=".health.HealthRationaleActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Xtnl">
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".health.HealthRationaleActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
 
         <!-- The Sunday reminder (notify/AuditReminder): its alarm, and re-arming it after a reboot or an update. -->
         <receiver

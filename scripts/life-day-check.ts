@@ -275,10 +275,17 @@ for (const tz of [SYD, BNE]) {
   // after daily-quests-check, before the rituals.
   // Blueprint P12 (2026-10-23): audit-decay-check (the audit's "Decaying this week", its notice and the phone's
   // Sunday reminder) runs right after week-audit-check, before the rituals.
+  // Blueprint P23 (2026-10-24): proof-check (proof of work: the inert switch, the gate, 'life-3', the timers, BODY's
+  // effort forward only, the dry run read only) runs right after credits-check, before settle.
+  // Blueprint P24 (2026-10-24): proof-pages-check (pages proof: 'pg' or 'pages' never 'p', the target gate, the pages
+  // recorded never priced, the proof_qty migration) runs right after proof-check, before settle.
+  // Blueprint P27 (2026-10-24): health-ingest-check (Health Connect walks, hikes and weight: the backfill record-only,
+  // one walk once per record, a hand-logged walk matched, an import never replacing a typed weigh-in) runs right after
+  // proof-pages-check, before settle.
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
   const ROADMAP_LIFE_CHECKS = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests", "roadmap-invite", "roadmap-hostile"];
   const STRICT_LIFE_CHECKS = new Set(["today-ui", "roadmap-contract"]);
-  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "balance-horizon", "momentum-sim", "momentum-sim:credits", "status", "credits", "settle", "duty", "duty-actions", "daily-quests", "week-audit", "audit-decay", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
+  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "balance-horizon", "momentum-sim", "momentum-sim:credits", "status", "credits", "proof", "proof-pages", "health-ingest", "settle", "duty", "duty-actions", "daily-quests", "week-audit", "audit-decay", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
   const PLAIN_LIFE_SCRIPTS = new Set(["balance-horizon", "momentum-sim"]);
   /** A name's arguments past its file: 'momentum-sim:credits' is the sim with --credits (P16). */
   const ARGS_OF: Readonly<Record<string, string>> = { "momentum-sim:credits": " --credits" };

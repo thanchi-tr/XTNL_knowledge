@@ -72,6 +72,52 @@ class EnvelopeTest {
         assertEquals("0412 345 678", d.work.single().customer!!.phone)
     }
 
+    /** P23: a row's proof and timer decode; an older server's row (neither sent) reads as no proof and no timer; the timer routes' answer. */
+    @Test fun theProofRowAndTimerDecode() {
+        val json = """{"ok":true,"data":{"tasks":[
+          {"templateId":"t1","title":"Write the thesis chapter","lane":"TASK","status":"OPEN","minutes":90,"xpHint":26.7,"proof":true,
+           "timer":{"sessionId":"s1","templateId":"t1","startedAt":"2026-10-24T00:20:00.000Z","endedAt":null,"running":true}},
+          {"templateId":"t2","title":"Dishes","lane":"HABIT","status":"OPEN","minutes":15,"proof":false,"timer":null},
+          {"templateId":"t3","title":"Floss","lane":"MUST","status":"OPEN"}]}}"""
+        val d = (HttpApi.parse(200, json, CheckData.serializer()) as Outcome.Ok).value
+        assertTrue(d.tasks[0].proof)
+        assertEquals("s1", d.tasks[0].timer!!.sessionId)
+        assertTrue(d.tasks[0].timer!!.running)
+        assertNull(d.tasks[0].timer!!.endedAt)
+        assertFalse(d.tasks[1].proof)
+        assertNull(d.tasks[1].timer)
+        assertFalse(d.tasks[2].proof)
+        assertNull(d.tasks[2].timer)
+        // P24: an older server's row (no `pages`) reads as no reading task.
+        assertNull(d.tasks[0].pages)
+        assertNull(d.tasks[2].pages)
+        val stop = """{"ok":true,"data":{"timer":{"sessionId":"s1","templateId":"t1","startedAt":"2026-10-24T00:20:00.000Z","endedAt":"2026-10-24T00:54:00.000Z","running":false},
+          "line":"Timer stopped at 34 min. Tick the task to count them."}}"""
+        val r = (HttpApi.parse(200, stop, TimerResult.serializer()) as Outcome.Ok).value
+        assertFalse(r.timer!!.running)
+        assertEquals("Timer stopped at 34 min. Tick the task to count them.", r.line)
+        // Review: an older server sends no day and no earlier segments; a newer one both (a resumed timer).
+        assertNull(d.tasks[0].timer!!.day)
+        assertEquals(0, d.tasks[0].timer!!.priorMinutes)
+        val resumed = """{"ok":true,"data":{"timer":{"sessionId":"s2","templateId":"t1","day":"2026-10-24","startedAt":"2026-10-24T01:20:00.000Z","endedAt":null,"running":true,"priorMinutes":34},
+          "line":"Timer started. Tick the task when you stop: the time it ran counts."}}"""
+        val t = (HttpApi.parse(200, resumed, TimerResult.serializer()) as Outcome.Ok).value.timer!!
+        assertEquals("2026-10-24", t.day)
+        assertEquals(34, t.priorMinutes)
+    }
+
+    /** P24: a reading task's `pages` decodes, its target or none; `null` reads as no reading task. */
+    @Test fun theReadingRowDecodes() {
+        val json = """{"ok":true,"data":{"tasks":[
+          {"templateId":"t1","title":"Read the novel","lane":"HABIT","status":"OPEN","minutes":40,"proof":false,"timer":null,"pages":{"target":30}},
+          {"templateId":"t2","title":"Read","lane":"TASK","status":"OPEN","proof":false,"timer":null,"pages":{"target":null}},
+          {"templateId":"t3","title":"Dishes","lane":"HABIT","status":"OPEN","proof":false,"timer":null,"pages":null}]}}"""
+        val d = (HttpApi.parse(200, json, CheckData.serializer()) as Outcome.Ok).value
+        assertEquals(30, d.tasks[0].pages!!.target)
+        assertNull(d.tasks[1].pages!!.target)
+        assertNull(d.tasks[2].pages)
+    }
+
     /** GET /status (P1): the doc's shape decodes; Intellect's cap and streak are null; Capital may be null. */
     @Test fun theStatusShapeDecodes() {
         val json = """{"ok":true,"data":{"now":"2026-10-23T00:12:00.000Z","day":"2026-10-23","launched":true,
@@ -255,5 +301,28 @@ class EnvelopeTest {
         assertEquals(CreditsChange(120, 1240), undone.credits)
         val late = HttpApi.parse(409, """{"ok":false,"error":"Too late to undo: a purchase can be undone for 10 minutes.","code":"conflict"}""", UndoBuyResult.serializer()) as Outcome.Err
         assertEquals("Too late to undo: a purchase can be undone for 10 minutes.", late.message)
+    }
+
+    /** P27: POST /exercise's reply as docs/mobile-api.md shows it, and the body the sync sends (absent fields left out). */
+    @Test fun theHealthSyncShapesDecodeAndEncode() {
+        val r = (HttpApi.parse(200, """{"ok":true,"data":{"walks":{"added":2,"paid":1,"recorded":1,"matched":1,"duplicate":3,"xp":18.4},
+            "weights":{"added":1,"kept":0},"refused":[{"kind":"walk","externalId":"hc-9","error":"A distance between 0.01 and 200 km, please."}],
+            "line":"Health Connect: 2 walks in (1 paid 18.4 XP, 1 recorded) · 1 already logged · 1 weigh-in"}}""", HealthSyncResult.serializer()) as Outcome.Ok).value
+        assertEquals(HealthWalkCounts(2, 1, 1, 1, 3, 18.4), r.walks)
+        assertEquals(HealthWeightCounts(1, 0), r.weights)
+        assertEquals(listOf(HealthRefusal("walk", "hc-9", "A distance between 0.01 and 200 km, please.")), r.refused)
+        assertTrue(r.line!!.startsWith("Health Connect: 2 walks in"))
+        val off = HttpApi.parse(409, """{"ok":false,"error":"Health Connect imports are recorded by the live app only (this server writes nothing).","code":"conflict"}""", HealthSyncResult.serializer()) as Outcome.Err
+        assertEquals("conflict", off.code)
+        val body = healthBody(
+            HealthBatch(
+                since = "2026-10-20T23:00:00Z",
+                walks = listOf(HealthWalk("hc-1", "WALK", "2026-10-20T23:20:00Z", "2026-10-20T23:50:00Z", 2.6), HealthWalk("hc-2", "HIKE", "2026-10-21T00:00:00Z", "2026-10-21T01:00:00Z", 3.9, climbM = 160.0, origin = "com.sec.android.app.shealth")),
+            ),
+        )
+        assertEquals(setOf("since", "walks"), body.keys)
+        val walks = body["walks"] as kotlinx.serialization.json.JsonArray
+        assertEquals(setOf("externalId", "kind", "start", "end", "distanceKm"), (walks[0] as kotlinx.serialization.json.JsonObject).keys)
+        assertEquals(setOf("externalId", "kind", "start", "end", "distanceKm", "climbM", "origin"), (walks[1] as kotlinx.serialization.json.JsonObject).keys)
     }
 }

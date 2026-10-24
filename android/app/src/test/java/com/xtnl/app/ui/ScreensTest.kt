@@ -23,12 +23,30 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.test.core.app.ApplicationProvider
 import com.xtnl.app.XtnlApp
+import com.xtnl.app.core.HealthLine
 import com.xtnl.app.core.MallLine
 import com.xtnl.app.core.StatusLine
 import com.xtnl.app.data.MotionChoice
+import com.xtnl.app.data.ThemeChoice
+import com.xtnl.app.ui.more.HealthRationale
 import com.xtnl.app.ui.more.WebHolder
+import com.xtnl.app.ui.theme.X
+import com.xtnl.app.ui.theme.XtnlTheme
+import com.xtnl.app.ui.theme.resolveColors
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -109,9 +127,31 @@ class ScreensTest {
     @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
     fun mallMain() = mall("main")
 
+    /** P27: Settings › Health Connect on the front display (off, then the rationale the toggle shows before asking). */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun healthFront() = health("front")
+
+    /** P27: the same on the main display. */
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun healthMain() = health("main")
+
+    /** P27: the rationale screen Health Connect opens (HealthRationaleActivity's content: one column, at most 560 dp). */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun healthRationaleFront() = healthRationale("front")
+
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun healthRationaleMain() = healthRationale("main")
+
     /** Half open and sideways: the hinge across the middle (1848 px tall window, hinge at 924 px). */
     @Test @Config(qualifiers = "w932dp-h704dp-420dpi")
     fun tabletop() = walk("tabletop", hinge = Hinge(vertical = false, startPx = 924, endPx = 924, halfOpen = true))
+
+    /** The minutes sheet (P7, P23, P24) on the cover screen and the main display, with demo data. */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun minutesSheetFront() = minutesSheet("front")
+
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun minutesSheetMain() = minutesSheet("main")
 
     /**
      * Full motion, frame by frame (the test clock driven by hand), for a critic to judge the moments from PNGs:
@@ -223,6 +263,18 @@ class ScreensTest {
             scrolling { rule.onAllNodes(hasScrollAction()).onFirst().performScrollToIndex(0) }
             frames(400)
         }
+        // P23 and P24: the demo's deep-work task takes its minutes and its reading task its pages, through the sheet,
+        // before the last two habits clear the board.
+        tap(hasText("Write the thesis chapter"))
+        frames(1_200)
+        tap(hasText("90 min"))
+        frames(200)
+        tap(hasText("Done · 90 min"))
+        frames(1_500)
+        tap(hasText("Read the novel"))
+        frames(1_200)
+        tap(hasText("Done · 30 pages"))
+        frames(1_500)
         tap(hasText("Read 20 pages"))
         frames(1_200)
         tap(hasText("Stretch"))
@@ -533,6 +585,149 @@ class ScreensTest {
         rule.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Demo data: a made-up day", substring = true))
         settle(800)
         snap("$name-7b-settings-notifications")
+    }
+
+    /**
+     * Settings › Health Connect (P27) with demo data: the section off (its line says nothing is read), then the toggle
+     * flipped, which shows the rationale before Health Connect is asked (the sync stays off until it allows the reads).
+     */
+    private fun health(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        val links = MutableStateFlow<Uri?>(Uri.parse("xtnl://app/settings"))
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), links, { links.value = null }, WebHolder(), {})
+        }
+        settle()
+        val toggle = hasText(HealthLine.TOGGLE)
+        val lists = rule.onAllNodes(hasScrollAction())
+        fun scrollTo(m: SemanticsMatcher) {
+            for (i in 0 until lists.fetchSemanticsNodes().size) {
+                if (runCatching { scrolling { lists[i].performScrollToNode(m) } }.isSuccess) break
+            }
+        }
+        // The section sits above Data, the last one: scrolled to Data's line, the whole of it is in view.
+        val end = hasText("Demo data: a made-up day", substring = true)
+        scrollTo(end)
+        settle(800)
+        rule.onAllNodes(hasText("Off: nothing is read from Health Connect.")).onFirst().assertExists()
+        snap("$name-health-off")
+        rule.mainClock.autoAdvance = true
+        tap(toggle)
+        settle(800)
+        // With Health Connect there, the rationale shows before anything is asked; without it, the line says so. Either
+        // way the sync is still off (it starts only once Health Connect allows the reads).
+        check(!graph.settings.state.value.healthSync) { "the toggle alone must not turn the sync on" }
+        val rationale = runCatching { rule.onAllNodes(hasText("What happens with it")).onFirst().assertExists() }.isSuccess
+        scrollTo(if (rationale) hasText("Not now") else end)
+        settle(800)
+        snap("$name-health-${if (rationale) "rationale-in-settings" else "unavailable"}")
+    }
+
+    /**
+     * The minutes sheet with demo data (P7, P23, P24): a long press on a chore (its chips and its minimum only), a tap on
+     * the deep-work task (chips across its estimate, "No timer yet", Start timer, Done held at "Pick the minutes"), its
+     * timer started, its 90 picked over the timer, then the reading task (page chips, the target picked: "Done · 30
+     * pages"). Each sheet is ticked with its Done, which closes it. The sheet is its own window: [snapAll] draws it.
+     */
+    private fun minutesSheet(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        val links = MutableStateFlow<Uri?>(null)
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), links, { links.value = null }, WebHolder(), {})
+        }
+        settle()
+        rule.onAllNodes(hasText("Call the dentist")).onFirst().performTouchInput { longClick() }
+        settle(1_200)
+        rule.onAllNodes(hasText("Done · ~10 min")).onFirst().assertExists()
+        snapAll("$name-sheet-1-chore")
+        tap(hasText("Done · ~10 min"))
+        settle(1_200)
+
+        tap(hasText("Write the thesis chapter"))
+        settle(1_200)
+        rule.onAllNodes(hasText("Pick the minutes")).onFirst().assertExists()
+        rule.onAllNodes(hasText("180 min")).onFirst().assertExists()
+        snapAll("$name-sheet-2-proof")
+        tap(hasText("Start timer"))
+        settle(1_200)
+        snapAll("$name-sheet-3-timer")
+        tap(hasText("90 min"))
+        settle(400)
+        rule.onAllNodes(hasText("Done · 90 min")).onFirst().assertExists()
+        snapAll("$name-sheet-4-picked")
+        tap(hasText("Done · 90 min"))
+        settle(1_200)
+
+        // The cover screen's list holds the habits below the fold: scrolled to the reading task first.
+        val lists = rule.onAllNodes(hasScrollAction())
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            // The clock runs on its own in this walk already (scrolling would hold it afterwards).
+            if (runCatching { lists[i].performScrollToNode(hasText("Read the novel")) }.isSuccess) break
+        }
+        settle(800)
+        tap(hasText("Read the novel"))
+        settle(1_200)
+        rule.onAllNodes(hasText("Done · 30 pages")).onFirst().assertExists()
+        snapAll("$name-sheet-5-pages")
+        tap(hasText("Done · 30 pages"))
+        settle(1_200)
+        snap("$name-sheet-6-board")
+    }
+
+    /**
+     * Every window on screen, bottom first (the activity, then a sheet or a dialog over it), drawn into one PNG: a
+     * ModalBottomSheet is its own window, which [snap] (the activity's view tree alone) would leave out.
+     */
+    private fun snapAll(name: String) {
+        rule.waitForIdle()
+        val decor = rule.activity.window.decorView.rootView
+        val views: List<android.view.View> = runCatching {
+            val wmg = Class.forName("android.view.WindowManagerGlobal")
+            val g = wmg.getMethod("getInstance").invoke(null)
+            val f = wmg.getDeclaredField("mViews").apply { isAccessible = true }
+            @Suppress("UNCHECKED_CAST")
+            (f.get(g) as List<android.view.View>).toList()
+        }.getOrDefault(listOf(decor)).filter { it.isShown && it.width > 0 && it.height > 0 }
+        val bmp = Bitmap.createBitmap(decor.width, decor.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val origin = IntArray(2).also { decor.getLocationOnScreen(it) }
+        for (v in views.ifEmpty { listOf(decor) }) {
+            val at = IntArray(2).also { v.getLocationOnScreen(it) }
+            canvas.save()
+            canvas.translate((at[0] - origin[0]).toFloat(), (at[1] - origin[1]).toFloat())
+            var tries = 0
+            while (true) {
+                try {
+                    v.draw(canvas)
+                    break
+                } catch (e: IllegalArgumentException) {
+                    if (++tries > 40) throw e
+                    frames(16)
+                }
+            }
+            canvas.restore()
+        }
+        FileOutputStream(File(dir, "$name.png")).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    private fun healthRationale(name: String) {
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            XtnlTheme(resolveColors(ThemeChoice.NIGHT)) {
+                Box(Modifier.fillMaxSize().background(X.c.page).verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) {
+                    HealthRationale(onContinue = null, onClose = {}, modifier = Modifier.widthIn(max = 560.dp).padding(horizontal = 16.dp, vertical = 24.dp), closeLabel = "Close")
+                }
+            }
+        }
+        settle(800)
+        rule.onAllNodes(hasText(HealthLine.RATIONALE_TITLE)).onFirst().assertExists()
+        snap("$name-health-rationale")
     }
 
     /** Lets the demo's delays, the cache's IO thread and recomposition all run. */

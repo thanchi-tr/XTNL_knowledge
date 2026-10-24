@@ -6,10 +6,12 @@
  * Cache tag 'weight' (src/lib/cache.ts) on reads; writes revalidate it.
  *
  *   loadWeightView(userId, now?)                 → WeightView
- *   logWeightCore(userId, kg, opts?)             → { ok, value: { day, kg, replaced } } | { ok: false, error }
- *        opts: { day?: DayKey; source?: 'manual' | 'capture' | 'import'; note?: string | null; now?: Date }
+ *   logWeightCore(userId, kg, opts?)             → { ok, value: { day, kg, replaced, kept? } } | { ok: false, error }
+ *        opts: { day?: DayKey; source?: 'manual' | 'capture' | 'import'; note?: string | null; now?: Date; measuredAt?: Date }
  *        one reading per life day: an existing one is replaced (replaced: true);
- *        a replace keeps the day's note unless opts.note is given (null clears it)
+ *        a replace keeps the day's note unless opts.note is given (null clears it);
+ *        an import (Health Connect, blueprint P27) is measured at opts.measuredAt and never replaces a typed reading
+ *        or a later import: the day's reading is kept as it is (kept: true, nothing written)
  *   deleteWeightCore(userId, day)                → { ok } | { ok: false, error }
  *   setWeightGoalCore(userId, input, now?)       → { ok, value: WeightGoalView } | { ok: false, error }
  *        input: { unit?: WeightUnit; targetKg?: number | null; targetDay?: DayKey | null }
@@ -34,6 +36,7 @@ import { addDays, dateColumn, keyOfDateColumn, todayKey, type DayKey } from "./l
 import {
   clampKg,
   cleanNote,
+  importReplaces,
   isDayKey,
   isWeightUnit,
   logDayError,
@@ -193,8 +196,8 @@ export function logWriteData(kg: number, now: Date, source: WeightSource, note: 
 export async function logWeightCore(
   userId: string,
   kg: number,
-  opts: { day?: DayKey; source?: "manual" | "capture" | "import"; note?: string | null; now?: Date } = {}
-): Promise<WeightResult<{ day: DayKey; kg: number; replaced: boolean }>> {
+  opts: { day?: DayKey; source?: "manual" | "capture" | "import"; note?: string | null; now?: Date; measuredAt?: Date } = {}
+): Promise<WeightResult<{ day: DayKey; kg: number; replaced: boolean; kept?: boolean }>> {
   const now = opts.now ?? new Date();
   const today = todayKey(now);
   const value = typeof kg === "number" ? clampKg(kg) : null;
@@ -203,11 +206,16 @@ export async function logWeightCore(
   const dayError = logDayError(day, today);
   if (dayError) return { ok: false, error: dayError };
   const source: WeightSource = (SOURCES as readonly unknown[]).includes(opts.source) ? (opts.source as WeightSource) : "manual";
-  const data = logWriteData(value, now, source, opts.note);
+  // When it was measured: an import's own instant (Health Connect, blueprint P27); a typed weigh-in, as it is logged.
+  const measuredAt = opts.measuredAt instanceof Date && Number.isFinite(opts.measuredAt.getTime()) ? opts.measuredAt : now;
+  const data = logWriteData(value, measuredAt, source, opts.note);
+  // P27: an import never replaces a reading typed on the phone or the web, nor a later import (weight.ts importReplaces).
+  const kept = { ok: true as const, value: { day, kg: value, replaced: false, kept: true } };
 
   try {
     const where = { userId_day: { userId, day: dateColumn(day) } };
-    const existing = await prisma.bodyWeight.findUnique({ where, select: { id: true } });
+    const existing = await prisma.bodyWeight.findUnique({ where, select: { id: true, source: true, measuredAt: true } });
+    if (source === "import" && !importReplaces(existing, measuredAt)) return kept;
     await prisma.bodyWeight.upsert({
       where,
       create: { userId, day: dateColumn(day), ...data.create },
@@ -218,6 +226,8 @@ export async function logWeightCore(
   } catch (err) {
     // A concurrent first log of the same day won the unique race: replace it instead.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      // An import that raced it keeps what landed first.
+      if (source === "import") return kept;
       try {
         await prisma.bodyWeight.update({
           where: { userId_day: { userId, day: dateColumn(day) } },

@@ -42,6 +42,8 @@ import {
 import { undoMakeUpCore } from "@/lib/duty";
 import { MAKE_UP_UNDO_ELSEWHERE } from "@/lib/duty-plan";
 import { abortCore, deferCore, undoDecisionCore, type DecisionOutcome, type UndoneDecision } from "@/lib/task-decisions-server";
+import { discardTimerCore, startTimerCore, stopTimerCore } from "@/lib/task-sessions-server";
+import { TIMER_CLIENT_ID, cleanTickProof, isSessionSource, type SessionSource, type TickProofInput, type TimerView } from "@/lib/proof";
 
 /**
  * The task actions: the Today board's writes, plus a text capture.
@@ -173,6 +175,16 @@ export interface CompleteTaskInput {
   slot?: number;
   minutes?: number | null;
   mvv?: boolean;
+  /**
+   * Proof of work (blueprint P23): the timer this tick counts (startTaskTimer's sessionId). Absent: the task's own timer
+   * of that day not yet counted, if any. Read only while PROOF_LAUNCH_DAY is in force.
+   */
+  sessionId?: string | null;
+  /**
+   * Pages proof (blueprint P24): a reading task's pages, { kind: 'PAGES', qty } (whole pages; anything else is none).
+   * Read only while PROOF_LAUNCH_DAY is in force, for a pages task: recorded, never priced.
+   */
+  proof?: TickProofInput | null;
 }
 
 /**
@@ -197,6 +209,8 @@ export async function completeTask(
           day: cleanDay,
           minutes: typeof input?.minutes === "number" ? input.minutes : null,
           mvv: input?.mvv === true,
+          ...(isId(input?.sessionId) ? { sessionId: input.sessionId } : {}),
+          ...proofOf(input?.proof),
         }),
       (v) => !v.duplicate
     );
@@ -270,7 +284,7 @@ export async function skipTask(templateId: string, opts?: TaskActionOptions): Pr
 /** The same habit once more today. Returns its moments as `celebrations`, like completeTask. */
 export async function againTask(
   templateId: string,
-  input?: Pick<CompleteTaskInput, "minutes" | "mvv">,
+  input?: Pick<CompleteTaskInput, "minutes" | "mvv" | "sessionId" | "proof">,
   opts?: TaskActionOptions
 ): Promise<TaskActionResult<WithCelebrations<Completion>>> {
   if (!isId(templateId)) return noId();
@@ -282,12 +296,53 @@ export async function againTask(
         againCore(userId, templateId, {
           minutes: typeof input?.minutes === "number" ? input.minutes : null,
           mvv: input?.mvv === true,
+          ...(isId(input?.sessionId) ? { sessionId: input.sessionId } : {}),
+          ...proofOf(input?.proof),
         }),
       (v) => !v.duplicate
     );
     if (res.ok) recordPracticeAfter(userId, templateId);
     return res;
   });
+}
+
+/** A tick's pages proof (P24), cleaned (proof.ts cleanTickProof): the key only when it brings pages. */
+function proofOf(x: unknown): { proof?: TickProofInput } {
+  const proof = cleanTickProof(x);
+  return proof ? { proof } : {};
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Proof of work (blueprint P23): starts a task's timer (task-sessions-server startTimerCore: proof in force, live
+ * writes, one running timer at a time, so a start stops any other). `clientId` is the start's key (a UUID the row
+ * draws once): a retry starts it once. The timer is a row, so it survives a reload and another device.
+ */
+export async function startTaskTimer(
+  templateId: string,
+  clientId: string,
+  opts?: TaskActionOptions & { source?: SessionSource }
+): Promise<TaskActionResult<TimerView>> {
+  if (!isId(templateId)) return noId();
+  if (typeof clientId !== "string" || !UUID_RE.test(clientId)) return { ok: false, error: TIMER_CLIENT_ID };
+  const source: SessionSource = isSessionSource(opts?.source) ? opts.source : "web";
+  return run("startTaskTimer", opts, (userId) => startTimerCore(userId, { templateId, clientId: clientId.toLowerCase(), source }));
+}
+
+/** Stops a task's timer; its minutes wait for the tick that counts them. A stopped one answers as it stands. */
+export async function stopTaskTimer(sessionId: string, opts?: TaskActionOptions): Promise<TaskActionResult<TimerView>> {
+  if (!isId(sessionId)) return { ok: false, error: "No timer given." };
+  return run("stopTaskTimer", opts, (userId) => stopTimerCore(userId, { sessionId }));
+}
+
+/**
+ * Discards a task's timer (the row's Discard): its segments that day are closed counting nothing, so no tick counts
+ * them and the row shows Start timer again. One a tick already counted is gone.
+ */
+export async function discardTaskTimer(sessionId: string, opts?: TaskActionOptions): Promise<TaskActionResult<TimerView>> {
+  if (!isId(sessionId)) return { ok: false, error: "No timer given." };
+  return run("discardTaskTimer", opts, (userId) => discardTimerCore(userId, { sessionId }));
 }
 
 /** Moves a one-off to tomorrow or a given day; on a repeating task, 'tomorrow' skips today. */

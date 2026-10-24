@@ -149,7 +149,8 @@ async function readHabitStrengths(userId: string, before: DayKey, today: DayKey)
   const restFrom = launch != null && today >= launch ? (sinceKey > launch ? sinceKey : launch) : null;
   const [templates, instances, settings, restRows, freezeRows] = await Promise.all([
     prisma.taskTemplate.findMany({
-      where: { userId, archivedAt: null, recurrence: { not: null }, intrinsic: false, autoMetric: null, ...PERSONAL_BOARD },
+      // A habit that completes itself is left out; a pages task (autoMetric PAGES, P24) is ticked by hand, so it is in.
+      where: { userId, archivedAt: null, recurrence: { not: null }, intrinsic: false, OR: [{ autoMetric: null }, { autoMetric: "PAGES" }], ...PERSONAL_BOARD },
       select: { id: true, title: true, recurrence: true, startDay: true, compulsory: true, compulsoryOnRest: true },
     }),
     prisma.taskInstance.findMany({

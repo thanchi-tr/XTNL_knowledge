@@ -63,6 +63,12 @@
  * unset that is SQUARE and the output is exactly as before; with the override
  * set (`XTNL_TRACK_CURVE_LAUNCH_DAY=2026-10-24 npx tsx scripts/balance-horizon.ts`)
  * every block runs on POWER, Base·L^1.5 a level, and says so in one line.
+ *
+ * Proof of work (blueprint P23, D20): while PROOF_LAUNCH_DAY is null and XTNL_PROOF_LAUNCH_DAY is unset nothing here
+ * changes, byte for byte. With the override set (`XTNL_PROOF_LAUNCH_DAY=2026-10-24 npx tsx scripts/balance-horizon.ts`)
+ * the basket's deep-work row (the default rule's: Craft at Demanding) is a proof task, logged at its 90 minutes and
+ * priced through the proof rule ('life-3'), and the committed player reports the walk's and the gym's minutes, so
+ * BODY's kept weeks stand; 4p pins that the logged row prices exactly as the basket row, so 4 and 4b re-pin unchanged.
  */
 import "./_no-model";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -88,6 +94,7 @@ import {
   trackLevel,
 } from "../src/lib/life-economy";
 import { TRACK_CURVE_BASE, TRACK_CURVE_EXPONENT, trackCurveLaunchDay, type TrackCurve } from "../src/lib/life-economy";
+import { proofLaunchDay } from "../src/lib/proof";
 import { emptyLifeLedger, trackShareCap, trackStateAt } from "../src/lib/life-tracks";
 import { effectiveFieldComposition } from "../src/lib/attribute-inference";
 import { TRACK_LABEL, kneeG, priceTask } from "../src/lib/life-grade";
@@ -149,6 +156,11 @@ function fmtYears(days: number): string {
  * production XTNL_TRACK_CURVE_LAUNCH_DAY), since every model week is after it; SQUARE while there is none.
  */
 const TRACK_CURVE: TrackCurve = trackCurveLaunchDay() == null ? "SQUARE" : "POWER";
+
+/** Proof of work (P23): in force once a launch day is set, since every model week is after it. */
+const PROOF_ON = proofLaunchDay() != null;
+/** The basket rows the default deep-work rule marks as proof (D20: Craft's deep work, Demanding), logged at their minutes. */
+const PROOF_ROWS: ReadonlySet<string> = new Set(["deep work"]);
 
 /** Life MP may add at most this share of the knowledge income, even in the worst case. */
 const LIFE_SHARE_CEILING = 0.03;
@@ -229,12 +241,36 @@ function rawPriceOf(row: BasketRow): number {
   ).raw;
 }
 
+/** Proof of work (P23): a proof row's tick as the player logs it, its minutes reported, through the proof rule ('life-3'). */
+function loggedRawPriceOf(row: BasketRow): number {
+  return priceTask(
+    {
+      band: row.band,
+      bandOverride: 0,
+      machineMinutes: row.minutes,
+      estMinutes: row.minutes,
+      minutes: row.minutes,
+      timing: "ON_TIME",
+      recurring: row.recurring,
+      streakDays: row.recurring ? BASKET_STREAK_DAYS : 0,
+      repeatN: 1,
+      introBefore: 0,
+      mode: "FULL",
+    },
+    { rawBefore: 0 },
+    row.track,
+    null,
+    { gated: true, wall: null },
+  ).raw;
+}
+
 function personaOf(name: PersonaName): Persona {
   const scale = PERSONA_SCALE[name];
   const rawPerWeek = { BODY: 0, DUTY: 0, CRAFT: 0, CARE: 0 } as Record<Track, number>;
   let perWeek = 0;
   for (const row of LIFE_BASKET) {
-    rawPerWeek[row.track] += rawPriceOf(row) * row.perWeek * scale;
+    // Proof of work (P23, the override only): a proof row is priced as the player logs it.
+    rawPerWeek[row.track] += (PROOF_ON && PROOF_ROWS.has(row.title) ? loggedRawPriceOf(row) : rawPriceOf(row)) * row.perWeek * scale;
     perWeek += row.perWeek * scale;
   }
   const rawPerDay = TRACKS.reduce((s, t) => s + rawPerWeek[t], 0) / 7;
@@ -694,6 +730,16 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
     steady.tasksPerDay >= 5 && steady.tasksPerDay <= 10 && steady.meanTrackXpPerWeek >= 80 && steady.meanTrackXpPerWeek <= 130,
     `${fmt(steady.tasksPerDay, 1)} tasks/day in [5, 10] · mean track ${fmt(steady.meanTrackXpPerWeek, 1)} XP/week in [80, 130]`,
   );
+  if (PROOF_ON) {
+    // Proof of work (P23; the override only): the logged deep-work tick is the basket row's price, so 4 and 4b re-pin as they were.
+    const proofRows = LIFE_BASKET.filter((r) => PROOF_ROWS.has(r.title));
+    check(
+      "4p. proof of work (P23): a 90-minute logged deep-work tick prices exactly as the basket row",
+      proofRows.length === 1 && proofRows.every((r) => loggedRawPriceOf(r) === rawPriceOf(r)),
+      proofRows.map((r) => `${r.title} ${r.minutes} min logged: raw ${fmt(loggedRawPriceOf(r), 1)} = ${fmt(rawPriceOf(r), 1)}`).join(" · ") +
+        " · the walk's and the gym's minutes are reported, so BODY's kept weeks stand",
+    );
+  }
 
   const s9 = paceAt(plans.steady, 9).level;
   const s13 = paceAt(plans.steady, 13).level;

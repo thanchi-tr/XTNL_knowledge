@@ -6,8 +6,10 @@
  * route file may export only its methods and segment config).
  *
  *   GET  /check            handleCheck          the Today board and its daily quests, the Review hub's counts and the ideas fading, the due work, level, streak, the week audit, the credits wallet (P16)
- *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick), and the skill it fed (P5), its credits (P16)
+ *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick, with its minutes and timer: P7, P23; a reading task's pages: P24), and the skill it fed (P5), its credits (P16)
  *   POST /tasks/undo       handleTaskUndo       actions/tasks undoCompletion
+ *   POST /tasks/start      handleTaskStart      actions/tasks startTaskTimer (a proof task's timer; P23)
+ *   POST /tasks/stop       handleTaskStop       actions/tasks stopTaskTimer (P23)
  *   POST /work/done        handleWorkDone       actions/scheduled-tasks doneScheduledTask (no history log)
  *   POST /work/reopen      handleWorkReopen     actions/scheduled-tasks reopenScheduledTask
  *   GET  /review/queue     handleReviewQueue    the review hub's due cards in the runner's order
@@ -22,6 +24,7 @@
  *   POST /mall/rewards     handleMallRewards    actions/mall addReward (the Add sheet's save; P18)
  *   POST /mall/buy         handleMallBuy        actions/mall buyReward (Buy, then Confirm; P19)
  *   POST /mall/undo        handleMallUndo       actions/mall undoBuy (a purchase undone inside its ten minutes; P19)
+ *   POST /exercise         handleExercise       health-ingest-server ingestHealthCore (Health Connect's walks, hikes and weigh-ins; P27)
  *
  * The four Mall routes run on MobileMallDeps alone (mall-mobile-cores.ts binds them): the token, the user, the clock,
  * the Mall's read, its add, its buy and its undo. They never hold a paying core (a purchase spends credits only), so a
@@ -73,6 +76,9 @@ import {
   jsonBodyOf,
   levelOf,
   logLineOf,
+  EXERCISE_KEYS,
+  exerciseReplyOf,
+  exerciseRequestOf,
   MALL_BUY_KEYS,
   MALL_REWARD_KEYS,
   MALL_UNDO_KEYS,
@@ -108,7 +114,13 @@ import {
   textOf,
   tickDayOf,
   tickLineOf,
+  tickMinutesOf,
+  tickProofInputOf,
   tickXpOf,
+  optionalIdOf,
+  timerOf,
+  timerStoppedLineOf,
+  TIMER_STARTED_LINE,
   undoXpOf,
   weightOfUndoToken,
   workItemsOf,
@@ -139,6 +151,9 @@ import type { CreditsWallet } from "./credits";
 import type { MallResult, RewardInput } from "./mall";
 import type { BuyResult, MallView, UndoBuyResult } from "./mall-server";
 import type { CelebrationEvent } from "./celebration-types";
+import { TIMER_CLIENT_ID, type TickProofInput, type TimerView } from "./proof";
+import type { HcBatch, IngestSummary } from "./health-ingest";
+import type { IngestResult } from "./health-ingest-server";
 
 // ── The cores ───────────────────────────────────────────────────────────────
 
@@ -185,8 +200,15 @@ export interface MobileDeps {
   settleMomentum: (userId: string, day: DayKey, now: Date) => Promise<unknown>;
 
   // Tasks
-  completeTask: (templateId: string, input: { day?: "today" | "yesterday" | DayKey; mvv?: boolean }) => Promise<TaskActionResult<WithCelebrations<Completion>>>;
+  completeTask: (
+    templateId: string,
+    input: { day?: "today" | "yesterday" | DayKey; mvv?: boolean; minutes?: number; sessionId?: string; proof?: TickProofInput }
+  ) => Promise<TaskActionResult<WithCelebrations<Completion>>>;
   undoCompletion: (instanceId: string) => Promise<TaskActionResult<{ instanceId: string; xp: number }>>;
+  /** Proof of work (P23): a task's timer started from the phone (actions/tasks startTaskTimer, source phone), its key the clientId. */
+  startTimer: (templateId: string, clientId: string) => Promise<TaskActionResult<TimerView>>;
+  /** Its stop (actions/tasks stopTaskTimer): its minutes wait for the tick. */
+  stopTimer: (sessionId: string) => Promise<TaskActionResult<TimerView>>;
 
   // Work
   doneScheduled: (id: string) => Promise<ScheduledResult<{ id: string; doneAt: string; interactionId: string | null }>>;
@@ -231,6 +253,14 @@ export interface MobileDeps {
   loadSkills: (userId: string) => Promise<readonly SkillView[]>;
   /** The skill a template feeds, as it stands (competency-server loadTemplateSkill; null with none): the tick's `competency`. */
   loadTemplateSkill: (userId: string, templateId: string) => Promise<SkillView | null>;
+
+  // POST /exercise (blueprint P27, D22): Health Connect's walks, hikes and weigh-ins.
+  /**
+   * One sync's batch (health-ingest-server ingestHealthCore): each walk through exercise-server logWalkCore with its
+   * 'ingest:hc:<externalId>' row (the backfill a record only), each weigh-in through weight-server logWeightCore with
+   * source 'import'. Writes only on the live app (lifeWritesEnabled).
+   */
+  ingestHealth: (userId: string, batch: HcBatch, now: Date) => Promise<IngestResult<IngestSummary & { line: string }>>;
 }
 
 /**
@@ -580,12 +610,23 @@ export async function handleMallUndo(request: Request, deps: MobileMallDeps): Pr
  * what was earned across it; null while credits are off).
  */
 export async function handleTaskComplete(request: Request, deps: MobileDeps): Promise<Response> {
-  return write("tasks/complete", request, deps, ["templateId", "day", "mvv"], async (body) => {
+  return write("tasks/complete", request, deps, ["templateId", "day", "mvv", "minutes", "sessionId", "proof"], async (body) => {
     const templateId = idOf(body.templateId, "templateId");
     const day = tickDayOf(body.day);
     const mvv = boolOf(body.mvv, "mvv");
+    // P7's phone minutes (1-480, counted through the drawer's clamp) and P23's timer.
+    const minutes = tickMinutesOf(body.minutes);
+    const sessionId = optionalIdOf(body.sessionId, "sessionId");
+    // P24: a reading task's pages, { kind: 'PAGES', qty }.
+    const proof = tickProofInputOf(body.proof);
     const before = await walletBefore(deps, "tasks/complete");
-    const res = await deps.completeTask(templateId, { ...(day ? { day } : {}), ...(mvv !== undefined ? { mvv } : {}) });
+    const res = await deps.completeTask(templateId, {
+      ...(day ? { day } : {}),
+      ...(mvv !== undefined ? { mvv } : {}),
+      ...(minutes !== undefined ? { minutes } : {}),
+      ...(sessionId ? { sessionId } : {}),
+      ...(proof ? { proof } : {}),
+    });
     if (!res.ok) return refusalReply(res.error);
     const v = res.value;
     const now = deps.now();
@@ -613,6 +654,30 @@ export async function handleTaskComplete(request: Request, deps: MobileDeps): Pr
   });
 }
 
+/**
+ * Proof of work (blueprint P23): a task's timer (startTaskTimer: proof in force, live writes, one running timer at a
+ * time, so a start stops any other). The clientId is required and is the start's key: a retry starts it once.
+ */
+export async function handleTaskStart(request: Request, deps: MobileDeps): Promise<Response> {
+  return write("tasks/start", request, deps, ["templateId"], async (body) => {
+    const templateId = idOf(body.templateId, "templateId");
+    const clientId = clientIdOf(body.clientId);
+    if (!clientId) bad(TIMER_CLIENT_ID);
+    const res = await deps.startTimer(templateId, clientId);
+    if (!res.ok) return refusalReply(res.error);
+    return okReply({ timer: timerOf(res.value), line: TIMER_STARTED_LINE });
+  });
+}
+
+/** Its stop (stopTaskTimer); a stopped one answers as it stands. The minutes wait for the tick that counts them. */
+export async function handleTaskStop(request: Request, deps: MobileDeps): Promise<Response> {
+  return write("tasks/stop", request, deps, ["sessionId"], async (body) => {
+    const res = await deps.stopTimer(idOf(body.sessionId, "sessionId"));
+    if (!res.ok) return refusalReply(res.error);
+    return okReply({ timer: timerOf(res.value), line: timerStoppedLineOf(res.value) });
+  });
+}
+
 /** The tick's undo (undoCompletion), and the character level after it (as /tasks/complete; none when it can't be read). */
 export async function handleTaskUndo(request: Request, deps: MobileDeps): Promise<Response> {
   return write("tasks/undo", request, deps, ["instanceId"], async (body) => {
@@ -620,6 +685,29 @@ export async function handleTaskUndo(request: Request, deps: MobileDeps): Promis
     if (!res.ok) return refusalReply(res.error);
     const shell = await deps.loadShell(deps.userId()).catch(soft("the level after an undo", null));
     return okReply({ xp: undoXpOf(res.value.xp), level: levelOf(shell) });
+  });
+}
+
+// ── POST /exercise ──────────────────────────────────────────────────────────
+
+/**
+ * Health Connect's walks, hikes and weigh-ins (blueprint 5.1d, P27, decision D22), one sync's batch from the app's
+ * WorkManager job: health-ingest-server ingestHealthCore. A walk lands once per Health Connect record (its
+ * 'ingest:hc:<externalId>' row: a resend, a retried job or a second phone is a duplicate), a walk the user already
+ * logged by hand that day is the same walk (nothing paid twice), and a walk that started before `since` (the sync
+ * switched on) is the backfill, a record only: no pay, no personal best (H17). A newer walk is priced exactly as one
+ * logged on Train › Exercise (a live day, today or yesterday, through the knee). A weigh-in is a record with source
+ * 'import' that never replaces one typed by hand. Items a core refuses are listed in `refused` with its line; the rest
+ * lands. On a dev server (writes off) the whole batch is `conflict` with HC_WRITES_OFF. The app never shows the reply
+ * as a moment: it is a background sync, and Settings shows its line.
+ */
+export async function handleExercise(request: Request, deps: MobileDeps): Promise<Response> {
+  return write("exercise", request, deps, EXERCISE_KEYS, async (body) => {
+    const now = deps.now();
+    const batch = exerciseRequestOf(body, now);
+    const res = await deps.ingestHealth(deps.userId(), batch, now);
+    if (!res.ok) return refusalReply(res.error);
+    return okReply(exerciseReplyOf(res.value));
   });
 }
 

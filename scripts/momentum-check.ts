@@ -356,7 +356,8 @@ console.log("\n§8 the vocabulary");
   // Every ActivitySource that existed before momentum; the Record makes the list exhaustive at compile time. AUDIT came
   // after it (blueprint P11, the weekly audit's frozen copy: never a streak day, week-audit-check pins it), and so did
   // the Mall's MALL_BUY and MALL_REFUND (blueprint P19: never a streak day; streak-check and credits-check pin them).
-  const BEFORE: Record<Exclude<ActivitySource, MomentumActivitySource | "AUDIT" | "MALL_BUY" | "MALL_REFUND">, true> = {
+  // Re-pinned for P27: and INGEST, a Health Connect walk's dedupe row (never a streak day; health-ingest-check pins it).
+  const BEFORE: Record<Exclude<ActivitySource, MomentumActivitySource | "AUDIT" | "MALL_BUY" | "MALL_REFUND" | "INGEST">, true> = {
     REVIEW: true, IDEA_CREATE: true, ATTESTATION: true, BOSS: true, LEGACY_DAY: true, DAY_OPEN: true, TASK: true, UNDO: true, GOAL_PROGRESS: true, REFLECTION: true, FULL_DAY: true, REPAIR: true,
     FREEZE_EARN: true, FREEZE_USE: true, WEEK: true, MP_MINT: true, DEBT: true, DEBT_REPAID: true, DEBT_WRITTEN_OFF: true, ADJUST: true, WORKOUT: true, PR: true, STEPS: true, FORGET: true,
   };
@@ -364,7 +365,7 @@ console.log("\n§8 the vocabulary");
   const OLD_STREAK = new Set(["REVIEW", "IDEA_CREATE", "ATTESTATION", "BOSS", "TASK", "GOAL_PROGRESS", "LEGACY_DAY"]);
   const OLD_NEVER = new Set(["STEPS", "DAY_OPEN", "DEBT", "ADJUST", "FREEZE_EARN", "FREEZE_USE", "REFLECTION", "UNDO", "WEEK", "MP_MINT", "DEBT_REPAID", "DEBT_WRITTEN_OFF", "FULL_DAY", "REPAIR"]);
   const oldRule = (s: string, r?: boolean | null) => (OLD_NEVER.has(s) ? false : (r ?? OLD_STREAK.has(s)));
-  const changed = (Object.keys(BEFORE) as Exclude<ActivitySource, MomentumActivitySource | "AUDIT" | "MALL_BUY" | "MALL_REFUND">[]).filter((s) => [undefined, null, true, false].some((r) => countsForStreakOf(s, r) !== oldRule(s, r)));
+  const changed = (Object.keys(BEFORE) as Exclude<ActivitySource, MomentumActivitySource | "AUDIT" | "MALL_BUY" | "MALL_REFUND" | "INGEST">[]).filter((s) => [undefined, null, true, false].some((r) => countsForStreakOf(s, r) !== oldRule(s, r)));
   check("every pre-momentum source counts for the streak exactly as before (the new entries are reached only by momentum's writers)", changed.length === 0, changed.join(", "));
   check("NEVER_STREAK_SOURCES gains QUEST_SET, CHEST, MILESTONE, PLAN_WEEK, PERK, RESPEC, NUDGE; a writer cannot override it", ["QUEST_SET", "CHEST", "MILESTONE", "PLAN_WEEK", "PERK", "RESPEC", "NUDGE"].every((s) => NEVER_STREAK_SOURCES.has(s as never) && countsForStreakOf(s as never, true) === false));
   check("STREAK_SOURCES gains CHECKPOINT (an action); PR is in neither list, so it counts only if asked (its writer never asks)", STREAK_SOURCES.has("CHECKPOINT") && countsForStreakOf("CHECKPOINT") && !STREAK_SOURCES.has("PR") && !NEVER_STREAK_SOURCES.has("PR") && countsForStreakOf("PR") === false);

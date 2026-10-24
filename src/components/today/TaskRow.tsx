@@ -15,7 +15,9 @@ import { hhmmOf, pendingMetaOf, rowAccentOf, tickNameOf, type RowMotion } from "
 import { NamedTitle } from "./NamedTitle";
 import type { RestKind } from "@/lib/duty-economy";
 import { stepsLine } from "@/lib/subtasks";
+import { PROOF_ROW_NOTE, pagesLabelOf, pagesRowNoteOf } from "@/lib/proof";
 import { StepsList } from "./StepsList";
+import { TimerChip } from "./TimerChip";
 
 interface Props {
   row: BoardRow;
@@ -64,6 +66,12 @@ interface Props {
   motion?: RowMotion | null;
   /** "pile": a compact row in Done today (its steps stay folded; the drawer still opens from the title). */
   variant?: "pile";
+  /**
+   * Proof of work (blueprint P23): a proof row's timer chip (start, stop; a stopped one's Resume and Discard), drawn while
+   * row.proof is set (proof in force, a proof task) and the row is open, never on a Record yesterday row (a timer only
+   * times today). Absent: no chip, and the row is exactly as before.
+   */
+  timer?: { busy?: boolean; onStart: () => void; onStop: () => void; onDiscard?: () => void } | null;
 }
 
 /** The tick's tactile press: on pointerdown (not only :active, which a touch browser may skip), cleared on release. */
@@ -114,6 +122,9 @@ export function TaskRow(props: Props) {
   const minimum = props.onMinimum && row.state === "open" && t.mvv ? props.onMinimum : null;
   const drawerId = `drawer-${row.key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
   const pile = props.variant === "pile";
+  // Proof of work (P23): an open proof row's timer, on the row itself (one tap to start, one to stop); never on a
+  // Record yesterday row, whose "Start timer" could only time today.
+  const timer = props.timer && row.proof && row.state === "open" && !pile && row.lane !== "yesterday" ? props.timer : null;
 
   // Back in its lane after an Undo: the row unfolds from nothing (its one row track 0fr → 1fr, today.css), the
   // reverse of its way out. Set before the first paint, so it never shows at full height first.
@@ -170,8 +181,9 @@ export function TaskRow(props: Props) {
                 {done ? <DoneMeta row={row} paidXp={props.work ? null : (paid?.xp ?? null)} study={study} work={props.work} /> : <OpenMeta row={row} restToday={props.restToday ?? null} work={props.work} />}
               </span>
             </button>
-            {(minimum || (done && undoable)) && (
+            {(minimum || (done && undoable) || timer) && (
               <div className="r-acts">
+                {timer && <TimerChip title={t.title} timer={row.proof?.timer ?? null} busy={busy || !!timer.busy} onStart={timer.onStart} onStop={timer.onStop} onDiscard={timer.onDiscard} />}
                 {minimum && (
                   <button type="button" className="r-act" onClick={() => minimum(pillRef.current)} disabled={busy}>
                     Minimum: {t.mvv}
@@ -239,6 +251,10 @@ function OpenMeta({ row, restToday, work }: { row: BoardRow; restToday: RestKind
   if (row.heldToday && restToday) bits.push(`${HELD_WORD[restToday]} · ${t.compulsory ? "nothing owed" : "streak holds"}`);
   else if (restToday && t.compulsory && t.compulsoryOnRest && row.lane === "must") bits.push("must · even on rest days");
   if (t.intrinsic && !work) bits.push("#play");
+  // Proof of work (P23): a proof row says its tick takes its minutes.
+  if (row.proof && !work) bits.push(PROOF_ROW_NOTE);
+  // Pages proof (P24): a reading task says its tick takes its pages ('log 30 pages').
+  if (row.pages && !work) bits.push(pagesRowNoteOf(row.pages.target));
   if (t.sizing && !work) bits.push("sizing…");
   // Back from a defer today (task-decisions.ts): "Deferred until Tue 09:00 · 2×".
   if (row.deferNote) bits.push(row.deferNote);
@@ -264,6 +280,8 @@ function DoneMeta({ row, paidXp, study, work }: { row: BoardRow; paidXp: number 
   const at = row.paid ? Date.parse(row.paid.occurredAt) : Number.NaN;
   const time = Number.isFinite(at) ? ` ${hhmmOf(at)}` : "";
   const word = work ? (row.minimum ? "Minimum done" : "Done") : row.minimum ? "Minimum kept" : "Kept";
+  // Pages proof (P24): the pages a reading task's tick recorded, from its receipt (none before the launch).
+  const pages = row.paid?.receipt?.proof?.pages ?? null;
   return (
     <>
       <span className="r-bit kept-at">
@@ -275,6 +293,7 @@ function DoneMeta({ row, paidXp, study, work }: { row: BoardRow; paidXp: number 
       ) : paidXp != null ? (
         <span className="r-bit">paid {fmtXp(paidXp)} exactly</span>
       ) : null}
+      {pages != null && !work && <span className="r-bit">{pagesLabelOf(pages)}</span>}
       {row.timesDone > 1 && <span className="r-bit">×{row.timesDone} today</span>}
     </>
   );

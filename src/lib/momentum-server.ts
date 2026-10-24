@@ -50,6 +50,7 @@ import { lifeMintData, mintLifeMasteryOps, type LifeMint } from "./mastery";
 import { LIFE_TZ, addDays, dateColumn, dayEndOf, daysBetween, keyOfDateColumn, todayKey, weekStartKeyOf, type DayKey } from "./life-day";
 import { MINT_DETAIL_SEP, ROADMAP_MP_WINDOWS, effortWeightOfB, lifeWritesEnabled, parseMintDetail, round2, type MomentumMpReason } from "./life-economy";
 import { estEff, isTrack, roundTo } from "./life-grade";
+import { exerciseMinutesCount } from "./proof";
 import { isStaleGuard } from "./life-tracks-server";
 import { lifeLockOp, loadTodayBoard } from "./tasks";
 import { buildBoard, planCompletion, withMoments, type BoardRow, type DayLedger } from "./today-board";
@@ -130,7 +131,7 @@ import {
   type QuestSlot,
   type QuestSwap,
 } from "./momentum";
-import type { ActivityInput, Receipt, Track } from "./life-types";
+import { completesItself, type ActivityInput, type Receipt, type Track } from "./life-types";
 import type { CelebrationEvent, ProgressSnapshot } from "./celebration-types";
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -681,7 +682,9 @@ const minutesOfReceipt = (receipt: unknown): number => {
 /**
  * BODY's effort minutes over a week's rows (life-weeks' rule): Σ receipt minutes ×
  * effortWeightOfB(B) over live EXERCISE TASK rows and live WORKOUT rows. A row some
- * 'undo:<id>' reverses is not live, nor is the reversal itself.
+ * 'undo:<id>' reverses is not live, nor is the reversal itself. Proof of work (blueprint
+ * P23, D20; forward only): an EXERCISE TASK row priced from PROOF_LAUNCH_DAY counts its
+ * minutes only when they were reported (proof.ts exerciseMinutesCount); older rows as before.
  */
 export function weekEffortOf(rows: readonly { id: string; source: string; dedupeKey: string | null; receipt: unknown; category: string | null }[]): number {
   const undone = new Set(rows.filter((r) => isUndoKey(r.dedupeKey)).map((r) => (r.dedupeKey as string).slice(5)));
@@ -690,6 +693,7 @@ export function weekEffortOf(rows: readonly { id: string; source: string; dedupe
     if (undone.has(r.id) || isUndoKey(r.dedupeKey)) continue;
     if (r.source === "TASK" && r.category !== "EXERCISE") continue;
     if (r.source !== "TASK" && r.source !== "WORKOUT") continue;
+    if (r.source === "TASK" && !exerciseMinutesCount(r.receipt as Receipt | null)) continue;
     const minutes = minutesOfReceipt(r.receipt);
     if (Number.isFinite(minutes) && minutes > 0) effort += minutes * effortWeightOfB(bOf(r.receipt));
   }
@@ -792,7 +796,7 @@ function taskOptions(src: QuestSources, tie: (templateId: string) => number): Qu
         c.lane !== "anytime" &&
         !c.inbox &&
         !c.intrinsic &&
-        c.autoMetric == null &&
+        !completesItself(c.autoMetric) &&
         c.category !== "EXERCISE" &&
         (c.recurring || (c.dueDay != null && c.dueDay <= src.day))
     )
@@ -1968,7 +1972,8 @@ export async function readDayFacts(userId: string, days: readonly DayKey[]): Pro
       }
       if (e.source !== "TASK") continue;
       const t = e.templateId ? tpl.get(e.templateId) : undefined;
-      if (t?.category === "EXERCISE") {
+      // Proof of work (P23, forward only): from PROOF_LAUNCH_DAY an EXERCISE tick moves only with its minutes reported.
+      if (t?.category === "EXERCISE" && exerciseMinutesCount(e.receipt as Receipt | null)) {
         const m = minutesOfReceipt(e.receipt);
         if (Number.isFinite(m)) moveMinutes.push(m);
       }

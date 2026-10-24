@@ -27,7 +27,8 @@ BEGIN TRANSACTION READ ONLY;
 --       The template is the row's own, or its TaskInstance's when the row
 --       carries none. No auto task pays under the plan: study tasks are paid
 --       by the reviews and ideas, workout tasks by the workout (M4), and
---       steps pay 0 (grading.md).
+--       steps pay 0 (grading.md). A pages task (autoMetric 'PAGES', blueprint
+--       P24) is ticked by hand and pays like any task, so it is not one.
 SELECT 'shared sourceId' AS finding, t.id, t."userId", t.source, t."sourceId",
        NULL::text AS "autoMetric", t.sink, t.xp, t.day
 FROM "ActivityEvent" t
@@ -47,7 +48,7 @@ FROM "ActivityEvent" e
 LEFT JOIN "TaskInstance" i ON i.id = e."sourceId"
 JOIN "TaskTemplate" tt ON tt.id = COALESCE(e."templateId", i."templateId")
 WHERE e.source = 'TASK'
-  AND tt."autoMetric" IS NOT NULL
+  AND tt."autoMetric" IS NOT NULL AND tt."autoMetric" <> 'PAGES'
   AND (e.sink = 'TRACK' OR e.xp <> 0);
 
 -- 2. Knowledge rows outside the DOMAIN sink, or DOMAIN rows that are not knowledge.

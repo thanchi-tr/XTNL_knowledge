@@ -28,7 +28,16 @@ inline fun <T, R> Outcome<T>.map(f: (T) -> R): Outcome<R> = when (this) {
  */
 interface XtnlApi {
     suspend fun check(): Outcome<CheckData>
-    suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String): Outcome<CompleteResult>
+    /**
+     * A tick. [minutes] (1-480, blueprint P7: the long-press sheet's chips) is counted with the web drawer's clamp;
+     * [sessionId] names the timer it counts (P23: a proof task's); [pages] (1-2000, P24) are a reading task's pages, sent
+     * as `proof { kind: PAGES, qty }`. All left out: a tick at the estimate, as before.
+     */
+    suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String, minutes: Int? = null, sessionId: String? = null, pages: Int? = null): Outcome<CompleteResult>
+    /** A proof task's timer (blueprint P23): one runs at a time (a start stops any other). [clientId] is the start's key. */
+    suspend fun startTimer(templateId: String, clientId: String): Outcome<TimerResult>
+    /** Its stop: the minutes wait for the tick that counts them. */
+    suspend fun stopTimer(sessionId: String, clientId: String): Outcome<TimerResult>
     suspend fun undoTask(instanceId: String, clientId: String): Outcome<UndoTaskResult>
     suspend fun workDone(id: String, clientId: String): Outcome<WorkResult>
     suspend fun workReopen(id: String, clientId: String): Outcome<WorkResult>
@@ -53,4 +62,9 @@ interface XtnlApi {
     suspend fun buyReward(rewardId: String, clientId: String): Outcome<BuyResult>
     /** Undoes a purchase inside its ten minutes (blueprint P19), once. */
     suspend fun undoBuy(purchaseId: String, clientId: String): Outcome<UndoBuyResult>
+    /**
+     * Health Connect's walks, hikes and weigh-ins (blueprint P27): one batch of the sync (health/HealthSync). Each walk
+     * lands once per record (a resend is a duplicate), the backfill (before [HealthBatch.since]) is recorded only.
+     */
+    suspend fun syncHealth(batch: HealthBatch, clientId: String): Outcome<HealthSyncResult>
 }

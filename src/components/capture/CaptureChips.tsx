@@ -4,10 +4,11 @@ import { useMemo } from "react";
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { formatMinutes, formatXp, matchParentGoal } from "@/lib/capture-parse";
-import { BAND_META, TRACK_LABEL, priceTask } from "@/lib/life-grade";
+import { BAND_META, STUDY_AUTO_METRICS, TRACK_LABEL, priceTask } from "@/lib/life-grade";
 import { sizeLexically } from "@/lib/life-lexicon";
 import { dutyLaunchDay } from "@/lib/duty-economy";
 import { todayKey } from "@/lib/life-day";
+import { pagesCaptureLabelOf, proofChipLabelOf, proofLaunchDay, proofOn } from "@/lib/proof";
 import type { CaptureToken, ParsedCapture, PayMode, Sizing } from "@/lib/life-types";
 import { CurrencyGlyph, Icon, type IconName } from "@/components/ui/Icon";
 import type { CaptureActiveTitle } from "@/app/actions/capture";
@@ -57,6 +58,10 @@ import {
  * on the sheet and the server alike. A line shaped like a weigh-in whose
  * number is out of range is read as a task, and says so under its chips
  * (the same block-once gate as a Must).
+ *
+ * Proof of work (P23, P24): the '#proof' and pages chips say what is in force. Before PROOF_LAUNCH_DAY the tag is kept
+ * and asks for nothing yet ('Proof · from its launch', a plain '30 pages'); on a work tab the server drops both (work
+ * stays outside the game), so the '#proof' chip says so (a warned chip) and the pages one is plain words.
  */
 
 const TOKEN_ICON: Partial<Record<CaptureToken["field"], IconName>> = {
@@ -101,6 +106,11 @@ interface Props {
    * so a caller with the server's value passes it).
    */
   duty?: DutyStakeContext;
+  /**
+   * Proof of work (P23, P24): whether proof is in force today and whether the sheet is on a work tab, for the '#proof'
+   * and pages chips' words. Absent: in force from this browser's view of the code's launch day, on the personal Board.
+   */
+  proof?: { live: boolean; work: boolean };
 }
 
 interface Grade {
@@ -108,6 +118,9 @@ interface Grade {
   minutes: number;
   xp: number | null;
 }
+
+/** A study link (reviews or ideas pay it); a pages line (P24) is ordinary paying work. */
+const studyLinked = (parsed: Pick<ParsedCapture, "autoMetric">): boolean => !!parsed.autoMetric && (STUDY_AUTO_METRICS as readonly string[]).includes(parsed.autoMetric);
 
 /** The grade the server will write, and what one completion at the estimate would pay. */
 function gradeOf(parsed: ParsedCapture, rawBefore: number | null): Grade | null {
@@ -120,7 +133,7 @@ function gradeOf(parsed: ParsedCapture, rawBefore: number | null): Grade | null 
   }
   const minutes = parsed.estMinutes ?? sizing.machineMinutes;
   if (rawBefore === null) return { sizing, minutes, xp: null };
-  const mode: PayMode = parsed.intrinsic ? "PLAY" : parsed.autoMetric ? "STUDY" : "FULL";
+  const mode: PayMode = parsed.intrinsic ? "PLAY" : studyLinked(parsed) ? "STUDY" : "FULL";
   let xp: number | null = null;
   try {
     const receipt = priceTask(
@@ -154,7 +167,7 @@ function GradeText({ grade, parsed }: { grade: Grade; parsed: ParsedCapture }) {
       {BAND_META[grade.sizing.band].label} · ~{formatMinutes(grade.minutes)} ·{" "}
       {parsed.intrinsic ? (
         "play, pays 0"
-      ) : parsed.autoMetric ? (
+      ) : studyLinked(parsed) ? (
         "paid by reviews"
       ) : grade.xp === null ? (
         "priced on save"
@@ -185,6 +198,7 @@ export function CaptureChips({
   onKeepAsText,
   weightRange = null,
   duty,
+  proof,
 }: Props) {
   const grade = useMemo(() => gradeOf(parsed, rawBefore), [parsed, rawBefore]);
   const parent = useMemo(
@@ -235,6 +249,8 @@ export function CaptureChips({
     duty ?? { today: todayKey(), launchDay: dutyLaunchDay() }
   );
   const inboxMust = inboxMustNote(parsed);
+  // Proof of work's chips (P23, P24): in force, not yet, or a work tab (the server drops '#proof' and pages there).
+  const proofState = proof ?? { live: proofOn(todayKey(), proofLaunchDay()), work: false };
 
   return (
     <div className="capture-chips">
@@ -244,6 +260,11 @@ export function CaptureChips({
             const words = text.slice(t.start, t.end);
             let label = t.field === "compulsory" && stake ? stake : t.label;
             let miss = false;
+            if (t.field === "proof") {
+              label = proofChipLabelOf(proofState);
+              miss = proofState.work;
+            }
+            if (t.field === "pages" && parsed.autoTarget != null) label = pagesCaptureLabelOf(parsed.autoTarget, proofState);
             if (t.field === "parent" && parsed.parentHint && goals) {
               // The goal it will attach to, or an honest miss: the server
               // matches the same way (matchParentGoal), so this is what lands.

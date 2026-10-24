@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { BANDS, type Band, type Receipt } from "@/lib/life-types";
+import { BANDS, completesItself, type Band, type Receipt } from "@/lib/life-types";
 import { MINUTE_CHIPS, ruleOf, type BoardRow } from "@/lib/today-board";
 import { SIZING_MAX_ATTEMPTS, effBand } from "@/lib/life-grade";
 import { gradeChipOf, planBornBasisOf } from "@/lib/life-lexicon";
@@ -19,9 +19,11 @@ import { TaskStylePicker } from "@/components/task-style/TaskStylePicker";
 import { stepsAllowed } from "@/lib/subtasks";
 import { StepsEditor, type StepsSave } from "./StepsEditor";
 import { CompetencyLink } from "./CompetencyLink";
+import { PROOF_COUNTS_NOTE, pageChipsOf, pagesLabelOf, proofMinuteChipsOf, timerConfirmOf, timerMinutesOf, type TimerView } from "@/lib/proof";
+import { useTimerClock } from "./TimerChip";
 
 /** A slower write this drawer started and is waiting on. */
-export type DrawerWork = { kind: "resize" } | { kind: "rate"; override: number } | { kind: "rename"; title: string } | { kind: "steps" };
+export type DrawerWork = { kind: "resize" } | { kind: "rate"; override: number } | { kind: "rename"; title: string } | { kind: "steps" } | { kind: "timer" };
 
 interface Props {
   row: BoardRow;
@@ -69,6 +71,17 @@ interface Props {
   onAbort?: () => void;
   /** The task's decisions: the nudge from its third defer, and an abort just this time still undoable. */
   decision?: DrawerDecision | null;
+  /**
+   * Proof of work (blueprint P23): the row is a proof row (row.proof), so Done and Again take its minutes (a chip) or
+   * its timer's (`timer`, read live here: null with none), and Did it yesterday its chip's (today's timer never counts
+   * for yesterday). `project` prices a timer's count as the server bounds it. Absent: the drawer exactly as before.
+   */
+  proof?: { timer: TimerView | null; project: (timerMinutes: number) => Receipt } | null;
+  /**
+   * Pages proof (blueprint P24): a reading task's row (row.pages), so Done, Again and Did it yesterday take its pages
+   * (a chip, `picked`; null for none), at least the day's `target` when it has one. Absent: the drawer exactly as before.
+   */
+  pages?: { target: number | null; picked: number | null; onPick: (pages: number | null) => void } | null;
 }
 
 /** What the drawer says of a task's decisions (task-decisions.ts). */
@@ -146,6 +159,53 @@ export function TaskDrawer(props: Props) {
 
   /** ' · ≈ 3.6' after an action on the personal Board; nothing on a work tab (work pays no XP). */
   const price = (xp: number) => (props.work ? "" : ` · ≈ ${fmtXp(xp)}`);
+  // Proof of work (P23): a proof row's full tick needs a chip's minutes or its timer's (the server refuses it otherwise).
+  const proof = props.proof ?? null;
+  const timer = proof?.timer ?? null;
+  // The timer's minutes, live (the row's chip moves on the same 15 s clock); under a minute is no minutes at all.
+  const clockNow = useTimerClock(!!timer?.running);
+  const timed = timer ? timerMinutesOf(timer, Math.max(clockNow, Date.parse(timer.startedAt))) : 0;
+  const timerMinutes = timer && timed >= 1 ? timed : null;
+  // A timer across 04:00 or past twice the estimate: Done here is the confirmation the row's one tap waited for.
+  const timerAsk = timer && timerMinutes != null && minutes == null ? timerConfirmOf(timer, row.day, row.estMinutes, Math.max(clockNow, Date.parse(timer.startedAt))) : null;
+  const proofMinutes = proof ? (minutes ?? timerMinutes) : null;
+  const needsMinutes = !!proof && proofMinutes == null;
+  // A proof habit done today shows its chips too, so 'Again' can take the minutes.
+  const againNeedsMinutes = !!proof && row.state === "done" && recurring && row.lane !== "yesterday";
+  const minutesWhat = proof
+    ? minutes != null
+      ? fmtMinutes(minutes)
+      : timerMinutes != null
+        ? `timer ${fmtMinutes(timerMinutes)}`
+        : "pick the minutes"
+    : minutes != null
+      ? fmtMinutes(minutes)
+      : `~${fmtMinutes(row.estMinutes)}`;
+  // Done's price: a timer's count is priced as the server bounds it (its own minutes), a chip's as projected.
+  const doneXp = proof && minutes == null && timerMinutes != null ? proof.project(timerMinutes).xp : projection.xp;
+  // A proof row's chips are its estimate's shares (half to twice it), so a long deep-work task can report its time.
+  const minuteChips: readonly number[] = proof ? proofMinuteChipsOf(row.estMinutes) : MINUTE_CHIPS;
+  // Pages proof (P24): a reading task's full tick takes its pages, at least the day's target when it has one.
+  const pages = props.pages ?? null;
+  const needsPages = !!pages && pages.target != null && (pages.picked == null || pages.picked < pages.target);
+  const againNeedsPages = !!pages && row.state === "done" && recurring && row.lane !== "yesterday";
+  const pagesWhat = pages ? (pages.picked != null ? pagesLabelOf(pages.picked) : pages.target != null ? "pick the pages" : null) : null;
+  // "Done · 30 pages", with its minutes when they were picked (or are asked for); without pages exactly as before.
+  const doneWhat = pagesWhat ? (proof || minutes != null ? `${pagesWhat} · ${minutesWhat}` : pagesWhat) : minutesWhat;
+  const blocked = needsMinutes || needsPages;
+  // Did it yesterday sends the chip's minutes only: a timer (today's) never counts for yesterday.
+  const yesterdayBlocked = (!!proof && minutes == null) || needsPages;
+  const proofNote = !proof
+    ? null
+    : needsMinutes
+      ? row.state === "done"
+        ? "Deep work counts its time: pick the minutes it took."
+        : "Deep work counts its time: pick the minutes it took, or start its timer on the row."
+      : timerAsk
+        ? timerAsk
+        : minutes != null && timerMinutes != null
+          ? `The minutes you picked count instead of its timer's. ${PROOF_COUNTS_NOTE}`
+          : PROOF_COUNTS_NOTE;
 
   const closeEditor = () => {
     setTitle(t.title);
@@ -154,10 +214,25 @@ export function TaskDrawer(props: Props) {
 
   return (
     <div className="today-drawer">
-      {open && !study && (
+      {(open || againNeedsMinutes || againNeedsPages) && !study && (
         <>
-          <div className="today-drawer-row" role="group" aria-label="Minutes it took">
-            {MINUTE_CHIPS.map((m) => (
+          {pages && (
+            <div className="today-drawer-row" role="group" aria-label="Pages read" data-chips="pages">
+              {pageChipsOf(pages.target).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className="today-pill num"
+                  aria-pressed={pages.picked === n}
+                  onClick={() => pages.onPick(pages.picked === n ? null : n)}
+                >
+                  {pagesLabelOf(n)}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="today-drawer-row" role="group" aria-label="Minutes it took" data-chips="minutes">
+            {minuteChips.map((m) => (
               <button
                 key={m}
                 type="button"
@@ -169,18 +244,32 @@ export function TaskDrawer(props: Props) {
               </button>
             ))}
           </div>
-          <div className="today-drawer-row">
-            <button type="button" className="today-pill" data-tone="primary" disabled={busy} onClick={props.onDone}>
-              Done{row.steps && !row.steps.checklist ? " · every step" : ""} · {minutes != null ? fmtMinutes(minutes) : `~${fmtMinutes(row.estMinutes)}`}
-              {price(projection.xp)}
-            </button>
-            {t.mvv && props.minimumProjection && (
-              <button type="button" className="today-pill" disabled={busy} onClick={props.onMinimum}>
-                Do minimum: {t.mvv}
-                {price(props.minimumProjection.xp)}
+          {open && (
+            <div className="today-drawer-row">
+              <button type="button" className="today-pill" data-tone="primary" disabled={busy || blocked} onClick={props.onDone}>
+                Done{row.steps && !row.steps.checklist && !proof && !pages ? " · every step" : ""} · {doneWhat}
+                {blocked ? "" : price(doneXp)}
               </button>
-            )}
-          </div>
+              {t.mvv && props.minimumProjection && (
+                <button type="button" className="today-pill" disabled={busy} onClick={props.onMinimum}>
+                  Do minimum: {t.mvv}
+                  {price(props.minimumProjection.xp)}
+                </button>
+              )}
+            </div>
+          )}
+          {proofNote && (
+            <p className="today-drawer-note" data-proof="1">
+              {proofNote}
+            </p>
+          )}
+          {pages && (
+            <p className="today-drawer-note" data-pages="1">
+              {needsPages && pages.target != null
+                ? `A reading task counts its pages: pick how many you read, at least ${pagesLabelOf(pages.target)}.`
+                : "The pages are recorded with the tick; they never change its price."}
+            </p>
+          )}
         </>
       )}
 
@@ -196,13 +285,13 @@ export function TaskDrawer(props: Props) {
           </button>
         )}
         {row.recordYesterday && props.onYesterday && (
-          <button type="button" className="today-pill" disabled={busy} onClick={props.onYesterday} title="Forgot to tick it? It counts on yesterday, as if ticked then.">
+          <button type="button" className="today-pill" disabled={busy || yesterdayBlocked} onClick={props.onYesterday} title="Forgot to tick it? It counts on yesterday, as if ticked then.">
             Did it yesterday
             {price(row.recordYesterday.xp)}
           </button>
         )}
         {row.state === "done" && recurring && !study && row.lane !== "yesterday" && (
-          <button type="button" className="today-pill" disabled={busy} onClick={props.onAgain} title={props.work ? "Once more today" : "Once more today; repeat decay applies"}>
+          <button type="button" className="today-pill" disabled={busy || blocked} onClick={props.onAgain} title={props.work ? "Once more today" : "Once more today; repeat decay applies"}>
             Again
             {price(projection.xp)}
           </button>
@@ -230,7 +319,7 @@ export function TaskDrawer(props: Props) {
       {/* Defer and abort (task-decisions.ts): each opens its sheet (a reason, and when, or how far). */}
       {open && row.lane !== "yesterday" && (props.onDefer || props.onAbort) && (
         <div className="today-drawer-row" role="group" aria-label="Put it off, or drop it">
-          {props.onDefer && !t.autoMetric && (
+          {props.onDefer && !completesItself(t.autoMetric) && (
             <button type="button" className="today-pill td-act" disabled={busy} onClick={props.onDefer} aria-haspopup="dialog" title="Off the board until a time you pick, with a reason">
               Defer…
             </button>

@@ -255,7 +255,8 @@ interface FactsRaw {
   dayOpenQty: number | null;
 }
 
-const AUTO_METRICS: ReadonlySet<string> = new Set(["REVIEWS", "IDEAS", "REVIEW_DUE", "STEPS", "WORKOUT"]);
+// PAGES (blueprint P24): a reading task, read through like the rest (life-types completesItself says it is ticked by hand).
+const AUTO_METRICS: ReadonlySet<string> = new Set(["REVIEWS", "IDEAS", "REVIEW_DUE", "STEPS", "WORKOUT", "PAGES"]);
 const DONE_STATUSES = ["DONE", "DONE_LATE", "DONE_MVV"];
 
 const asAutoMetric = (x: string | null): AutoMetric | null => (x && AUTO_METRICS.has(x) ? (x as AutoMetric) : null);

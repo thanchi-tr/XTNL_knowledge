@@ -49,8 +49,49 @@ panes on the main one, also at `xtnl://app/mall`). Then Settings and
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.5 (versionCode 17), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.8 (versionCode 20), so
 it installs over the v1 WebView shell in place.
+
+On **Check**, a long press on any open task opens its **minutes sheet** (blueprint
+P7 and P23): the web drawer's chips (10, 20, 30, 45, 60, 90 min), Done with the
+minutes picked (the server counts them with the drawer's clamp, half to twice the
+estimate, and the sheet says when that moves them), and its minimum version. Once
+the server switches proof of work on (`PROOF_LAUNCH_DAY`, until the user's go
+nothing changes), a deep-work task marked proof says "log the minutes": its tap
+ticks with its timer once that has run, else opens the sheet, where its timer
+starts, stops and resumes ("Timer 12 min"; a Resume after a break adds to it).
+Its chips span its estimate (45 to 180 min on a 90-minute task). A timer counts
+what it ran (at most twice the estimate); picked minutes count instead of it. A
+timer that ran across 04:00, or past twice the estimate, opens the sheet first
+rather than counting in one tap. One timer runs at a time; it is a row on the
+server, so it survives an app restart, and the row's figure moves while it runs.
+Every other task, and every minimum, still ticks in one tap.
+
+A reading task (P24, captured with its pages: `read 30 pages`, `30pg`; `30p` is
+still 30 minutes) says "log 30 pages" once proof of work is on: its tap opens the
+same sheet at its **page chips** (30, 45, 60 pages, the day's target picked), and
+Done reads "Done · 30 pages". The server refuses fewer than the target ("Log the
+pages"); the pages are recorded, never priced, and its minimum needs none.
+
+**Health Connect** (blueprint P27, decision D22: Settings › Health Connect ›
+Walks, hikes and weight) reads walking and hiking sessions (their distance and,
+for a hike, the climb) and weigh-ins from Health Connect, so they arrive without
+being logged by hand. It is **off until you turn it on**: the switch first shows
+the rationale (what is read and what the server does with it; Health Connect
+opens the same screen from its own settings), then Health Connect's permission
+dialog, and the sync starts only once walks, distance and weight are allowed.
+Nothing else is read (no steps, heart rate, sleep or other workouts) and nothing
+is written to Health Connect. Where Android allows reads while the app is
+closed (Android 15+, asked separately) a WorkManager job syncs about every 6
+hours; without that no job is armed and it syncs when the app opens, posting to
+`POST /exercise` 50 at a time. Walks from before the switch-on (the first sync
+reads Health Connect's 30 days of history) are recorded, never paid and never a
+personal best; a newer walk is priced as one logged on Train › Exercise, once per
+record. One you already logged by hand is matched, and the same walk typed on
+Train › Exercise after it came in is refused there: never paid twice. A weigh-in
+never replaces one you typed. The line under the switch says when it last synced
+and what came in, and how many walks were skipped because their app recorded no
+distance.
 
 ## Build
 
@@ -71,7 +112,7 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 | Android Gradle Plugin | 8.7.2 (compileSdk and targetSdk 35, minSdk 26) |
 | Kotlin | 2.0.21 (with the Compose compiler plugin) |
 | Compose BOM | 2024.11.00 (Compose 1.7.5, Material 3 1.3.1) |
-| Other libraries | androidx.window 1.3.0, androidx.webkit 1.12.1, core-splashscreen 1.0.1, OkHttp 4.12.0, kotlinx.serialization 1.7.3 |
+| Other libraries | androidx.window 1.3.0, androidx.webkit 1.12.1, core-splashscreen 1.0.1, OkHttp 4.12.0, kotlinx.serialization 1.7.3, Health Connect client 1.1.0-alpha10, WorkManager 2.9.1 |
 
 To build for a different default server, pass it as a property:
 `.\gradlew.bat assembleDebug -Pxtnl.server=https://example.com`. The default
@@ -118,7 +159,28 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
   once, an undo inside its ten minutes only, once, a lost purchase's clientId
   kept only until a read lists that purchase (a new Buy is then a new one),
   and an undone purchase's price struck through, never shown as "+";
-- the shapes of the API's responses.
+- the minutes sheet and proof of work (P7, P23): the web drawer's chips and
+  clamp (an estimate of 30 reported as 90 counts 60), what a tap does (a chore
+  ticks in one tap; a proof row ticks with its timer once it has run, else
+  opens the sheet), the timer's words as the web's ("Timer 34 min", "Timed
+  1 h 05"), the demo refusing a proof row's full tick with no minutes ("Log the
+  minutes"), one timer at a time, and a timer counted once by its tick;
+- pages proof (P24): a reading task's tap opening the sheet, its page chips and
+  words as the web's ("Done · 30 pages", "log 30 pages"), the demo refusing a
+  full tick below the day's target ("Log the pages") and pricing the pages at
+  nothing, and its minimum still one tap;
+- Health Connect (P27): only walking and hiking sessions are sent, with their
+  distance, climb and app, never one the server can't log (no distance, over a
+  day, a bad id); weigh-ins of 20 to 400 kg; oldest first, 50 at a time with
+  the switch-on instant; the first sync reads 30 days, each later one from the
+  last less 48 hours; the app's own sync at most every 15 minutes; Settings'
+  lines; the server's words for a batch; the demo recording the backfill,
+  paying a newer walk and answering a resend as duplicates; and the manifest
+  declaring exactly the permissions asked, the rationale activity and the
+  Android 14+ alias (HealthManifestTest);
+- the shapes of the API's responses (a row's proof, timer and pages, the timer
+  routes' answer, a row from an older server reading as none of them, and
+  `/exercise`'s counts and the body the sync sends).
 
 The screen renders are a separate step, because they are slow. This command
 draws every screen with demo data at the Fold's sizes (front display, main

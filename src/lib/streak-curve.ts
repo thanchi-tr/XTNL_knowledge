@@ -145,6 +145,8 @@ export const NEVER_STREAK_SOURCES: ReadonlySet<AnyActivitySource> = new Set<AnyA
   // The Mall's rows (mall-server.ts; blueprint P19): spending credits, or a purchase undone, is never a day's work.
   "MALL_BUY",
   "MALL_REFUND",
+  // A Health Connect walk's dedupe row (blueprint P27): bookkeeping. The walk itself counts through its WORKOUT row.
+  "INGEST",
 ]);
 
 /**

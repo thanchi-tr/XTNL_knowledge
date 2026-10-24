@@ -56,7 +56,9 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const SLOT: Record<ParsedCapture["tokens"][number]["field"], string> = {
   mode: "mode", done: "done", compulsory: "compulsory", inbox: "inbox", duration: "duration",
   recurrence: "recurrence", date: "date", deadline: "date", tag: "tag", horizon: "horizon",
-  play: "play", parent: "parent", mvv: "mvv", study: "study", answer: "answer",
+  play: "play", parent: "parent", mvv: "mvv", study: "study", answer: "answer", proof: "proof",
+  // Re-pinned for P24: a reading line's pages fill the line's one autoMetric, the slot a study link fills.
+  pages: "study",
 };
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 const chips = (p: ParsedCapture, text: string) => p.tokens.map((t) => `${t.field}[${text.slice(t.start, t.end)}]`).join(" ");
@@ -368,6 +370,41 @@ fx("should i buy a bike?", { title: "Should i buy a bike", inbox: true, labels: 
 fx("call bank ?", { title: "Call bank", inbox: true });
 fx("fix bike #unknown", { title: "Fix bike #unknown", track: null, fields: [] });
 
+console.log("\n── #proof (blueprint P23, D20: the task counts its time)");
+fx("thesis chapter 90m #proof", { title: "Thesis chapter", proof: true, estMinutes: 90, fields: ["duration", "proof"], labels: { proof: "Proof · log the minutes" } });
+fx("deep work daily #proof #craft", { title: "Deep work", proof: true, recurrence: "DAILY", track: "CRAFT" });
+fx("x write report 45m #proof", { title: "Write report", proof: true, doneNow: true, estMinutes: 45 });
+fx("write #proof #proof", { title: "Write #proof", proof: true });
+fx("goal: finish the thesis #proof", { title: "Finish the thesis #proof", mode: "GOAL", fields: ["mode"] });
+fx("finish the thesis #proof #long", { title: "Finish the thesis #proof", mode: "GOAL" });
+fx("idea: why #proof", { mode: "IDEA", fields: ["mode"] });
+fx("dishes daily", { title: "Dishes", recurrence: "DAILY" });
+report("a line without '#proof' carries no proof key (every other parse is byte for byte as before)", !("proof" in parseCapture("dishes daily", { today: THU })) && !("proof" in parseCapture("goal: finish the thesis #proof", { today: THU })));
+
+console.log("\n── Pages (blueprint P24, D21: a reading task's tick reports its pages; the token is pg or pages, never p)");
+fx("read 30 pages", { title: "Read 30 pages", kind: "TASK", autoMetric: "PAGES", autoTarget: 30, estMinutes: null, fields: ["pages"], labels: { pages: "Proof · 30 pages" } });
+fx("read 30pg daily", { title: "Read 30pg", kind: "HABIT", autoMetric: "PAGES", autoTarget: 30, recurrence: "DAILY", fields: ["pages", "recurrence"] });
+fx("read 25 pgs 40m", { title: "Read 25 pgs", autoMetric: "PAGES", autoTarget: 25, estMinutes: 40, fields: ["pages", "duration"] });
+fx("read 1 page a day", { title: "Read 1 page", autoMetric: "PAGES", autoTarget: 1, recurrence: "DAILY", labels: { pages: "Proof · 1 page" } });
+fx("read 30 pages a day (min: 1 page)", { title: "Read 30 pages", autoMetric: "PAGES", autoTarget: 30, recurrence: "DAILY", mvv: "1 page" });
+fx("x read 30 pages", { title: "Read 30 pages", doneNow: true, autoMetric: "PAGES", autoTarget: 30, fields: ["done", "pages"] });
+// Re-pinned for P24: '30p' is still 30 minutes (Vietnamese phút), never pages.
+fx("read 30p", { title: "Read", autoMetric: null, autoTarget: null, estMinutes: 30, fields: ["duration"] });
+fx("đọc sách 30p mỗi ngày", { autoMetric: null, estMinutes: 30, recurrence: "DAILY" });
+// A length, a whole book, a goal and an idea are no day's pages; one autoMetric a line (a study link first).
+fx("write a 10 page essay", { title: "Write a 10 page essay", autoMetric: null, fields: [] });
+fx("write a 10-page essay", { title: "Write a 10-page essay", autoMetric: null, fields: [] });
+fx("read 600 pages", { title: "Read 600 pages", autoMetric: null, fields: [] });
+fx("goal: read 300 pages by dec", { mode: "GOAL", autoMetric: null, fields: ["mode", "deadline"] });
+fx("idea: read 30 pages", { mode: "IDEA", autoMetric: null, fields: ["mode"] });
+fx("review 20 cards 30 pages", { autoMetric: "REVIEWS", autoTarget: 20, fields: ["study"] });
+{
+  // Tapping the chip makes the pages plain title text again: an ordinary task, no metric.
+  const line = "read 30 pages daily";
+  const off = parseCapture(line, { today: THU, reverted: [spanOf(line, "30 pages")] });
+  report("reverting the pages chip leaves 'Read 30 pages' an ordinary daily task (no autoMetric, no target)", off.autoMetric === null && off.autoTarget === null && off.title === "Read 30 pages" && off.recurrence === "DAILY");
+}
+
 console.log("\n── Study links");
 fx("review due", { title: "Review due", autoMetric: "REVIEW_DUE", autoTarget: null, fields: ["study"] });
 fx("clear the queue daily", { title: "Clear the queue", autoMetric: "REVIEW_DUE", recurrence: "DAILY" });
@@ -616,10 +653,11 @@ fx("duolingo 15m a day", { title: "Duolingo", recurrence: "DAILY", estMinutes: 1
 fx("read 1 chapter a day", { title: "Read 1 chapter", recurrence: "DAILY" });
 fx("stretch 2x a day", { title: "Stretch 2x", recurrence: "DAILY" });
 fx("brush teeth twice a day", { title: "Brush teeth twice", recurrence: "DAILY" });
-fx("read 2 pages tmr a day", { title: "Read 2 pages", recurrence: "DAILY", dueDay: FRI });
+// Re-pinned for P24: the count is the reading task's day target too (its pages chip stays in the title).
+fx("read 2 pages tmr a day", { title: "Read 2 pages", recurrence: "DAILY", dueDay: FRI, autoMetric: "PAGES", autoTarget: 2 });
 fx("eat 3 meals per day", { title: "Eat 3 meals", recurrence: "DAILY" });
 fx("drink 8 glasses/day", { title: "Drink 8 glasses", recurrence: "DAILY" });
-fx("read 10 pages a night", { title: "Read 10 pages", recurrence: "DAILY" });
+fx("read 10 pages a night", { title: "Read 10 pages", recurrence: "DAILY", autoMetric: "PAGES", autoTarget: 10 });
 fx("call it a day", { title: "Call it a day", recurrence: null, fields: [] });
 fx("book a night at the hotel", { title: "Book a night at the hotel", recurrence: null, fields: [] });
 fx("every 2nd day floss", { title: "Floss", recurrence: "EVERY:2", labels: { recurrence: "Every other day" } });

@@ -309,6 +309,10 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .t-row .r-acts { display: flex; flex-wrap: wrap; gap: 2px 8px; margin: -2px 0 -4px; }
 .t-row .r-act { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 4px; border: 0; background: none; color: var(--ink-0); font: 600 13px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; }
 .t-row .r-act:disabled { opacity: .45; }
+/* Proof of work (blueprint P23): a proof row's timer, a 44 px target on the row (TimerChip): Start, Stop, and a stopped one's Resume and Discard. */
+.t-row .r-timer { min-height: 44px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.t-row .r-timer[data-state="running"] { color: var(--ink-0); text-decoration-color: var(--line-ctl); }
+.t-row .r-timer-done { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; color: var(--ink-1); font: 600 13px var(--font-ui); }
 /* The kit Tick's circle is .tick-ring (never the bare .ring: that is Tailwind's ring utility). */
 .t-row .tick[data-skipped="1"] .tick-ring { border-style: dashed; }
 .t-row[data-state="locked"] .tick .tick-ring { border-style: dotted; }
@@ -409,6 +413,8 @@ html[data-motion="calm"] .t-row[data-motion="arrive"] { animation: today-fade 20
 .today-drawer { margin: 0 8px 12px 50px; padding: 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-2); }
 @container main (max-width: 420px) { .today-drawer { margin-left: 6px; margin-right: 6px; } }
 .today-drawer-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* The drawer's chip groups (minutes; a reading task's pages, P24): 44 px targets, the row's own size. */
+.today-drawer-row[data-chips] .today-pill { min-height: 44px; }
 .today-drawer-row + .today-drawer-row { margin-top: 8px; }
 .today-pill {
   min-height: 40px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

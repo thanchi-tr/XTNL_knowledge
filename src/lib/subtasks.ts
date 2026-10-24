@@ -8,7 +8,7 @@
  *   - A compulsory task (a must) pays nothing for a part: only once every step is done, and then in full.
  *   - Once a task was paid by a whole tick (Done, its minimum, a make-up), its steps are a checklist only.
  */
-import type { StepShare } from "./life-types";
+import { completesItself, type StepShare } from "./life-types";
 
 /** At most this many steps on one task. */
 export const STEPS_MAX = 12;
@@ -62,9 +62,12 @@ export function cleanStepTitle(raw: unknown): string | null {
   return t.length > 0 ? t : null;
 }
 
-/** Which tasks can have steps: tasks and habits, never a goal, an idea draft or a study task (reviews complete it). */
+/**
+ * Which tasks can have steps: tasks and habits, never a goal, an idea draft or a study task (reviews complete it). A
+ * pages task (blueprint P24) is ticked by hand, so it can (while proof is in force its steps are a checklist).
+ */
 export function stepsAllowed(t: { kind: string; autoMetric: string | null }): boolean {
-  return (t.kind === "TASK" || t.kind === "HABIT") && !t.autoMetric;
+  return (t.kind === "TASK" || t.kind === "HABIT") && !completesItself(t.autoMetric);
 }
 
 /** The next tick set: one step on or off, or every step on (null id, done) or off (null id, not done). */

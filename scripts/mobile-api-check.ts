@@ -84,8 +84,12 @@ import { NO_SKILL_FACTS, skillSealKey, skillsOf, type SkillRow, type SkillTempla
 import { loadSkills, type SkillStore } from "../src/lib/competency-server";
 import { BUY_CREDITS_OFF, FREE_PLAY_LINE, FREE_REST_LINE, MALL_BUYING, MALL_CATEGORIES, PRICE_RANGE_LINE, PURCHASE_GONE, REWARD_GONE, UNDO_TOO_LATE, buyRowKey, goodDayLine, type MallRewardRow, type PurchaseRow, type RewardInput } from "../src/lib/mall";
 import { addRewardCore, buyRewardCore, loadMall, undoBuyCore, type MallStore, type MallView, type PurchaseStore } from "../src/lib/mall-server";
-import { BUY_NEEDS_CLIENT_ID } from "../src/lib/mobile-api";
+import { BUY_NEEDS_CLIENT_ID, TICK_MINUTES_MAX, TICK_MINUTES_MIN, TIMER_STARTED_LINE } from "../src/lib/mobile-api";
+import { PAGES_QTY_MAX, PAGES_REFUSAL_PREFIX, PROOF_MINUTES_REFUSAL, TIMER_CLIENT_ID, TIMER_GONE, TIMER_OFF, TIMER_OTHER_DAY, pagesRefusalOf } from "../src/lib/proof";
 import type { WalletDays } from "../src/lib/credits-server";
+// Blueprint P27: Health Connect's walks and weigh-ins, through the real core over a fake store.
+import { HC_WALK_INGESTED, HC_WRITES_OFF, HC_WALKS_MAX, ingestKeyOf, type HcBatch } from "../src/lib/health-ingest";
+import { ingestHealthCore, type IngestStore } from "../src/lib/health-ingest-server";
 import {
   AUTH_LINE,
   CODE_STATUS,
@@ -140,6 +144,7 @@ import {
 } from "../src/lib/mobile-api";
 import {
   handleCheck,
+  handleExercise,
   handleIdeaCreate,
   handleIdeasMeta,
   handleLog,
@@ -154,6 +159,8 @@ import {
   handleStatus,
   handleTaskComplete,
   handleTaskUndo,
+  handleTaskStart,
+  handleTaskStop,
   handleWorkDone,
   handleWorkReopen,
   type MobileDeps,
@@ -658,6 +665,12 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
     settleMomentum: async () => ({}),
     completeTask: async () => ({ ok: true, value: completion() }),
     undoCompletion: async (instanceId) => ({ ok: true, value: { instanceId, xp: -4.26 } }),
+    // Proof of work (P23): a timer started at NOW, and its stop 34 minutes later.
+    startTimer: async (templateId) => ({ ok: true, value: { sessionId: "ts1", templateId, day: TODAY, startedAt: NOW.toISOString(), endedAt: null, running: true, priorMinutes: 0 } }),
+    stopTimer: async (sessionId) => ({
+      ok: true,
+      value: { sessionId, templateId: "hab1", day: TODAY, startedAt: NOW.toISOString(), endedAt: new Date(NOW.getTime() + 34 * 60_000).toISOString(), running: false, priorMinutes: 0 },
+    }),
     doneScheduled: async (id) => ({ ok: true, value: { id, doneAt: NOW.toISOString(), interactionId: null } }),
     reopenScheduled: async (id) => ({ ok: true, value: { id } }),
     loadVariants: async () => new Map(),
@@ -677,6 +690,11 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
     loadAvatar: async () => EMPTY_AVATAR,
     loadSkills: async () => [],
     loadTemplateSkill: async () => null,
+    // P27: a sync that brought nothing new (the core's own empty summary and line).
+    ingestHealth: async () => ({
+      ok: true,
+      value: { walks: { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 0, xp: 0 }, weights: { added: 0, kept: 0 }, refused: [], line: "Health Connect: nothing new." },
+    }),
   };
   const merged = { ...base, ...over } as MobileDeps;
   const deps = Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, spy(k, fn as (...a: unknown[]) => unknown)])) as unknown as MobileDeps;
@@ -891,7 +909,34 @@ async function routes() {
     eq("tasks: Must, Planned (TASK), Habits in the board's order, done rows last", tasks.map((t) => `${t.templateId}:${t.lane}`), want);
     check("the fixture has rows in every lane and both states (the test can fail)", board.must.length > 0 && planned.length > 0 && habits.length > 0 && want.indexOf("plan2:TASK") > want.indexOf("hab1:HABIT"));
     check("no anytime row, no work tab", !tasks.some((t) => t.templateId === "any1"));
-    eq("a task's documented keys", keysOf(tasks[0]), ["dueLabel", "icon", "lane", "minutes", "mvv", "status", "templateId", "title", "xpHint"]);
+    // Re-pinned for P23: every row says whether it is a proof row and carries its open timer (false and null while off).
+    // Re-pinned for P24: every row also carries `pages` (a reading task's day target; null on every other row and while off).
+    eq("a task's documented keys", keysOf(tasks[0]), ["dueLabel", "icon", "lane", "minutes", "mvv", "pages", "proof", "status", "templateId", "timer", "title", "xpHint"]);
+    check("proof of work off (no BoardData.proof): every row proof false, timer null, pages null", tasks.every((x) => x.proof === false && x.timer === null && x.pages === null));
+    {
+      // Proof of work in force (BoardData.proof, a proof template): the row says so and carries its open timer.
+      const timer = { sessionId: "ts1", templateId: "hab1", day: TODAY, startedAt: NOW.toISOString(), endedAt: null, running: true, priorMinutes: 0 };
+      const proofData: BoardData = { ...DATA, templates: DATA.templates.map((x) => (x.id === "hab1" ? { ...x, proof: "MINUTES" as const } : x)), proof: { launchDay: TODAY, timers: [timer] } };
+      const pd = data(await got(handleCheck(get("/check"), fakes({ loadBoard: async () => proofData }).deps)));
+      collectKeys(pd);
+      const pt = (pd.tasks as Record<string, unknown>[]).find((x) => x.templateId === "hab1")!;
+      const others = (pd.tasks as Record<string, unknown>[]).filter((x) => x.templateId !== "hab1");
+      check("proof of work in force (P23): the proof row says so with its timer; every other row ticks in one tap (proof false)", pt.proof === true && same(pt.timer, timer) && others.every((x) => x.proof === false && x.timer === null));
+      // Pages proof (P24): a reading task (autoMetric PAGES, its target 30) says so on its row; nothing else changes.
+      const pagesData: BoardData = { ...DATA, templates: DATA.templates.map((x) => (x.id === "hab1" ? { ...x, autoMetric: "PAGES" as const, autoTarget: 30 } : x)), proof: { launchDay: TODAY, timers: [] } };
+      const gd = data(await got(handleCheck(get("/check"), fakes({ loadBoard: async () => pagesData }).deps)));
+      collectKeys(gd);
+      const gt = (gd.tasks as Record<string, unknown>[]).find((x) => x.templateId === "hab1")!;
+      const gOthers = (gd.tasks as Record<string, unknown>[]).filter((x) => x.templateId !== "hab1");
+      const gOff = data(await got(handleCheck(get("/check"), fakes({ loadBoard: async () => ({ ...pagesData, proof: undefined }) }).deps)));
+      check(
+        "pages proof in force (P24): the reading task's row carries pages {target 30} (proof false: it takes pages, not minutes); every other row pages null; with proof off it is null too",
+        same(gt.pages, { target: 30 }) && gt.proof === false && gOthers.every((x) => x.pages === null) && (gOff.tasks as Record<string, unknown>[]).every((x) => x.pages === null)
+      );
+      const before: BoardData = { ...proofData, proof: { launchDay: addDays(TODAY, 1), timers: [] } };
+      const bd = data(await got(handleCheck(get("/check"), fakes({ loadBoard: async () => before }).deps)));
+      check("a launch day after today gates nothing (forward only)", (bd.tasks as Record<string, unknown>[]).every((x) => x.proof === false));
+    }
     const t = (id: string) => tasks.find((x) => x.templateId === id)!;
     eq("statuses: done at the minimum DONE_MVV, done DONE, else OPEN", [t("plan2").status, t("hab2").status, t("hab1").status, t("must1").status], ["DONE_MVV", "DONE", "OPEN", "OPEN"]);
     const hab1Row = board.todayRows.find((r) => r.template.id === "hab1")!;
@@ -1152,10 +1197,75 @@ async function routes() {
     await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", day: "yesterday", mvv: true }), deps));
     await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", day: TODAY, mvv: null }), deps));
     check("day and mvv pass through; null is absent", same(calls.completeTask[1], ["hab1", { day: "yesterday", mvv: true }]) && same(calls.completeTask[2], ["hab1", { day: TODAY }]));
-    const bads = await Promise.all(
-      [{ templateId: "../x" }, {}, { templateId: "hab1", day: "2026-02-30" }, { templateId: "hab1", mvv: "yes" }, { templateId: "hab1", minutes: 30 }, { templateId: "hab1", clientId: "nope" }].map(async (b) => got(handleTaskComplete(post("/tasks/complete", b), deps)))
+    // Re-pinned for P23 (P7's phone minutes): minutes 1-480 and a timer's sessionId are now on the allow list.
+    await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", minutes: 45 }), deps));
+    await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", minutes: 480, sessionId: "ts1" }), deps));
+    await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", minutes: null, sessionId: null }), deps));
+    check(
+      "minutes (1-480, whole) and sessionId pass through to the board's tick; null is absent (P7, P23)",
+      same(calls.completeTask[3], ["hab1", { minutes: 45 }]) && same(calls.completeTask[4], ["hab1", { minutes: 480, sessionId: "ts1" }]) && same(calls.completeTask[5], ["hab1", {}])
     );
-    check("bad input (an id, a day, mvv, an unknown field, a clientId) → 400, and the core is never called", bads.every((b) => isFail(b, "bad")) && calls.completeTask.length === 3);
+    // Re-pinned for P24: a reading task's pages, proof { kind: 'PAGES', qty } (whole, 1 to 2000), are on the allow list too.
+    await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", proof: { kind: "PAGES", qty: 30 } }), deps));
+    await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", minutes: 45, proof: { qty: PAGES_QTY_MAX, kind: "PAGES" } }), deps));
+    await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", proof: null }), deps));
+    check(
+      "proof { kind: 'PAGES', qty } passes through to the board's tick, with the minutes; null is absent (P24)",
+      same(calls.completeTask[6], ["hab1", { proof: { kind: "PAGES", qty: 30 } }]) && same(calls.completeTask[7], ["hab1", { minutes: 45, proof: { kind: "PAGES", qty: 2000 } }]) && same(calls.completeTask[8], ["hab1", {}])
+    );
+    const bads = await Promise.all(
+      [
+        { templateId: "../x" },
+        {},
+        { templateId: "hab1", day: "2026-02-30" },
+        { templateId: "hab1", mvv: "yes" },
+        { templateId: "hab1", minutes: 0 },
+        { templateId: "hab1", minutes: 481 },
+        { templateId: "hab1", minutes: 30.5 },
+        { templateId: "hab1", minutes: "30" },
+        { templateId: "hab1", sessionId: "../x" },
+        { templateId: "hab1", seconds: 30 },
+        { templateId: "hab1", clientId: "nope" },
+        { templateId: "hab1", proof: { kind: "MINUTES", qty: 30 } },
+        { templateId: "hab1", proof: { kind: "PAGES", qty: 0 } },
+        { templateId: "hab1", proof: { kind: "PAGES", qty: 2001 } },
+        { templateId: "hab1", proof: { kind: "PAGES", qty: 30.5 } },
+        { templateId: "hab1", proof: { kind: "PAGES", qty: "30" } },
+        { templateId: "hab1", proof: { kind: "PAGES", qty: 30, unit: "pg" } },
+        { templateId: "hab1", proof: [30] },
+        { templateId: "hab1", proof: "30 pages" },
+        { templateId: "hab1", pages: 30 },
+      ].map(async (b) => got(handleTaskComplete(post("/tasks/complete", b), deps)))
+    );
+    // Re-pinned for P24: three more good calls above (9 in all), and the pages' bad shapes below are 400s too.
+    check(
+      "bad input (an id, a day, mvv, minutes outside 1-480 or not whole, a sessionId, an unknown field, a clientId, a proof that is not { kind: 'PAGES', qty 1-2000 whole }) → 400, and the core is never called",
+      bads.every((b) => isFail(b, "bad")) && calls.completeTask.length === 9
+    );
+    {
+      // A proof task's tick names the minutes it counted (P23); the gate's refusal is a conflict, a timer gone is 404.
+      const receipt = { ...completion().receipt, v: "life-3", minutes: 90, proof: { reported: 90, gated: true, wall: null } };
+      const pl = data(await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", minutes: 90 }), fakes({ completeTask: async () => ({ ok: true, value: completion({ receipt }) }) }).deps))).line;
+      const refused = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), fakes({ completeTask: async () => ({ ok: false, error: PROOF_MINUTES_REFUSAL }) }).deps));
+      const gone = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", sessionId: "ts9" }), fakes({ completeTask: async () => ({ ok: false, error: TIMER_GONE }) }).deps));
+      // Review: a named timer that is not this row's (today's, named for yesterday) is a refusal (409), not a 404.
+      const otherDay = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", day: "yesterday", sessionId: "ts1" }), fakes({ completeTask: async () => ({ ok: false, error: TIMER_OTHER_DAY }) }).deps));
+      check(
+        "a proof tick's line names its minutes ('+4.3 XP · Body · 90 min'); 'Log the minutes' is a 409, a timer gone a 404, another day's timer a 409 (P23)",
+        pl === "+4.3 XP · Body · 90 min" && isFail(refused, "conflict") && refused.json.error === PROOF_MINUTES_REFUSAL && isFail(gone, "gone") && isFail(otherDay, "conflict") && otherDay.json.error === TIMER_OTHER_DAY
+      );
+    }
+    {
+      // Pages proof (P24): a reading task's tick names its pages; the gate's refusal ("Log the pages") is a conflict.
+      const receipt = { ...completion().receipt, v: "life-3", proof: { reported: null, gated: false, wall: null, pages: 30 } };
+      const pl = data(await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", proof: { kind: "PAGES", qty: 30 } }), fakes({ completeTask: async () => ({ ok: true, value: completion({ receipt }) }) }).deps))).line;
+      const line = pagesRefusalOf({ gated: true, target: 30, pages: null })!;
+      const refused = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), fakes({ completeTask: async () => ({ ok: false, error: line }) }).deps));
+      check(
+        "a pages tick's line names its pages ('+4.3 XP · Body · 30 pages'); 'Log the pages' is a 409 (P24)",
+        pl === "+4.3 XP · Body · 30 pages" && line.startsWith(PAGES_REFUSAL_PREFIX) && isFail(refused, "conflict") && refused.json.error === line
+      );
+    }
     const lines = await Promise.all(
       [
         completion({ status: "DONE_MVV" }),
@@ -1217,6 +1327,127 @@ async function routes() {
     check("undo: a bad id → 400", isFail(await got(handleTaskUndo(post("/tasks/undo", { instanceId: "" }), u.deps)), "bad"));
     const ugone = fakes({ undoCompletion: async () => ({ ok: false, error: "That tick no longer exists." }) });
     check("undo: a tick that is gone → 404", isFail(await got(handleTaskUndo(post("/tasks/undo", { instanceId: "i9" }), ugone.deps)), "gone"));
+  }
+
+  section("POST /tasks/start and /tasks/stop (P23)");
+  {
+    const { deps, calls } = fakes();
+    const s = await got(handleTaskStart(post("/tasks/start", { templateId: "hab1", clientId: UUID }), deps));
+    collectKeys(data(s));
+    check(
+      "start: startTaskTimer(templateId, clientId) → {timer, line}; the timer as the app reads it",
+      same(calls.startTimer, [["hab1", UUID.toLowerCase()]]) &&
+        same(data(s), { timer: { sessionId: "ts1", templateId: "hab1", day: TODAY, startedAt: NOW.toISOString(), endedAt: null, running: true, priorMinutes: 0 }, line: TIMER_STARTED_LINE })
+    );
+    const again = await got(handleTaskStart(post("/tasks/start", { clientId: UUID, templateId: "hab1" }), deps));
+    check("start: a retry with the same clientId answers the first, the core runs once", calls.startTimer.length === 1 && again.raw === s.raw);
+    const noKey = await got(handleTaskStart(post("/tasks/start", { templateId: "hab1" }), deps));
+    const bads = await Promise.all([{ templateId: "../x", clientId: randomUUID() }, { clientId: randomUUID() }, { templateId: "hab1", clientId: "nope" }, { templateId: "hab1", clientId: randomUUID(), minutes: 5 }].map(async (b) => got(handleTaskStart(post("/tasks/start", b), deps))));
+    check("start: no clientId, a bad id, a bad clientId or an unknown field → 400, the core never called", isFail(noKey, "bad") && noKey.json.error === TIMER_CLIENT_ID && bads.every((b) => isFail(b, "bad")) && calls.startTimer.length === 1);
+    const off = await got(handleTaskStart(post("/tasks/start", { templateId: "hab1", clientId: UUID2 }), fakes({ startTimer: async () => ({ ok: false, error: TIMER_OFF }) }).deps));
+    check("start: while proof of work is off the core's refusal is a 409 with its line", isFail(off, "conflict") && off.json.error === TIMER_OFF);
+    const st = await got(handleTaskStop(post("/tasks/stop", { sessionId: "ts1" }), deps));
+    collectKeys(data(st));
+    check(
+      "stop: stopTaskTimer(sessionId) → {timer (running false, endedAt), line 'Timer stopped at 34 min. …'}",
+      same(calls.stopTimer, [["ts1"]]) && (data(st).timer as { running: boolean }).running === false && data(st).line === "Timer stopped at 34 min. Tick the task to count them."
+    );
+    const sgone = await got(handleTaskStop(post("/tasks/stop", { sessionId: "ts9" }), fakes({ stopTimer: async () => ({ ok: false, error: TIMER_GONE }) }).deps));
+    check("stop: a timer that is gone → 404; a bad id → 400", isFail(sgone, "gone") && isFail(await got(handleTaskStop(post("/tasks/stop", { sessionId: "" }), deps)), "bad"));
+  }
+
+  section("POST /exercise (P27: Health Connect's walks, hikes and weigh-ins)");
+  {
+    // NOW is 11:12 in Sydney on the 21st; the sync was switched on at 10:00 (since). A walk at 08:00 is the backfill.
+    const since = "2026-10-20T23:00:00.000Z";
+    const walk = (over: Record<string, unknown> = {}) => ({ externalId: "hc-w2", kind: "WALK", start: "2026-10-20T23:20:00.000Z", end: "2026-10-20T23:50:00.000Z", distanceKm: 2.6, ...over });
+    const weight = { externalId: "hc-kg1", at: "2026-10-20T21:05:00.000Z", kg: 82.4 };
+    const { deps, calls } = fakes();
+    const ok = await got(handleExercise(post("/exercise", { since, walks: [walk({ climbM: 40, origin: "com.sec.android.app.shealth" })], weights: [weight], clientId: UUID }), deps));
+    collectKeys(data(ok));
+    const [[userId, batch, at]] = calls.ingestHealth as [string, HcBatch, Date][];
+    check(
+      "the batch reaches ingestHealthCore(userId, batch, now) parsed: since, each walk's instants, distance, climb and origin, each weigh-in's instant and kg",
+      userId === "u1" && at === NOW && batch.since.toISOString() === since &&
+        same(batch.walks.map((w) => ({ ...w, start: w.start.toISOString(), end: w.end.toISOString() })), [{ externalId: "hc-w2", kind: "WALK", start: "2026-10-20T23:20:00.000Z", end: "2026-10-20T23:50:00.000Z", distanceKm: 2.6, climbM: 40, origin: "com.sec.android.app.shealth" }]) &&
+        same(batch.weights.map((w) => ({ ...w, at: w.at.toISOString() })), [weight])
+    );
+    eq("the reply: walks, weights, refused and the line, as the core summed them", data(ok), { walks: { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 0, xp: 0 }, weights: { added: 0, kept: 0 }, refused: [], line: "Health Connect: nothing new." });
+    const again = await got(handleExercise(post("/exercise", { since, walks: [walk({ climbM: 40, origin: "com.sec.android.app.shealth" })], weights: [weight], clientId: UUID }), deps));
+    check("a resend with the same clientId replays the first reply, the core runs once", (calls.ingestHealth ?? []).length === 1 && again.raw === ok.raw);
+    const bads = [
+      {},
+      { since: "yesterday" },
+      { since, walks: {} },
+      { since, walks: [walk({ steps: 4000 })] },
+      { since, walks: [walk({ kind: "RUN" })] },
+      { since, walks: [walk({ end: "2026-10-20T23:10:00.000Z" })] },
+      { since, walks: [walk({ start: "2026-10-21T00:40:00.000Z", end: "2026-10-21T01:10:00.000Z" })] },
+      { since, walks: [walk({ distanceKm: -1 })] },
+      { since, walks: [walk({ distanceKm: "2.6" })] },
+      { since, walks: [walk({ externalId: "a b" })] },
+      { since, walks: [walk({ origin: "not a package!" })] },
+      { since, walks: Array.from({ length: HC_WALKS_MAX + 1 }, (_, i) => walk({ externalId: `w${i}` })) },
+      { since, weights: [{ ...weight, kg: "82.4" }] },
+      { since, weights: [{ ...weight, at: "2026-10-22T00:00:00.000Z" }] },
+      { since, heartRate: [] },
+    ];
+    const badReplies = await Promise.all(bads.map((b) => got(handleExercise(post("/exercise", b), deps))));
+    check(
+      "a wrong shape is 400 and never reaches the core: no since, a bad instant, a list that isn't one, an unknown key, a kind other than WALK or HIKE, an end before its start, a start in the future, a negative or string number, a bad record id or package, more than 100, a weigh-in ahead of time",
+      badReplies.every((r) => isFail(r, "bad")) && (calls.ingestHealth ?? []).length === 1,
+      badReplies.filter((r) => !isFail(r, "bad")).map((r) => r.raw.slice(0, 80)).join(" | ")
+    );
+    const off = await got(handleExercise(post("/exercise", { since, walks: [walk()] }), fakes({ ingestHealth: async () => ({ ok: false, error: HC_WRITES_OFF }) }).deps));
+    check("on a dev server (writes off) the core's refusal is a 409 with its line", isFail(off, "conflict") && off.json.error === HC_WRITES_OFF);
+
+    // Through the real core over a fake store (health-ingest-check holds the rest): a backfilled walk is recordOnly,
+    // a newer one is priced by logWalkCore, a walk the user typed by hand is matched (nothing written but its key), and
+    // a second sync of the same records is all duplicates.
+    const keys = new Set<string>();
+    const walkCalls: { externalId: string; recordOnly: boolean }[] = [];
+    const store: IngestStore = {
+      ingested: async (_u, ks) => new Set(ks.filter((k) => keys.has(k))),
+      sessionsOn: async () => [{ id: "s-hand", day: TODAY, durationMin: 31, distanceKm: 2.5, at: null, claimed: false }],
+      recordMatch: async (_u, input) => {
+        if (keys.has(input.dedupeKey ?? "")) return false;
+        keys.add(input.dedupeKey ?? "");
+        return true;
+      },
+      logWalk: async (_u, raw, _now, opts) => {
+        const key = ingestKeyOf(opts.ingest?.externalId ?? "");
+        if (keys.has(key)) return { ok: false, error: HC_WALK_INGESTED };
+        keys.add(key);
+        walkCalls.push({ externalId: opts.ingest?.externalId ?? "", recordOnly: opts.recordOnly === true });
+        const session = { id: `s-${opts.ingest?.externalId}`, kind: "WALK" as const, day: raw.day, angleDeg: raw.angleDeg, distanceKm: raw.distanceKm, durationMin: raw.durationMin, note: raw.note };
+        return { ok: true, value: opts.recordOnly ? session : { ...session, pay: { kind: "PAID", xp: 18.36, raw: 18.36, intensity: "MODERATE", effortMinutes: 45, crit: false, prs: 0, topUp: null, linkError: null } } };
+      },
+      logWeight: async (_u, _kg, o) => ({ ok: true, value: { day: o.day, replaced: false } }),
+    };
+    const real = fakes({ ingestHealth: (u, b, n) => ingestHealthCore(u, b, { store, now: () => n, env: { NODE_ENV: "development", XTNL_LIFE_JUDGE: "1" } }) });
+    const body = {
+      since,
+      walks: [
+        walk({ externalId: "hc-w1", start: "2026-10-20T21:00:00.000Z", end: "2026-10-20T21:45:00.000Z", distanceKm: 4.1 }),
+        walk({ externalId: "hc-w2", kind: "HIKE", start: "2026-10-20T23:05:00.000Z", end: "2026-10-20T23:50:00.000Z", distanceKm: 3.9, climbM: 160 }),
+        walk({ externalId: "hc-w3", start: "2026-10-21T00:00:00.000Z", end: "2026-10-21T00:30:00.000Z", distanceKm: 2.5 }),
+      ],
+      weights: [weight],
+    };
+    const first = await got(handleExercise(post("/exercise", body), real.deps));
+    const second = await got(handleExercise(post("/exercise", body), real.deps));
+    check(
+      "through ingestHealthCore: the 08:00 walk (before since) is recorded only, the 10:05 hike is priced as any walk, the 11:00 walk is the one typed by hand (matched), the weigh-in lands",
+      first.status === 200 &&
+        same(walkCalls, [{ externalId: "hc-w1", recordOnly: true }, { externalId: "hc-w2", recordOnly: false }]) &&
+        same(data(first).walks, { added: 2, paid: 1, recorded: 1, matched: 1, duplicate: 0, xp: 18.4 }) &&
+        same(data(first).weights, { added: 1, kept: 0 }) &&
+        data(first).line === "Health Connect: 2 walks in (1 paid 18.4 XP, 1 recorded) · 1 already logged · 1 weigh-in",
+      first.raw.slice(0, 300)
+    );
+    check("a second sync of the same records writes no walk: all three are duplicates", second.status === 200 && walkCalls.length === 2 && same(data(second).walks, { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 3, xp: 0 }));
+    const dev = await got(handleExercise(post("/exercise", body), fakes({ ingestHealth: (u, b, n) => ingestHealthCore(u, b, { store, now: () => n, env: { NODE_ENV: "development" } }) }).deps));
+    check("through ingestHealthCore on a dev server: nothing is written, 409 with HC_WRITES_OFF", isFail(dev, "conflict") && dev.json.error === HC_WRITES_OFF && walkCalls.length === 2);
   }
 
   section("POST /work/done and /work/reopen");
@@ -2193,6 +2424,8 @@ const HANDLER_OF: Record<string, string> = {
   "GET /check": "handleCheck",
   "POST /tasks/complete": "handleTaskComplete",
   "POST /tasks/undo": "handleTaskUndo",
+  "POST /tasks/start": "handleTaskStart",
+  "POST /tasks/stop": "handleTaskStop",
   "POST /work/done": "handleWorkDone",
   "POST /work/reopen": "handleWorkReopen",
   "GET /review/queue": "handleReviewQueue",
@@ -2207,6 +2440,7 @@ const HANDLER_OF: Record<string, string> = {
   "POST /mall/rewards": "handleMallRewards",
   "POST /mall/buy": "handleMallBuy",
   "POST /mall/undo": "handleMallUndo",
+  "POST /exercise": "handleExercise",
 };
 
 /** The deps each route hands over: the Mall's own (mall-mobile-cores: no paying core, P18), else the shared ones. */
@@ -2264,6 +2498,21 @@ function wiring() {
   );
   bind("the owed writes: recordDayOpen, autoCompleteStudyTasks, maybeMaintainLife, settleMomentum", /recordDayOpen: \(userId, dueCount, now\) => recordDayOpen\(userId, dueCount, now\),\s*autoCompleteStudyTasks: \(userId, now\) => autoCompleteStudyTasks\(userId, now\),\s*maybeMaintainLife: \(userId\) => maybeMaintainLife\(userId\),\s*settleMomentum: \(userId, day, now\) => settleMomentum\(userId, day, \{ now \}\),/);
   bind("the tick and its Undo: actions/tasks completeTask, undoCompletion (no options: never refresh)", /completeTask: \(templateId, input\) => completeTask\(templateId, input\),\s*undoCompletion: \(instanceId\) => undoCompletion\(instanceId\),/);
+  bind(
+    "a proof task's timer (P23): actions/tasks startTaskTimer(templateId, clientId, { source: \"phone\" }) and stopTaskTimer(sessionId) (never refresh)",
+    /startTimer: \(templateId, clientId\) => startTaskTimer\(templateId, clientId, \{ source: "phone" \}\),\s*stopTimer: \(sessionId\) => stopTaskTimer\(sessionId\),/
+  );
+  bind(
+    "Health Connect (P27): health-ingest-server ingestHealthCore(userId, batch, { now }) at the route's clock (the walk's and the weigh-in's own cores inside it)",
+    /import \{ ingestHealthCore \} from "\.\/health-ingest-server";[\s\S]*ingestHealth: \(userId, batch, now\) => ingestHealthCore\(userId, batch, \{ now: \(\) => now \}\),/
+  );
+  check(
+    "Health Connect (P27): ingestHealthCore writes a walk through exercise-server logWalkCore and a weigh-in through weight-server logWeightCore (source 'import'), behind lifeWritesEnabled",
+    /logWalk: \(userId, raw, now, opts\) => logWalkCore\(userId, raw, now, opts\),/.test(code("src/lib/health-ingest-server.ts")) &&
+      /logWeight: \(userId, kg, opts\) => logWeightCore\(userId, kg, opts\),/.test(code("src/lib/health-ingest-server.ts")) &&
+      /source: "import", measuredAt: x\.at, now/.test(code("src/lib/health-ingest-server.ts")) &&
+      /if \(!lifeWritesEnabled\(deps\.env\)\) return \{ ok: false, error: HC_WRITES_OFF \};/.test(code("src/lib/health-ingest-server.ts"))
+  );
   bind("work: doneScheduledTask(id, null) (no log), reopenScheduledTask(id, null)", /doneScheduled: \(id\) => doneScheduledTask\(id, null\),\s*reopenScheduled: \(id\) => reopenScheduledTask\(id, null\),/);
   bind("review: loadVariants, submitReview, and a level read of the one idea", /loadVariants: \(ideaIds\) => loadVariants\(ideaIds\),\s*submitReview: \(input\) => submitReview\(input\),\s*ideaLevel: async \(ideaId\) => \(await prisma\.idea\.findUnique\(\{ where: \{ id: ideaId \}, select: \{ level: true \} \}\)\)\?\.level \?\? null,/);
   bind("review: an answer's key is read on the ledger's unique (userId, dedupeKey), as srs.ts reviewDedupeKey writes it", /reviewRecorded: async \(userId, answerKey\) =>\s*\(await prisma\.activityEvent\.findUnique\(\{ where: \{ userId_dedupeKey: \{ userId, dedupeKey: reviewDedupeKey\(answerKey\) \} \}, select: \{ id: true \} \}\)\) !== null,/);
@@ -2302,7 +2551,7 @@ function wiring() {
     /loadMainQuestCard\(userId, now\)\.catch\(\(\) => null\),/.test(code("src/app/today/page.tsx")) && /await loadMainQuestWeek\(userId, now, questCard, quests\?\.view \?\? null\)/.test(code("src/app/today/page.tsx"))
   );
   const imports: [string, string][] = [
-    ["completeTask, undoCapture, undoCompletion", "../app/actions/tasks"],
+    ["completeTask, startTaskTimer, stopTaskTimer, undoCapture, undoCompletion", "../app/actions/tasks"],
     ["doneScheduledTask, reopenScheduledTask", "../app/actions/scheduled-tasks"],
     ["submitReview", "../app/actions/review"],
     ["createFromCapture, undoWeightCapture", "../app/actions/capture"],
@@ -2401,7 +2650,13 @@ function wiring() {
       /const status = ideaStatusOf\(i, now, graceExtraDays\);\s*if \(status !== "fading" && status !== "forgetting"\) continue;/.test(fadingSrc) &&
       /fading: checkFadingOf\(fields, now, Math\.max\(0, graceExtra \|\| 0\)\),/.test(code("src/lib/mobile-api-server.ts"))
   );
-  check("the board's tick: completeTask(row.template.id, { day, minutes, mvv }, REFRESH)", /completeTask\(row\.template\.id, \{ day: row\.day, minutes: opts\.minutes \?\? null, mvv: opts\.mvv \}, REFRESH\)/.test(tb));
+  // Re-pinned for P23: the board's tick also names the timer it counts (a proof row's), and nothing else changes.
+  // Re-pinned for P24: and a reading task's pages as its proof (never on the minimum), the same shape the phone sends.
+  check(
+    "the board's tick: completeTask(row.template.id, { day, minutes, mvv, sessionId?, proof? }, REFRESH)",
+    /completeTask\(\s*row\.template\.id,\s*\{ day: row\.day, minutes: opts\.minutes \?\? null, mvv: opts\.mvv, \.\.\.\(opts\.sessionId \? \{ sessionId: opts\.sessionId \} : \{\}\), \.\.\.\(opts\.mvv \? \{\} : pagesProofOf\(opts\.pages\)\) \},\s*REFRESH\s*\)/.test(tb) &&
+      /function pagesProofOf\(pages: number \| null \| undefined\): \{ proof\?: \{ kind: "PAGES"; qty: number \} \} \{\s*return pages != null && pages >= 1 \? \{ proof: \{ kind: "PAGES", qty: pages \} \} : \{\};/.test(tb)
+  );
   const events = code("src/components/capture/events.ts");
   check("the sheet's section starts: 'idea: ' and 'weight '", /CAPTURE_MODE_START: Readonly<Record<CaptureMode, string \| null>> = \{ task: null, idea: "idea: ", body: "weight " \};/.test(events));
   const qc = code("src/components/capture/QuickCapture.tsx");
@@ -2497,8 +2752,61 @@ function docs() {
   check("the base path and the token's env name", doc.includes(`<server>${MOBILE_API_BASE}`) && doc.includes("MOBILE_API_TOKEN") && doc.includes("Cache-Control: no-store"));
   const undocumented = [...replyKeys].filter((k) => !doc.includes(`"${k}"`) && !doc.includes(`\`${k}\``)).sort();
   check("every key a reply carries is in the doc", undocumented.length === 0 && replyKeys.size > 40, undocumented.join(", "));
-  check("the request fields are in the doc", ["templateId", "instanceId", "ideaId", "answer", "combo", "sessionMisses", "text", "section", "clientId", "options", "listItems", "orderItems", "tolerance", "caseSensitive", "variants", "collection", "draftId"].every((k) => doc.includes(`"${k}"`) || doc.includes(`\`${k}\``)));
+  check("the request fields are in the doc", ["templateId", "instanceId", "ideaId", "answer", "combo", "sessionMisses", "text", "section", "clientId", "options", "listItems", "orderItems", "tolerance", "caseSensitive", "variants", "collection", "draftId", "minutes", "sessionId", "proof", "qty"].every((k) => doc.includes(`"${k}"`) || doc.includes(`\`${k}\``)));
   check("the retry rule says at most 3 misses (SESSION_RETURNS_MAX)", SESSION_RETURNS_MAX === 3 && /are at most 3/.test(doc));
+  check(
+    "the phone's minutes and proof of work (P7, P23; D20, D34) are in the doc: minutes 1 to 480 with the drawer's clamp (30 reported as 90 counts 60), the timer's sessionId counted once, 'Log the minutes' (409), proof and timer on /check, both switched off until PROOF_LAUNCH_DAY",
+    /"minutes"\?: 45/.test(doc) &&
+      /"sessionId"\?: "…"/.test(doc) &&
+      /a whole number from 1 to 480/.test(doc.replace(/\s+/g, " ")) &&
+      /an estimate of 30 reported as 90 counts 60/.test(doc.replace(/\s+/g, " ")) &&
+      /A timer is counted once/.test(doc.replace(/\s+/g, " ")) &&
+      /"Log the minutes: …" \(409\)/.test(doc.replace(/\s+/g, " ")) &&
+      /"proof": false, "timer":/.test(doc) &&
+      /`PROOF_LAUNCH_DAY`/.test(doc) &&
+      /One timer runs at a time/.test(doc) &&
+      TICK_MINUTES_MIN === 1 &&
+      TICK_MINUTES_MAX === 480
+  );
+  // Review: the timer's day and earlier segments, Resume, the plan's clock (a timer by what it ran, a report by that
+  // day's previous live tick), a named timer of another day refused, and a timer across 04:00 not counted in one tap.
+  check(
+    "the timer's review changes are in the doc: day and priorMinutes on the timer, Resume, min(reported, clock, 480), another day's timer refused, a timer across 04:00 asks first",
+    /"day": "2026-10-21", "startedAt": "…",\s+"endedAt": "…" \| null, "running": true, "priorMinutes": 0 \}/.test(doc) &&
+      /its Resume: a new segment, counted with the earlier ones \(`priorMinutes`\)/.test(doc.replace(/\s+/g, " ")) &&
+      /min\(reported, clock, 480\)/.test(doc) &&
+      /a 20-minute timer counts 20/.test(doc.replace(/\s+/g, " ")) &&
+      /"That timer isn't this day's …" \(409\)/.test(doc.replace(/\s+/g, " ")) &&
+      /a record of yesterday and a first tick are never cut/.test(doc.replace(/\s+/g, " ")) &&
+      /it ran across 04:00\); such a timer, or one past twice the estimate, is not counted in one tap/.test(doc.replace(/\s+/g, " ")) &&
+      !/never more than the clock allows/.test(doc.replace(/\s+/g, " "))
+  );
+  check(
+    "pages proof (P24; D21) is in the doc: proof { kind: 'PAGES', qty } on /tasks/complete (whole, 1 to 2000), 'Log the pages' (409) below the day's target, pages on /check, recorded never priced, switched off until PROOF_LAUNCH_DAY, and '30p' still minutes",
+    /"proof"\?: \{ "kind": "PAGES", "qty": 30 \}/.test(doc) &&
+      /a whole number of pages from 1 to 2000/.test(doc.replace(/\s+/g, " ")) &&
+      /"Log the pages: …" \(409\)/.test(doc.replace(/\s+/g, " ")) &&
+      /"pages": \{ "target": 30 \} \| null/.test(doc) &&
+      /never change its price/.test(doc.replace(/\s+/g, " ")) &&
+      /`30p` is still 30 minutes/.test(doc.replace(/\s+/g, " ")) &&
+      PAGES_QTY_MAX === 2000
+  );
+  check(
+    "Health Connect (P27; D22) is in the doc: off until the user turns it on, walks and weight only, the backfill record-only (H17), one walk once per record ('ingest:hc:<externalId>'), a hand-logged walk matched (one session, one payment), an import never replacing a typed weigh-in, writes on the live app only",
+    (() => {
+      const flat = doc.replace(/\s+/g, " ");
+      return /## POST \/exercise: Health Connect's walks, hikes and weigh-ins/.test(doc) &&
+        /\*\*off until the user turns it on\*\*/.test(flat) &&
+        /Walks and weight only: no steps, heart rate, sleep or other workouts, and no new pay rule/.test(flat) &&
+        /\*\*The backfill is record-only\*\* \(H17\): a walk that started before `since` is saved as a record/.test(flat) &&
+        /and it is never a personal best, whatever its day/.test(flat) &&
+        /`ingest:hc:<externalId>`/.test(flat) &&
+        /\*\*One session, one payment:\*\* a walk the user already logged by hand that day/.test(flat) &&
+        /an import never replaces one typed on the phone or the web/.test(flat) &&
+        flat.includes(HC_WRITES_OFF) &&
+        ["since", "walks", "weights", "externalId", "start", "end", "distanceKm", "climbM", "origin", "at", "kg"].every((k) => doc.includes(`"${k}"`));
+    })()
+  );
   // The review fixes, as the doc states them.
   check("a review answer lands once per clientId: the 'recorded' code (409) and its line; no 'no such guard' left", /"recorded"/.test(doc) && /`recorded` \(409/.test(doc) && /a review answer lands once per clientId/.test(doc) && doc.includes(REVIEW_RECORDED_LINE) && !/no such guard/.test(doc));
   check("/check runs momentum's lazy writes before it reads", /Before it reads, the server runs momentum's lazy writes/.test(doc));

@@ -430,6 +430,31 @@ console.log("— pricing: clamps —");
   check("minutes −5 → 0.5 × est_eff", price({ band: "DEMANDING", machineMinutes: 120, estMinutes: 120, minutes: -5 }).minutes === 0.5 * e);
   check("no minutes reported → est_eff", price({ band: "DEMANDING", machineMinutes: 120, estMinutes: 120 }).minutes === e);
   check("reported minutes never exceed 480", clampMinutes(99999, 480) === 480);
+  // Re-pinned for P23 (proof of work): clampMinutes takes a wall-clock bound; without one every golden above stands.
+  // Re-pinned (review): the plan's min(reported, wall, 480): the clamp first, then the clock (at least 1), so the clock
+  // is a real bound (90 with 40 on the clock counts 40, not the half estimate's 45) and never raises a report.
+  check(
+    "P23: the drawer's clamp is unchanged without a bound (30 reported as 90 counts 60); a bound applies after the clamp and only lowers a report",
+    clampMinutes(90, 30) === 60 && clampMinutes(90, 30, null) === 60 && clampMinutes(90, 30, undefined) === 60 && clampMinutes(90, 90, 40) === 40 && clampMinutes(240, 120, 5) === 5 &&
+      clampMinutes(60, 90, 75) === 60 && clampMinutes(90, 90, 600) === 90 && clampMinutes(30, 90, 600) === 45 && clampMinutes(90, 90, 0) === 1 && clampMinutes(null, 90, 5) === 90
+  );
+  check(
+    "P23: a priced receipt is byte for byte as before with no proof (absent or null), and 'life-3' only with it",
+    JSON.stringify(priceTask(base, { rawBefore: 0 }, "DUTY")) === JSON.stringify(priceTask(base, { rawBefore: 0 }, "DUTY", null, null)) &&
+      priceTask(base, { rawBefore: 0 }, "DUTY").v === "life-1" &&
+      priceTask(base, { rawBefore: 0 }, "DUTY", null, { gated: true, wall: null }).v === "life-3"
+  );
+  // Re-pinned for P24 (pages proof): a reading task's receipt records its pages and prices exactly as before.
+  {
+    const plain = priceTask(base, { rawBefore: 0 }, "DUTY");
+    const pages = priceTask(base, { rawBefore: 0 }, "DUTY", null, { gated: false, wall: null, pages: 30 });
+    const none = priceTask(base, { rawBefore: 0 }, "DUTY", null, { gated: false, wall: null, pages: null });
+    check(
+      "P24: a pages task's receipt is 'life-3' with proof.pages, at exactly the price it had (raw, minutes, XP); a P23 receipt carries no pages key",
+      pages.v === "life-3" && pages.proof?.pages === 30 && none.proof?.pages === null && pages.raw === plain.raw && pages.minutes === plain.minutes && pages.xp === plain.xp &&
+        !("pages" in (priceTask(base, { rawBefore: 0 }, "DUTY", null, { gated: true, wall: null }).proof ?? {}))
+    );
+  }
   check("typed estimates clamp to 1..480", estEff(0, 30) === 1 && estEff(9999, 240) === 480);
   const withRpe = priceTask({ ...base, rpe: 10 } as PriceInput & { rpe: number }, { rawBefore: 0 }, "DUTY");
   check("RPE is ignored for tasks", JSON.stringify(withRpe) === JSON.stringify(price({})));

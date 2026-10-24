@@ -1,9 +1,11 @@
 package com.xtnl.app.data
 
+import com.xtnl.app.core.HealthLine
 import com.xtnl.app.core.IdeaFormat
 import com.xtnl.app.core.LogPreview
 import com.xtnl.app.core.LogSection
 import com.xtnl.app.core.MallLine
+import com.xtnl.app.core.ProofLine
 import com.xtnl.app.core.ReviewSession
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.core.WalletLine
@@ -18,6 +20,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import java.time.DayOfWeek
 import java.time.Duration
 import java.time.Instant
@@ -27,6 +30,7 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.min
 import kotlin.math.round
 
 /**
@@ -49,8 +53,14 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         DemoTask(TaskItem("t-floss", "Floss", "MUST", "DONE_MVV", minutes = 5, mvv = "one tooth", xpHint = 1.1), "i-floss"),
         DemoTask(TaskItem("t-dentist", "Call the dentist", "TASK", "OPEN", minutes = 10, dueLabel = "late 2d", xpHint = 3.0)),
         DemoTask(TaskItem("t-tax", "Lodge the tax return", "TASK", "OPEN", minutes = 45, dueLabel = "by Fri", xpHint = 6.1)),
+        // P23: a deep-work task marked proof, as a server with proof of work switched on sends it: its tick takes its
+        // minutes (the sheet) or its timer; the minimum and every other row still tick in one tap.
+        DemoTask(TaskItem("t-thesis", "Write the thesis chapter", "TASK", "OPEN", minutes = 90, xpHint = 26.7, proof = true)),
         DemoTask(TaskItem("t-study", "Review 5 cards", "TASK", "LOCKED", minutes = 10, xpHint = 2.0)),
         DemoTask(TaskItem("t-read", "Read 20 pages", "HABIT", "OPEN", minutes = 25, mvv = "1 page", icon = "book", xpHint = 4.1)),
+        // P24: a reading task, as a server with proof of work switched on sends it: its full tick takes its pages (at least
+        // the day's 30, the sheet's chips); its minimum still ticks in one tap.
+        DemoTask(TaskItem("t-novel", "Read the novel", "HABIT", "OPEN", minutes = 40, mvv = "1 page", icon = "book", xpHint = 5.2, pages = TaskPages(target = 30))),
         DemoTask(TaskItem("t-stretch", "Stretch", "HABIT", "OPEN", minutes = 10, mvv = "1 stretch", xpHint = 2.2)),
         DemoTask(TaskItem("t-run", "Run 5 km", "HABIT", "HELD", minutes = 35, icon = "run")),
         DemoTask(TaskItem("t-meds", "Morning meds", "HABIT", "DONE", minutes = 2, icon = "pill", xpHint = 3.6), "i-meds"),
@@ -603,20 +613,85 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         }
     }
 
-    override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String): Outcome<CompleteResult> {
+    /** Health Connect's records already here (P27): a walk lands once per record, as the server's 'ingest:hc:<id>' row. */
+    private val healthSeen = mutableSetOf<String>()
+
+    /**
+     * A sync's batch (P27), as the server answers it: a record seen before is a duplicate; a walk that started before
+     * `since` is the backfill (recorded, never paid); a newer one dated today or yesterday pays about what a walk pays
+     * (B 10 a minute-ish, here 0.4 XP a minute); a weigh-in lands. The line is the server's words (HealthLine.syncLine).
+     */
+    override suspend fun syncHealth(batch: HealthBatch, clientId: String): Outcome<HealthSyncResult> {
+        pause(200)
+        val body = healthBody(batch)
+        return lock.withLock {
+            once<HealthSyncResult>(clientId, body) {
+                val since = runCatching { Instant.parse(batch.since) }.getOrNull() ?: return@once bad("since must be an ISO instant.")
+                if (batch.walks.size > HealthLine.SERVER_MAX || batch.weights.size > HealthLine.SERVER_MAX) return@once bad("walks takes at most ${HealthLine.SERVER_MAX} at a time.")
+                val today = TimeLabels.lifeDay(clock())
+                var walks = HealthWalkCounts()
+                val refused = mutableListOf<HealthRefusal>()
+                for (w in batch.walks.sortedBy { it.start }) {
+                    val start = runCatching { Instant.parse(w.start) }.getOrNull() ?: return@once bad("walks: start must be an ISO instant.")
+                    val end = runCatching { Instant.parse(w.end) }.getOrNull() ?: return@once bad("walks: end must be an ISO instant.")
+                    if (!healthSeen.add("w:${w.externalId}")) { walks = walks.copy(duplicate = walks.duplicate + 1); continue }
+                    if (w.distanceKm < 0.01) { refused += HealthRefusal("walk", w.externalId, "A distance between 0.01 and 200 km, please."); continue }
+                    val minutes = Duration.between(start, end).toMinutes().toDouble()
+                    val day = TimeLabels.lifeDay(start)
+                    val pays = !start.isBefore(since) && !day.isBefore(today.minusDays(1)) && minutes >= 5
+                    walks = if (pays) walks.copy(added = walks.added + 1, paid = walks.paid + 1, xp = round((walks.xp + minutes * 0.4) * 10) / 10)
+                    else walks.copy(added = walks.added + 1, recorded = walks.recorded + 1)
+                }
+                var weights = HealthWeightCounts()
+                for (x in batch.weights) {
+                    if (!healthSeen.add("kg:${x.externalId}")) { weights = weights.copy(kept = weights.kept + 1); continue }
+                    if (x.kg < 20 || x.kg > 400) { refused += HealthRefusal("weight", x.externalId, "A weight between 20 and 400 kg, please."); continue }
+                    weights = weights.copy(added = weights.added + 1)
+                }
+                Outcome.Ok(HealthSyncResult(walks, weights, refused, HealthLine.syncLine(walks, weights, refused.size)))
+            }
+        }
+    }
+
+    override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String, minutes: Int?, sessionId: String?, pages: Int?): Outcome<CompleteResult> {
         pause()
-        val body = buildJsonObject { put("templateId", templateId); put("mvv", mvv) }
+        val body = buildJsonObject {
+            put("templateId", templateId); put("mvv", mvv)
+            minutes?.let { put("minutes", it) }
+            sessionId?.let { put("sessionId", it) }
+            pages?.let { putJsonObject("proof") { put("kind", "PAGES"); put("qty", it) } }
+        }
         return lock.withLock {
             once(clientId, body) {
+                if (minutes != null && minutes !in 1..ProofLine.MINUTES_MAX) return@once Outcome.Err("minutes must be a whole number from 1 to 480.", code = "bad", status = 400)
+                if (pages != null && pages !in 1..ProofLine.PAGES_MAX) return@once Outcome.Err("proof.qty must be a whole number of pages from 1 to ${ProofLine.PAGES_MAX}.", code = "bad", status = 400)
                 val i = tasks.indexOfFirst { it.item.templateId == templateId }
                 if (i < 0) return@once Outcome.Err("That task is no longer on today's board.", code = "gone", status = 404)
                 val t = tasks[i]
                 if (t.item.locked) return@once Outcome.Err("A study task completes itself from today's reviews.", code = "conflict", status = 409)
                 if (t.item.kept) return@once Outcome.Ok(CompleteResult(t.instanceId ?: "i-x", 0.0, "Already recorded. Nothing is paid twice.", board().allDone, credits = creditsSince(wallet())))
+                // P23, as the server gates it: a proof task's full tick takes its minutes or its timer, counted once.
+                val timer = t.item.timer
+                if (sessionId != null && timer?.sessionId != sessionId) return@once Outcome.Err("That timer is gone.", code = "gone", status = 404)
+                val timed = timer?.let { ProofLine.timerMinutes(it, clock()) }?.takeIf { it >= 1 && !mvv }
+                val reported = minutes ?: timed
+                if (t.item.proof && !mvv && reported == null) {
+                    return@once Outcome.Err("Log the minutes: this is deep work, so it counts its time. Pick the minutes, or start its timer.", code = "conflict", status = 409)
+                }
+                // P24, as the server gates it: a reading task's full tick takes its pages, at least the day's target.
+                val read = if (t.item.pages != null && !mvv) pages else null
+                ProofLine.pagesRefusal(t.item.pages?.target.takeIf { !mvv }, read)?.let { return@once Outcome.Err(it, code = "conflict", status = 409) }
                 val walletBefore = wallet()
-                val xp = round((t.item.xpHint ?: 2.0) * (if (mvv) 0.5 else 1.0) * 10) / 10
+                // The minutes as the server counts them, priced by E(m) against the estimate's (life-grade's curve): a
+                // report with the drawer's clamp, a timer's count bounded by what it ran (proof.ts tickWallOf).
+                val estimate = t.item.minutes ?: 30
+                val counted = reported?.let { if (minutes == null) ProofLine.countedTimer(it, estimate) else ProofLine.counted(it, estimate) }
+                val effort = { m: Int -> min(1.4, 0.5 + m / (m + 30.0)) }
+                val scale = if (counted != null && !mvv) effort(counted) / effort(estimate) else 1.0
+                val xp = round((t.item.xpHint ?: 2.0) * (if (mvv) 0.5 else 1.0) * scale * 10) / 10
                 val instance = "i-" + UUID.randomUUID().toString().take(8)
-                tasks[i] = t.copy(item = t.item.copy(status = if (mvv) "DONE_MVV" else "DONE", xpHint = xp), instanceId = instance)
+                // The row's timer is counted, or closed counting nothing (a report, or the minimum, took its place).
+                tasks[i] = t.copy(item = t.item.copy(status = if (mvv) "DONE_MVV" else "DONE", xpHint = xp, timer = null), instanceId = instance)
                 if (!streak.keptToday) streak = streak.copy(keptToday = true, days = streak.days + 1)
                 level = gain(level, xp / 120.0)
                 val track = when (t.item.lane) { "MUST" -> "Body"; "HABIT" -> "Care"; else -> "Duty" }
@@ -626,7 +701,8 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                 Outcome.Ok(
                     CompleteResult(
                         instanceId = instance, xp = xp,
-                        line = "+$xp XP · $track" + if (mvv) " · minimum" else "",
+                        line = "+$xp XP · $track" + (if (t.item.proof && !mvv && counted != null) " · $counted min" else "") +
+                            (read?.let { " · ${ProofLine.pagesLabel(it)}" } ?: "") + if (mvv) " · minimum" else "",
                         allDone = clear,
                         celebrations = listOfNotNull(
                             skill?.second,
@@ -637,6 +713,46 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                         credits = creditsSince(walletBefore),
                     )
                 )
+            }
+        }
+    }
+
+    /**
+     * P23, as the server runs it: one timer at a time (a start stops any other), a running one answered as it is, and a
+     * start on a stopped one is its Resume (a new segment: the earlier minutes ride on it as priorMinutes).
+     */
+    override suspend fun startTimer(templateId: String, clientId: String): Outcome<TimerResult> {
+        pause(200)
+        return lock.withLock {
+            once(clientId, buildJsonObject { put("templateId", templateId) }) {
+                val i = tasks.indexOfFirst { it.item.templateId == templateId }
+                if (i < 0) return@once Outcome.Err("That task no longer exists.", code = "gone", status = 404)
+                val t = tasks[i]
+                if (!t.item.open) return@once Outcome.Err("A timer runs on a task or a habit on your Board.", code = "conflict", status = 409)
+                t.item.timer?.takeIf { it.running }?.let { return@once Outcome.Ok(TimerResult(it, "Timer started. Tick the task when you stop: the time it ran counts.")) }
+                val now = clock()
+                for (j in tasks.indices) {
+                    val other = tasks[j].item.timer
+                    if (other != null && other.running) tasks[j] = tasks[j].copy(item = tasks[j].item.copy(timer = other.copy(endedAt = now.toString(), running = false)))
+                }
+                val prior = t.item.timer?.let { ProofLine.timerMinutes(it, now) } ?: 0
+                val timer = TaskTimer("s-" + UUID.randomUUID().toString().take(8), templateId, now.toString(), null, running = true, day = TimeLabels.lifeDay(now).toString(), priorMinutes = prior)
+                tasks[i] = tasks[i].copy(item = tasks[i].item.copy(timer = timer))
+                Outcome.Ok(TimerResult(timer, "Timer started. Tick the task when you stop: the time it ran counts."))
+            }
+        }
+    }
+
+    override suspend fun stopTimer(sessionId: String, clientId: String): Outcome<TimerResult> {
+        pause(200)
+        return lock.withLock {
+            once(clientId, buildJsonObject { put("sessionId", sessionId) }) {
+                val i = tasks.indexOfFirst { it.item.timer?.sessionId == sessionId }
+                if (i < 0) return@once Outcome.Err("That timer is gone.", code = "gone", status = 404)
+                val timer = tasks[i].item.timer!!
+                val stopped = if (timer.running) timer.copy(endedAt = clock().toString(), running = false) else timer
+                tasks[i] = tasks[i].copy(item = tasks[i].item.copy(timer = stopped))
+                Outcome.Ok(TimerResult(stopped, "Timer stopped at ${ProofLine.timerMinutes(stopped, clock())} min. Tick the task to count them."))
             }
         }
     }

@@ -102,6 +102,8 @@ import { expectedOn, ruleOn, type DutyTemplate, type PendingChange, type Pending
 import { settledFor, type RestKind } from "./duty-economy";
 import type { DutyBoard, OwedCard } from "./duty-view";
 import { deferNoteOf, isDeferredNow, type DeferredItem, type TemplateDecisions } from "./task-decisions";
+import { pagesGated, pagesTargetOf, priceProofOf, proofGated, timerBelongsTo, type ProofFacts, type ProofKind, type TimerView } from "./proof";
+import { completesItself } from "./life-types";
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -163,6 +165,14 @@ export interface PricedTemplate {
    * practice or step. Only a live momentum price reads it. Absent reads as null.
    */
   captureKey?: string | null;
+  /**
+   * Proof of work (blueprint P23, proof.ts): TaskTemplate.proof ('MINUTES': deep work counts its time). The server
+   * fills it only while PROOF_LAUNCH_DAY is in force (tasks.ts readProofKinds); absent reads as null, and a price
+   * reads it only through PlanInput.proof.
+   */
+  proof?: ProofKind | null;
+  /** The task's category (BoardTemplate's): a live proof price records whether an EXERCISE tick reported its minutes. */
+  category?: Category;
 }
 
 /** A template as the board needs it: the rule, the frozen grade and how it was sized. */
@@ -380,6 +390,19 @@ export interface BoardData {
    * and its latest decision not undone (a hidden task's reason and Undo). Absent: none.
    */
   decisions?: Record<string, TemplateDecisions>;
+  /**
+   * Proof of work (blueprint P23, proof.ts): the launch day in force and the open timers. tasks.ts sends it only while
+   * proof is in force today; absent, no row is gated, no timer shows and every projection is exactly as before.
+   */
+  proof?: BoardProof;
+}
+
+/** BoardData.proof: what a proof row's tick, its timer chip and its projection read. */
+export interface BoardProof {
+  /** PROOF_LAUNCH_DAY in force (proof.ts proofLaunchDay): a row dated before it is never gated. */
+  launchDay: DayKey;
+  /** The open timers (running, or stopped and not yet counted), the latest a template (proof.ts openTimersOf). */
+  timers: TimerView[];
 }
 
 /** BoardData.momentum: the perks owned now, today's frog, and the instant a projection prices a tick at. */
@@ -564,6 +587,11 @@ export interface PlanInput {
    * the walk'), source auto:workout, sink NONE; never perks, chain or crit.
    */
   session?: boolean;
+  /**
+   * Proof of work (blueprint P23, proof.ts priceProofOf): the launch day in force, and on the server's payment the
+   * wall-clock bound and the timer. Absent, or a day before its launchDay: the price is exactly as before.
+   */
+  proof?: ProofFacts | null;
 }
 
 /** PlanInput.momentum: what a live day's price reads beyond the ledger. */
@@ -695,7 +723,13 @@ export function planCompletion(p: PlanInput): CompletionPlan {
   };
   // Momentum, only for a completion dated on or after its launch day (momentumLive); otherwise nothing below changes.
   const mom = p.momentum && momentumLive(p.day, p.momentum.launchDay) ? momentumOf(p, p.momentum, mode) : null;
-  const receipt = mom?.price ? priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track, mom.price) : priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track);
+  // Proof of work (P23), only for a proof or EXERCISE template on or after its launch day; otherwise null and nothing changes.
+  const proof = priceProofOf(t, p.day, p.proof);
+  const receipt = proof
+    ? priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track, mom?.price ?? null, proof)
+    : mom?.price
+      ? priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track, mom.price)
+      : priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track);
   // A completion that can never pay (#play, study, a walk's SESSION) records
   // to NONE, so no level ever reads it; everything else is life XP on its
   // track, even when the knee has flattened it to nothing.
@@ -1049,7 +1083,7 @@ const SETTLED_STATUSES: ReadonlySet<string> = new Set(["SKIPPED", "EXCUSED", "MI
  *   their own);
  * - a one-off whose deadline was yesterday, unless it was put off past
  *   yesterday (planDay) — then it was not done by the deadline;
- * - never a study task, which only ever completes on its own day.
+ * - never a study task, which only ever completes on its own day (a pages task, ticked by hand, is not one: P24).
  */
 export function yesterdayRecordable(
   t: Pick<BoardTemplate, "recurrence" | "startDay" | "autoMetric" | "dueKind" | "dueDay" | "planDay">,
@@ -1057,7 +1091,7 @@ export function yesterdayRecordable(
   yesterday: DayKey,
   lastDone: DayKey | null
 ): boolean {
-  if (t.startDay > yesterday || t.autoMetric) return false;
+  if (t.startDay > yesterday || completesItself(t.autoMetric)) return false;
   if (!rule) return t.dueKind === "DEADLINE" && t.dueDay === yesterday && !(t.planDay && t.planDay > yesterday);
   if (rule.kind === "AFTER" || rule.kind === "TARGET") return false;
   return occursOn(rule, t.startDay, yesterday, lastDone);
@@ -1076,7 +1110,7 @@ export function yesterdayBookable(
   lastDone: DayKey | null
 ): boolean {
   if (yesterdayRecordable(t, rule, yesterday, lastDone)) return true;
-  if (t.startDay > yesterday || t.autoMetric) return false;
+  if (t.startDay > yesterday || completesItself(t.autoMetric)) return false;
   return !rule || rule.kind === "TARGET";
 }
 
@@ -1296,6 +1330,26 @@ export interface BoardRow {
   recordYesterday?: { xp: number } | null;
   /** On the day a deferred task is back: "Deferred until Tue 09:00 · 2×" (task-decisions.ts deferNoteOf). */
   deferNote?: string | null;
+  /**
+   * Proof of work (blueprint P23): a full tick of this row needs its minutes or a timer (proof.ts proofGated, while
+   * BoardData.proof is sent), with the row's open timer, if any. Absent or null: the row ticks in one tap, as before.
+   */
+  proof?: RowProof | null;
+  /**
+   * Pages proof (blueprint P24): a reading task's full tick reports its pages (proof.ts pagesGated, while BoardData.proof
+   * is sent), at least its day's target when it has one. Absent or null: the row ticks as before.
+   */
+  pages?: RowPages | null;
+}
+
+/** BoardRow.proof: the gate is on for this row, and its timer. */
+export interface RowProof {
+  timer: TimerView | null;
+}
+
+/** BoardRow.pages: the day's target (TaskTemplate.autoTarget, whole pages); null with none (the pages are then optional). */
+export interface RowPages {
+  target: number | null;
 }
 
 /** A row's steps: the list, the ones ticked today, and how the ticks pay (src/lib/subtasks.ts). */
@@ -1894,7 +1948,14 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?
     const strength = rule && stats ? (doneToday ? stats.strength.ifDone : stats.strength.before) : null;
     const streakDays = rule && stats ? (day === today ? stats.streak.before.days : stats.streakDaysYesterday) : 0;
     const auto = day === today ? autoStateOf(t, counts) : null;
-    const projection = planCompletion({ template: t, day, today, slot, ledger: ledgerFor(d, day), streakDays, momentum: projectionMomentumOf(d, t, ledgerFor(d, day)) }).receipt;
+    const projection = planCompletion({ template: t, day, today, slot, ledger: ledgerFor(d, day), streakDays, momentum: projectionMomentumOf(d, t, ledgerFor(d, day)), proof: proofFactsOf(d) }).receipt;
+    // Proof of work (P23): a proof row's tick needs its minutes or a timer; its open timer rides on today's row only
+    // (proof.ts timerBelongsTo: today's, or one still running across 04:00). A Record yesterday row has none: a timer
+    // can only time today, and today's never counts for yesterday.
+    const proofTimer = d.proof && lane !== "yesterday" && day === today ? (d.proof.timers.find((x) => x.templateId === t.id && timerBelongsTo(x, day, today)) ?? null) : null;
+    const proofRow: RowProof | null = d.proof && proofGated(t, day, d.proof.launchDay) ? { timer: proofTimer } : null;
+    // Pages proof (P24): a reading task's tick reports its pages, at least its day's target.
+    const pagesRow: RowPages | null = d.proof && pagesGated(t, day, d.proof.launchDay) ? { target: pagesTargetOf(t) } : null;
     let state: RowState = done.length > 0 ? "done" : skipped ? "skipped" : "open";
     // Steps (today only): ticked steps that paid a part keep the row open, its tick finishing the rest.
     const sub = day === today && stepsAllowed(t) ? d.subtasks?.[t.id] : undefined;
@@ -1923,6 +1984,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?
               ledger: ledgerFor(d, yesterday),
               streakDays: rule && stats ? stats.streakDaysYesterday : 0,
               momentum: projectionMomentumOf(d, t, ledgerFor(d, yesterday)),
+              proof: proofFactsOf(d),
             }).receipt.xp,
           }
         : null;
@@ -1968,6 +2030,9 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?
       steps,
       recordYesterday,
       deferNote: day === today ? deferNoteOf(decisions[t.id], today, nowMs) : null,
+      // Proof of work (P23): only while BoardData.proof is sent, so every row before the launch is exactly as before.
+      ...(proofRow ? { proof: proofRow } : {}),
+      ...(pagesRow ? { pages: pagesRow } : {}),
       ...extra,
     };
   };
@@ -2118,8 +2183,12 @@ export function cheapestMovable(rows: readonly BoardRow[]): BoardRow | null {
   return best;
 }
 
-/** The price a tick on this row would pay with these minutes or as its minimum version: the drawer's live projection. */
-export function projectRow(data: BoardData, r: BoardRow, opts: { minutes?: number | null; mvv?: boolean } = {}): Receipt {
+/**
+ * The price a tick on this row would pay with these minutes or as its minimum version: the drawer's live projection.
+ * `wall` (proof of work, P23): a timer's count passes the minutes it ran, as the server bounds it (proof.ts tickWallOf).
+ */
+export function projectRow(data: BoardData, r: BoardRow, opts: { minutes?: number | null; mvv?: boolean; wall?: number | null } = {}): Receipt {
+  const proof = proofFactsOf(data);
   return planCompletion({
     template: r.template,
     day: r.day,
@@ -2130,7 +2199,13 @@ export function projectRow(data: BoardData, r: BoardRow, opts: { minutes?: numbe
     ledger: ledgerFor(data, r.day),
     streakDays: r.streakDays,
     momentum: projectionMomentumOf(data, r.template, ledgerFor(data, r.day)),
+    proof: proof && opts.wall != null ? { ...proof, wall: opts.wall } : proof,
   }).receipt;
+}
+
+/** A projection's proof facts (P23): the launch day only (no wall-clock bound: the server's payment reads it); null while BoardData.proof is absent. */
+export function proofFactsOf(data: Pick<BoardData, "proof">): ProofFacts | null {
+  return data.proof ? { launchDay: data.proof.launchDay } : null;
 }
 
 /**

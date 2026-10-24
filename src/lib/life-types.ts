@@ -75,8 +75,21 @@ export type KrMetric = "CHILDREN" | "MANUAL" | "REVIEWS" | "IDEAS" | "WORKOUTS" 
  * F16 seam 2), so a ROADMAP goal is never read as CHILDREN.
  */
 export const KR_METRICS: readonly KrMetric[] = ["CHILDREN", "MANUAL", "REVIEWS", "IDEAS", "WORKOUTS", "RUN_KM", "ROADMAP"];
-/** A task that completes itself from activity: reviews, new Ideas, the whole queue, steps, a workout. */
-export type AutoMetric = "REVIEWS" | "IDEAS" | "REVIEW_DUE" | "STEPS" | "WORKOUT";
+/**
+ * A task that completes itself from activity: reviews, new Ideas, the whole queue, steps, a workout. PAGES (blueprint
+ * P24, D21) is the one that never does: a reading task ('read 30 pages') ticked by hand, whose tick reports its pages
+ * (autoTarget is the day's target; proof.ts). completesItself is the test the self-completing reads use.
+ */
+export type AutoMetric = "REVIEWS" | "IDEAS" | "REVIEW_DUE" | "STEPS" | "WORKOUT" | "PAGES";
+
+/**
+ * Does a template with this autoMetric complete itself from activity (so it takes no manual Again, no defer, no steps,
+ * no timer, no yesterday record, and the audits leave it out)? Every metric but PAGES, which is ticked by hand like any
+ * task (blueprint P24): exactly the old `!!t.autoMetric` for every value stored before it.
+ */
+export function completesItself(metric: string | null | undefined): boolean {
+  return !!metric && metric !== "PAGES";
+}
 export type CaptureSource = "quick" | "share" | "api" | "form";
 export type TrackSource = "CATEGORY" | "TAG";
 
@@ -139,6 +152,12 @@ export type ActivitySource =
   | "MALL_BUY"
   /** A purchase undone inside its 10 minutes (mall-server.ts undoBuyCore): sink NONE, xp 0, qty the price given back, 'refund:<buyEventId>'. */
   | "MALL_REFUND"
+  /**
+   * A Health Connect walk's dedupe row (health-ingest.ts; blueprint P27, D22): sink NONE, xp 0, never a streak day,
+   * 'ingest:hc:<externalId>', sourceId the ExerciseSession it is (or matched), receipt {v: 'ingest-1', …}. The walk's
+   * pay, if any, is its own WORKOUT row, as for a walk logged by hand.
+   */
+  | "INGEST"
   /** Momentum's rows (momentum.md §D.2): written only by momentum's own writers, each gated on momentumLive(day). */
   | MomentumActivitySource;
 
@@ -287,7 +306,10 @@ export interface ReceiptFactor {
 
 /** The published breakdown stored on every paying row. */
 export interface Receipt {
-  /** Formula version, e.g. 'life-1' ('life-2' once a momentum factor S, M or X is on it). Past rows are never repriced. */
+  /**
+   * Formula version, e.g. 'life-1' ('life-2' once a momentum factor S, M or X is on it; 'life-3' with proof of work, P23:
+   * a proof or EXERCISE template's tick from PROOF_LAUNCH_DAY). Past rows are never repriced.
+   */
   v: string;
   factors: ReceiptFactor[];
   /** Minutes used for E, after clamps. */
@@ -299,6 +321,28 @@ export interface Receipt {
   selfRated?: boolean;
   /** Paid through its steps (src/lib/subtasks-server.ts): the share it paid for. Such a row is re-priced as steps change. */
   steps?: StepShare;
+  /**
+   * Proof of work (blueprint P23, D20; 'life-3'): only on a receipt priced while PROOF_LAUNCH_DAY is in force, for a
+   * proof template or an EXERCISE one (proof.ts priceProofOf). Absent on every other receipt, which reads as before.
+   */
+  proof?: ReceiptProof;
+}
+
+/** A 'life-3' receipt's proof of work (proof.ts): what the tick reported and what bounded it. */
+export interface ReceiptProof {
+  /** The minutes the tick brought (the minute chips, the phone's sheet, a timer), before any clamp; null: none came (the estimate counted). */
+  reported: number | null;
+  /** A proof template's tick, held by the gate. False: an EXERCISE tick, which records only whether minutes came (BODY's effort reads it). */
+  gated: boolean;
+  /** The wall-clock bound in whole minutes (since the timer started or the template's previous tick, the later); null with neither. */
+  wall: number | null;
+  /** The timer (TaskSession id) the minutes came from. */
+  session?: string;
+  /**
+   * Pages proof (blueprint P24, D21): present only on a pages task's receipt (autoMetric PAGES), the pages the tick
+   * reported (also on TaskInstance.proofQty); null when none came (the minimum version, or no target and none given).
+   */
+  pages?: number | null;
 }
 
 // ── Capture ───────────────────────────────────────────────────────────────
@@ -326,7 +370,11 @@ export interface CaptureToken {
     | "mvv"
     | "study"
     /** IDEA mode only: the part after the first '::' (capture.md P2 one-box ideas). Lane A reads it. */
-    | "answer";
+    | "answer"
+    /** '#proof' (blueprint P23): the task counts its time. */
+    | "proof"
+    /** '30 pages' or '30pg' (blueprint P24): a reading task, its tick reports its pages (never '30p': that is minutes). */
+    | "pages";
   label: string;
 }
 
@@ -352,6 +400,11 @@ export interface ParsedCapture {
   doneNow: boolean;
   /** The '^name' text, matched to an open goal on the server. */
   parentHint: string | null;
+  /**
+   * Proof of work (blueprint P23, D20): the line carries '#proof', so the task it saves counts its time (TaskTemplate.proof
+   * 'MINUTES'; the gate waits for PROOF_LAUNCH_DAY). Absent or false: no proof, as before.
+   */
+  proof?: boolean;
   /**
    * IDEA mode: the text after the first '::' ('idea: Q :: A'), kept whole —
    * the server stores it as the draft's note, never in the title. Null or

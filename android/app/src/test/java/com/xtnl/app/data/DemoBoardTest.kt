@@ -1,5 +1,6 @@
 package com.xtnl.app.data
 
+import com.xtnl.app.core.ProofLine
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
@@ -291,9 +292,131 @@ class DemoBoardTest {
             val answer = when (id) { "d-atp" -> "ATP"; "d-planet" -> "Jupiter"; else -> "9.81" }
             assertTrue(api.answer(id, JsonPrimitive(answer), 0, 0, "a-$id") is Outcome.Ok)
         }
-        val ticks = listOf("t-gym", "t-dentist", "t-tax", "t-read", "t-stretch")
-        val results = ticks.map { (api.completeTask(it, mvv = false, clientId = "c-$it") as Outcome.Ok).value.allDone }
-        assertEquals(listOf(false, false, false, false, true), results)
+        // Re-pinned for P23: the demo's deep-work row is a proof one, so it is ticked with its minutes (90, its estimate).
+        // Re-pinned for P24: the demo's reading task (t-novel) is ticked with its pages (30, the day's target).
+        val ticks = listOf("t-gym", "t-dentist", "t-tax", "t-thesis", "t-read", "t-novel", "t-stretch")
+        val results = ticks.map {
+            (api.completeTask(it, mvv = false, clientId = "c-$it", minutes = if (it == "t-thesis") 90 else null, pages = if (it == "t-novel") 30 else null) as Outcome.Ok).value.allDone
+        }
+        assertEquals(listOf(false, false, false, false, false, false, true), results)
         assertTrue((api.check() as Outcome.Ok).value.tasksSummary!!.allDone)
+    }
+
+    /** P23: a proof row's full tick takes its minutes or its timer; a chore and the minimum still tick in one tap. */
+    @Test fun aProofRowNeedsItsMinutes() = runTest {
+        val api = DemoApi()
+        val row = (api.check() as Outcome.Ok).value.tasks.single { it.templateId == "t-thesis" }
+        assertTrue(row.proof)
+        assertNull(row.timer)
+        val refused = api.completeTask("t-thesis", mvv = false, clientId = "c-1") as Outcome.Err
+        assertEquals(409, refused.status)
+        assertTrue(refused.message, refused.message.startsWith("Log the minutes"))
+        assertTrue("a chore ticks in one tap", api.completeTask("t-dentist", mvv = false, clientId = "c-2") is Outcome.Ok)
+        val tick = (api.completeTask("t-thesis", mvv = false, clientId = "c-3", minutes = 90) as Outcome.Ok).value
+        assertEquals("a 90-minute logged tick prices as its estimate's", 26.7, tick.xp, 0.0)
+        assertTrue(tick.line!!, tick.line!!.endsWith(" · 90 min"))
+        assertEquals(400, (api.completeTask("t-gym", mvv = false, clientId = "c-4", minutes = 481) as Outcome.Err).status)
+    }
+
+    /** P23: one timer at a time; a stopped timer waits for the tick, which counts it once. */
+    @Test fun aTimerIsCountedByItsTick() = runTest {
+        var now = Instant.parse("2026-10-24T01:00:00Z")
+        val api = DemoApi(clock = { now })
+        val started = (api.startTimer("t-thesis", "s-1") as Outcome.Ok).value.timer!!
+        assertTrue(started.running)
+        assertEquals("a resend answers the same timer", started, (api.startTimer("t-thesis", "s-1") as Outcome.Ok).value.timer)
+        now = now.plusSeconds(10 * 60)
+        val other = (api.startTimer("t-tax", "s-2") as Outcome.Ok).value.timer!!
+        val rows = (api.check() as Outcome.Ok).value.tasks
+        assertFalse("a start stops the other timer", rows.single { it.templateId == "t-thesis" }.timer!!.running)
+        assertTrue(rows.single { it.templateId == "t-tax" }.timer!!.running)
+        val stopped = (api.stopTimer(other.sessionId, "s-3") as Outcome.Ok).value
+        assertFalse(stopped.timer!!.running)
+        assertEquals(404, (api.stopTimer("s-gone", "s-4") as Outcome.Err).status)
+        val tick = (api.completeTask("t-thesis", mvv = false, clientId = "c-1", sessionId = started.sessionId) as Outcome.Ok).value
+        // Re-pinned (review): a timer counts what it ran (the plan's min(reported, clock)), not half the estimate.
+        assertTrue(tick.line!!, tick.line!!.endsWith(" · 10 min"))
+        assertNull("counted once: the timer is gone from the row", (api.check() as Outcome.Ok).value.tasks.single { it.templateId == "t-thesis" }.timer)
+    }
+
+    /** Review: a stopped timer is no dead end. A start on it is its Resume, and the tick counts both segments. */
+    @Test fun aStoppedTimerResumes() = runTest {
+        var now = Instant.parse("2026-10-24T01:00:00Z")
+        val api = DemoApi(clock = { now })
+        val first = (api.startTimer("t-thesis", "s-1") as Outcome.Ok).value.timer!!
+        now = now.plusSeconds(30 * 60)
+        api.stopTimer(first.sessionId, "s-2")
+        now = now.plusSeconds(60 * 60)
+        val resumed = (api.startTimer("t-thesis", "s-3") as Outcome.Ok).value.timer!!
+        assertTrue(resumed.running)
+        assertEquals("the earlier segment rides on the resumed timer", 30, resumed.priorMinutes)
+        assertEquals("2026-10-24", resumed.day)
+        now = now.plusSeconds(20 * 60)
+        val row = (api.check() as Outcome.Ok).value.tasks.single { it.templateId == "t-thesis" }
+        assertEquals(50, ProofLine.timerMinutes(row.timer!!, now))
+        val tick = (api.completeTask("t-thesis", mvv = false, clientId = "c-1", sessionId = resumed.sessionId) as Outcome.Ok).value
+        assertTrue(tick.line!!, tick.line!!.endsWith(" · 50 min"))
+    }
+
+    /** Review: picked minutes count instead of an open timer's, and the timer is closed (nothing left running). */
+    @Test fun pickedMinutesCloseTheTimer() = runTest {
+        var now = Instant.parse("2026-10-24T01:00:00Z")
+        val api = DemoApi(clock = { now })
+        api.startTimer("t-thesis", "s-1")
+        now = now.plusSeconds(12 * 60)
+        val tick = (api.completeTask("t-thesis", mvv = false, clientId = "c-1", minutes = 90) as Outcome.Ok).value
+        assertTrue("the sheet's 90 counts 90, not the timer's 12", tick.line!!.endsWith(" · 90 min"))
+        assertNull((api.check() as Outcome.Ok).value.tasks.single { it.templateId == "t-thesis" }.timer)
+    }
+
+    /** P24: a reading task's full tick takes its pages, at least the day's 30; its minimum and every other row need none. */
+    @Test fun aReadingTaskNeedsItsPages() = runTest {
+        val api = DemoApi()
+        val row = (api.check() as Outcome.Ok).value.tasks.single { it.templateId == "t-novel" }
+        assertEquals(TaskPages(target = 30), row.pages)
+        assertFalse("pages, not minutes", row.proof)
+        assertNull("every other row carries no pages", (api.check() as Outcome.Ok).value.tasks.firstOrNull { it.templateId != "t-novel" && it.pages != null })
+        val none = api.completeTask("t-novel", mvv = false, clientId = "c-1") as Outcome.Err
+        assertEquals(409, none.status)
+        assertTrue(none.message, none.message.startsWith("Log the pages"))
+        val below = api.completeTask("t-novel", mvv = false, clientId = "c-2", pages = 20) as Outcome.Err
+        assertEquals(409, below.status)
+        assertTrue(below.message, below.message.contains("20 pages is below the day's 30"))
+        assertEquals(400, (api.completeTask("t-novel", mvv = false, clientId = "c-3", pages = 2001) as Outcome.Err).status)
+        assertTrue("the pages on any other task change nothing", api.completeTask("t-dentist", mvv = false, clientId = "c-4", pages = 12) is Outcome.Ok)
+        val tick = (api.completeTask("t-novel", mvv = false, clientId = "c-5", pages = 45) as Outcome.Ok).value
+        assertEquals("the pages are recorded, never priced", 5.2, tick.xp, 0.0)
+        assertTrue(tick.line!!, tick.line!!.endsWith(" · 45 pages"))
+    }
+
+    /** P24: the minimum version of a reading task still ticks in one tap. */
+    @Test fun aReadingTasksMinimumNeedsNoPages() = runTest {
+        val api = DemoApi()
+        val min = (api.completeTask("t-novel", mvv = true, clientId = "c-1") as Outcome.Ok).value
+        assertTrue(min.line!!, min.line!!.endsWith(" · minimum"))
+        assertFalse(min.line!!, min.line!!.contains("pages"))
+    }
+
+    /** P27: a demo sync answers as the server does: the backfill recorded, a newer walk paid, a resend a duplicate. */
+    @Test fun aHealthSyncRecordsTheBackfillAndLandsEachWalkOnce() = runTest {
+        val now = Instant.parse("2026-10-21T00:12:00Z")
+        val api = DemoApi(clock = { now })
+        val batch = HealthBatch(
+            since = "2026-10-20T23:00:00Z",
+            walks = listOf(
+                HealthWalk("hc-old", "WALK", "2026-10-20T21:00:00Z", "2026-10-20T21:45:00Z", 4.1),
+                HealthWalk("hc-new", "HIKE", "2026-10-20T23:05:00Z", "2026-10-20T23:50:00Z", 3.9, climbM = 160.0),
+            ),
+            weights = listOf(HealthWeight("hc-kg", "2026-10-20T21:05:00Z", 82.4)),
+        )
+        val first = (api.syncHealth(batch, "c-1") as Outcome.Ok).value
+        assertEquals(HealthWalkCounts(added = 2, paid = 1, recorded = 1, xp = 18.0), first.walks)
+        assertEquals(HealthWeightCounts(added = 1), first.weights)
+        assertEquals("Health Connect: 2 walks in (1 paid 18 XP, 1 recorded) · 1 weigh-in", first.line)
+        // The same clientId answers the first reply; a new one finds every record already here.
+        assertEquals(first, (api.syncHealth(batch, "c-1") as Outcome.Ok).value)
+        val again = (api.syncHealth(batch, "c-2") as Outcome.Ok).value
+        assertEquals(HealthWalkCounts(duplicate = 2), again.walks)
+        assertEquals("Health Connect: nothing new.", again.line)
     }
 }

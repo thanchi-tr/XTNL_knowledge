@@ -85,6 +85,10 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // "Remove animations" may have changed while away.
         facts.update { it.copy(systemAnimScale = MotionLevel.systemScale(this)) }
+        // Health Connect (P27): a sync while the app is in front (Android lets a foreground app read; at most every
+        // 15 minutes, and only while the sync is on).
+        val sync = (application as XtnlApp).graph.healthSync
+        lifecycleScope.launch { sync.runIfDue() }
     }
 
     override fun onNewIntent(intent: Intent) {

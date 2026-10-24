@@ -31,6 +31,19 @@
  * and Long goals at their most). The
  * counts ride on the year already simulated (no draw of their own), so the plain run's output is byte-identical with or
  * without them; credits never feed XP, MP or a level, so nothing above moves.
+ *
+ * Proof of work (blueprint P23, D20): while PROOF_LAUNCH_DAY is null and XTNL_PROOF_LAUNCH_DAY is unset nothing here
+ * changes, byte for byte. With the override set (`XTNL_PROOF_LAUNCH_DAY=2026-10-24 npx tsx scripts/momentum-sim.ts`)
+ * every simulated day is after it: the basket's deep-work row is a proof task (the default rule's: Craft at
+ * Demanding), so the realistic player logs its minutes (its 90, its estimate) and it is priced through the proof rule
+ * (life-grade priceTask with its PriceProof, 'life-3'); the basket's own BODY effort is logged walks only (the walk
+ * and the gym moved to sessions). So the reported-minutes rule (H10) has something to drop, the override also runs a
+ * shadow EXERCISE habit (SHADOW_EXERCISE: 20 minutes, 3 a week, its own seeded stream so nothing else in the run
+ * moves) that half the time is ticked in one tap (no minutes reported), and judges BODY twice with it: once as the
+ * rule reads it (only reported minutes are effort) and once as before the launch (every tick's minutes). Pins P23a-e
+ * re-pin the plan's figures: the logged tick prices as the basket row, the BODY kept rate stays about 61% and the
+ * BODY quest rate about 55.8% (the run itself, unchanged), the rule's drop on the shadow habit is measured and stays
+ * small, and C11 holds as before.
  */
 import "./_no-model";
 import { createHmac } from "node:crypto";
@@ -45,9 +58,22 @@ import { TRACKS, type Band, type Track } from "../src/lib/life-types";
 import { addDays, weekKeyOf, type DayKey } from "../src/lib/life-day";
 import { CREDITS_V1 } from "../src/lib/credits";
 import { GOAL_SLOTS_MAX } from "../src/lib/roadmap-types";
+import { proofLaunchDay } from "../src/lib/proof";
 
 /** The track curve the levels read (blueprint P3): POWER once a launch day is set, since every simulated day is after it. */
 const TRACK_CURVE: TrackCurve = trackCurveLaunchDay() == null ? "SQUARE" : "POWER";
+/** Proof of work (P23): in force once a launch day is set, since every simulated day is after it. */
+const PROOF_ON = proofLaunchDay() != null;
+/** The basket rows the default deep-work rule marks as proof (D20: Craft's deep work, Demanding): logged at their minutes. */
+const PROOF_ROWS: ReadonlySet<string> = new Set(["deep work"]);
+/**
+ * Proof of work (P23, the override only): an EXERCISE habit the basket doesn't have (its BODY effort is walks), run as a
+ * shadow on its own seeded stream (nothing else in the run moves): a Standard 20-minute habit 3 times a week, half of
+ * its ticks one tap (no minutes reported: from the launch they add no BODY effort), half with its minutes.
+ */
+const SHADOW_EXERCISE = { band: "STANDARD" as Band, minutes: 20, perWeek: 3, oneTapShare: 0.5 } as const;
+/** The Move quest's minutes a tick needs (momentum.ts QUEST.MOVE_MINUTES; 10 once the week's 150 is met). */
+const SHADOW_MOVE_MINUTES = 20;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Momentum maths (the reference implementation; momentum.md §A, §B)
@@ -524,6 +550,14 @@ interface UserResult {
   keptShare: Record<Track, number>;
   questsDone: { task: number; plan: number; body: number };
   lifeXpPerDay: number[];
+  /** Proof of work (P23; only with the override): the proof ticks priced, and |logged raw − the basket row's raw| summed. */
+  proofTicks: number;
+  proofRawDrift: number;
+  /**
+   * The shadow EXERCISE habit (P23; only with the override): BODY's kept weeks and quest days judged with it, by the
+   * reported-minutes rule (`rule`) and as before the launch (`before`), and its ticks (`oneTap` of them unreported).
+   */
+  shadow: { keptRule: number; keptBefore: number; questRule: number; questBefore: number; ticks: number; oneTap: number };
   /** Credits a week (blueprint P16; CREDITS_V1): Today's three, their chest, kept weeks and Short goals. */
   creditsCoreByWeek: number[];
   /** Credits a week from the roadmap's pay: kept plan weeks, checkpoints and milestones that pay MP, Mid goals. */
@@ -565,6 +599,12 @@ function simulateUser(seed: number): UserResult {
   let milestones = 0, checkpoints = 0, planWeeksPaid = 0;
   const questsDone = { task: 0, plan: 0, body: 0 };
   const lifeXpPerDay: number[] = [];
+  let proofTicks = 0;
+  let proofRawDrift = 0;
+  // The shadow EXERCISE habit (P23, the override only): its own stream, so the run's own draws are the plain run's.
+  const shadowRng = PROOF_ON ? mulberry32(seed * 2246822519 + 13) : null;
+  const shadow = { keptRule: 0, keptBefore: 0, questRule: 0, questBefore: 0, ticks: 0, oneTap: 0 };
+  let shadowWeek = { days: new Set<number>(), raw: 0, reported: 0, all: 0 };
   // Credits (P16): counted off the same events, never a draw of their own (the plain run's numbers cannot move).
   const CR = CREDITS_V1;
   const creditsCoreByWeek: number[] = [];
@@ -740,11 +780,14 @@ function simulateUser(seed: number): UserResult {
     for (const r of todays) {
       const n = (repeat.get(r.title) ?? 0) + 1;
       repeat.set(r.title, n);
-      const rec = priceTask(
-        { band: r.band, bandOverride: 0, machineMinutes: r.minutes, estMinutes: r.minutes, minutes: null, timing: "ON_TIME", recurring: r.recurring, streakDays: r.recurring ? STREAK_DAYS : 0, repeatN: n, introBefore, mode: "FULL" },
-        { rawBefore },
-        r.track
-      );
+      const input = { band: r.band, bandOverride: 0, machineMinutes: r.minutes, estMinutes: r.minutes, minutes: null, timing: "ON_TIME", recurring: r.recurring, streakDays: r.recurring ? STREAK_DAYS : 0, repeatN: n, introBefore, mode: "FULL" } as const;
+      // Proof of work (P23, the override only): a deep-work tick is logged at its minutes, priced through the proof rule.
+      const proofRow = PROOF_ON && PROOF_ROWS.has(r.title);
+      const rec = proofRow ? priceTask({ ...input, minutes: r.minutes }, { rawBefore }, r.track, null, { gated: true, wall: null }) : priceTask(input, { rawBefore }, r.track);
+      if (proofRow) {
+        proofTicks += 1;
+        proofRawDrift += Math.abs(rec.raw - priceTask(input, { rawBefore }, r.track).raw);
+      }
       if (r.band === "INTRO") introBefore += 1;
       tasks += 1;
       anyAction = true;
@@ -785,6 +828,25 @@ function simulateUser(seed: number): UserResult {
     if (taskQuestDone) questsDone.task += 1;
     if (planQuestDone) questsDone.plan += 1;
     if (bodyQuestDone) questsDone.body += 1;
+
+    // The shadow EXERCISE habit (P23, the override only): judged twice, nothing else in the run sees it.
+    if (shadowRng) {
+      const expected = blank ? 0 : (SHADOW_EXERCISE.perWeek / 7) * PERSONA.taskScale[mood];
+      const ticked = shadowRng() < expected;
+      const oneTap = shadowRng() < SHADOW_EXERCISE.oneTapShare;
+      if (ticked) {
+        shadow.ticks += 1;
+        if (oneTap) shadow.oneTap += 1;
+        const m = SHADOW_EXERCISE.minutes;
+        shadowWeek.days.add(i);
+        shadowWeek.raw += priceTask({ band: SHADOW_EXERCISE.band, bandOverride: 0, machineMinutes: m, estMinutes: m, minutes: oneTap ? null : m, timing: "ON_TIME", recurring: true, streakDays: STREAK_DAYS, repeatN: 1, introBefore: 0, mode: "FULL" }, { rawBefore: 0 }, "BODY").raw;
+        // A Standard tick weighs 1 (life-economy EFFORT_WEIGHT): its minutes are its effort minutes.
+        shadowWeek.all += m;
+        if (!oneTap) shadowWeek.reported += m;
+      }
+      if (bodyQuestDone || (ticked && !oneTap && SHADOW_EXERCISE.minutes >= SHADOW_MOVE_MINUTES)) shadow.questRule += 1;
+      if (bodyQuestDone || (ticked && SHADOW_EXERCISE.minutes >= SHADOW_MOVE_MINUTES)) shadow.questBefore += 1;
+    }
 
     // The chest (§A.2).
     let chestFreeze = 0;
@@ -871,6 +933,13 @@ function simulateUser(seed: number): UserResult {
         kept[t] = week.days[t].size >= KEPT_MIN_DAYS && week.raw[t] >= KEPT_MIN_RAW && (t !== "BODY" || week.effort >= BODY_EFFORT_MINUTES);
         if (kept[t]) keptWeeks[t] += 1;
       }
+      // The shadow EXERCISE habit (P23, the override only): BODY with it, by the rule and as before the launch.
+      if (shadowRng) {
+        const base = new Set([...week.days.BODY, ...shadowWeek.days]).size >= KEPT_MIN_DAYS && week.raw.BODY + shadowWeek.raw >= KEPT_MIN_RAW;
+        if (base && week.effort + shadowWeek.reported >= BODY_EFFORT_MINUTES) shadow.keptRule += 1;
+        if (base && week.effort + shadowWeek.all >= BODY_EFFORT_MINUTES) shadow.keptBefore += 1;
+        shadowWeek = { days: new Set<number>(), raw: 0, reported: 0, all: 0 };
+      }
       // Judge pool, in mint order: Shorts, kept tracks (BODY + Iron lungs first), plan week, full days (inert).
       let pool = 0;
       const mint = (amount: number, src: string): number => {
@@ -937,6 +1006,7 @@ function simulateUser(seed: number): UserResult {
     chests, chestRare, chestPity, chestXp, chestMp, crits, qualifyingTasks, critExtraXp, chainExtraRaw, taskRawNoMomentum, tasks,
     sessions, sessionRaw: sessionRawSum, sessionXp: sessionXpSum, prs, milestones, checkpoints, planWeeks: planWeeksPaid,
     lspAt, perksAt, firstPerkDay, fullBranchDay, streak, bodyKeptShare: keptShare.BODY, keptShare, questsDone, lifeXpPerDay,
+    proofTicks, proofRawDrift, shadow,
     creditsCoreByWeek, creditsRoadmapByWeek, creditsBySource,
   };
 }
@@ -1172,6 +1242,33 @@ function main() {
   const firstMean = (b: Branch) => mean(users.map((u) => u.firstPerkDay[b] ?? 999));
   const fullEarliest = (b: Branch) => Math.min(...users.map((u) => u.fullBranchDay[b] ?? 999));
   check("C11 first perk in each branch within 3 weeks (mean); no seed completes a branch before day 270", BRANCHES.every((b) => firstMean(b) <= 21 && fullEarliest(b) >= 270), BRANCHES.map((b) => `${b} first day ${f(firstMean(b), 0)}, earliest whole branch ${fullEarliest(b) === 999 ? "none" : `day ${fullEarliest(b)}`}`).join(" · "));
+  if (PROOF_ON) {
+    // Proof of work (P23; the override only): the plan's re-pins.
+    const ticks = users.reduce((s, u) => s + u.proofTicks, 0);
+    const drift = users.reduce((s, u) => s + u.proofRawDrift, 0);
+    const bodyKept = mean(users.map((u) => u.keptShare.BODY));
+    const bodyQuest = mean(users.map((u) => u.questsDone.body / DAYS));
+    // The shadow EXERCISE habit: BODY judged with it, by the reported-minutes rule and as before the launch.
+    const weeksOf = (u: UserResult) => Math.max(1, u.lifeMpByWeek.length);
+    const keptRule = mean(users.map((u) => u.shadow.keptRule / weeksOf(u)));
+    const keptBefore = mean(users.map((u) => u.shadow.keptBefore / weeksOf(u)));
+    const questRule = mean(users.map((u) => u.shadow.questRule / DAYS));
+    const questBefore = mean(users.map((u) => u.shadow.questBefore / DAYS));
+    const shadowTicks = users.reduce((s, u) => s + u.shadow.ticks, 0);
+    const shadowOneTap = users.reduce((s, u) => s + u.shadow.oneTap, 0);
+    console.log(`  proof of work: P23 (XTNL_PROOF_LAUNCH_DAY is set): ${ticks.toLocaleString("en-GB")} deep-work ticks logged at 90 min; the basket's BODY effort is logged walks, which the reported-minutes rule never drops`);
+    console.log(
+      `  proof of work: P23, a shadow EXERCISE habit (${SHADOW_EXERCISE.minutes} min, ${SHADOW_EXERCISE.perWeek} a week; ${shadowTicks.toLocaleString("en-GB")} ticks, ${f(100 * shadowOneTap / Math.max(1, shadowTicks))}% in one tap): BODY kept ${f(100 * keptBefore)}% of weeks counting every tick's minutes, ${f(100 * keptRule)}% counting only reported ones; BODY quest ${f(100 * questBefore)}% → ${f(100 * questRule)}% of days`
+    );
+    check("P23a a 90-minute logged deep-work tick prices exactly as the basket row (no raw drift)", ticks > 0 && drift < 1e-9, `${ticks} ticks, drift ${f(drift, 6)}`);
+    check("P23b the BODY kept rate stays about 61% of weeks, in [58%, 64%]", bodyKept >= 0.58 && bodyKept <= 0.64, `${f(100 * bodyKept)}%`);
+    check("P23c the BODY quest rate stays about 55.8% of days, in [54%, 58%]", bodyQuest >= 0.54 && bodyQuest <= 0.58, `${f(100 * bodyQuest)}%`);
+    // Measured at the plan's switch-on (2026-10-24, 120 seeds): kept 82.2% → 72.3%, quest 70.7% → 63.3%. Half of the
+    // habit's ticks unreported is the high end of mixed logging, so the bounds below hold the rule's real cost, not a
+    // collapse: BODY never falls below what its walks keep alone.
+    check("P23d with the shadow EXERCISE habit (half its ticks one tap), the reported-minutes rule takes BODY's kept rate down by at most 12 points, never below the walks' own", keptRule <= keptBefore && keptBefore - keptRule <= 0.12 && keptRule >= bodyKept, `${f(100 * keptBefore)}% → ${f(100 * keptRule)}% (walks alone ${f(100 * bodyKept)}%)`);
+    check("P23e with it, the BODY quest rate drops by at most 10 points, never below the walks' own", questRule <= questBefore && questBefore - questRule <= 0.1 && questRule >= bodyQuest, `${f(100 * questBefore)}% → ${f(100 * questRule)}% (walks alone ${f(100 * bodyQuest)}%)`);
+  }
   console.log(fails.length ? `  ${fails.length} pin(s) failed: ${fails.join("; ")}` : "  all pins hold");
   if (JSON_OUT) console.log(JSON.stringify(out, null, 2));
   if (fails.length) process.exitCode = 1;

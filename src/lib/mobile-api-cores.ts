@@ -24,9 +24,10 @@ import { loadLifeTracks } from "./life-tracks-server";
 import { loadCapitalDeals, loadKnowledgeRow } from "./status-panel-server";
 import { loadAvatar } from "./avatar-server";
 import { loadSkills, loadTemplateSkill } from "./competency-server";
+import { ingestHealthCore } from "./health-ingest-server";
 import { reviewDedupeKey } from "./srs";
 import { loadReviewDay } from "../app/review/review-data";
-import { completeTask, undoCapture, undoCompletion } from "../app/actions/tasks";
+import { completeTask, startTaskTimer, stopTaskTimer, undoCapture, undoCompletion } from "../app/actions/tasks";
 import { doneScheduledTask, reopenScheduledTask } from "../app/actions/scheduled-tasks";
 import { submitReview } from "../app/actions/review";
 import { createFromCapture, undoWeightCapture } from "../app/actions/capture";
@@ -65,6 +66,9 @@ export const realMobileDeps: MobileDeps = {
   // The board's tick and its Undo (actions/tasks.ts), as TodayBoard calls them less `refresh`.
   completeTask: (templateId, input) => completeTask(templateId, input),
   undoCompletion: (instanceId) => undoCompletion(instanceId),
+  // A proof task's timer (blueprint P23): actions/tasks startTaskTimer from the phone, and its stop.
+  startTimer: (templateId, clientId) => startTaskTimer(templateId, clientId, { source: "phone" }),
+  stopTimer: (sessionId) => stopTaskTimer(sessionId),
 
   // The Agenda's Done (no history log) and its Undo (actions/scheduled-tasks.ts).
   doneScheduled: (id) => doneScheduledTask(id, null),
@@ -101,4 +105,8 @@ export const realMobileDeps: MobileDeps = {
   // Intellect skill carries its Field's name (`fieldName`, drawn under it on the phone), and a tick's skill.
   loadSkills: async (userId) => (await loadSkills(userId)).skills,
   loadTemplateSkill: (userId, templateId) => loadTemplateSkill(userId, templateId),
+
+  // POST /exercise (blueprint P27, D22): Health Connect's walks and weigh-ins, at the route's clock, through the walk's
+  // own core (exercise-server logWalkCore, as Train › Exercise logs one) and the weigh-in's (weight-server logWeightCore).
+  ingestHealth: (userId, batch, now) => ingestHealthCore(userId, batch, { now: () => now }),
 };

@@ -22,7 +22,7 @@
  *              WeightRate, WeightProjection, WeightView, ParsedWeightLine
  *   pure       toKg, fromKg, roundKg, formatWeight, clampKg,
  *              trendSeries, weeklyRate, projectTarget, progressToTarget,
- *              weightView, parseWeightLine
+ *              weightView, parseWeightLine, importReplaces (P27)
  */
 import { addDays, daysBetween, type DayKey } from "./life-day";
 
@@ -186,6 +186,16 @@ export function cleanNote(note: unknown): string | null {
   if (typeof note !== "string") return null;
   const t = note.trim().slice(0, MAX_NOTE_CHARS).trim();
   return t.length > 0 ? t : null;
+}
+
+/**
+ * Health Connect (blueprint P27, D22): may an imported weigh-in measured at `measuredAt` replace the day's reading?
+ * Only another import measured earlier: a reading typed on the phone or the web (manual, capture) is always kept, and a
+ * resend of the same measurement (or an older one) changes nothing. A day with no reading takes the import.
+ */
+export function importReplaces(existing: { source: string; measuredAt: Date } | null, measuredAt: Date): boolean {
+  if (!existing) return true;
+  return existing.source === "import" && measuredAt.getTime() > existing.measuredAt.getTime();
 }
 
 /** Two decimals, and never -0. */

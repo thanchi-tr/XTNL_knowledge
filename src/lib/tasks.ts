@@ -17,6 +17,7 @@ import {
 import {
   CAPTURE_BATCH_MAX,
   CAPTURE_UNDO_MS,
+  completesItself,
   type ActivitySource,
   type AutoMetric,
   type Band,
@@ -87,6 +88,29 @@ import { STEPS_NOT_READY, nextTicks, paidByStepsOf, stepPayOf, stepsAllowed } fr
 import { isMissingRoadmapTable, isRoadmapCaptureKey, isSupersededRow, type PositionRow } from "./roadmap-types";
 import { PERSONAL_BOARD, WORK_CLARIFY_REFUSAL, WORK_NO_SIZE, workClarifyAllowed, workKindRefusalOf, type BoardScope } from "./work-boards";
 import { templateDecisionsOf, untilLabelOf, type TemplateDecisions } from "./task-decisions";
+import {
+  TIMER_GONE,
+  TIMER_OTHER_DAY,
+  groupMinutesOf,
+  groupTimerOf,
+  pagesGated,
+  pagesQtyOf,
+  pagesRefusalOf,
+  pagesTargetOf,
+  proofGated,
+  proofRefusalOf,
+  segmentsWith,
+  sessionForTick,
+  tickPagesOf,
+  tickWallOf,
+  timerBelongsTo,
+  timerGroupsOf,
+  type ProofFacts,
+  type ProofKind,
+  type SessionRow,
+  type TickProofInput,
+} from "./proof";
+import { closeSessionOps, countSessionOps, loadBoardProof, readCompletionProof, type CompletionProof } from "./task-sessions-server";
 import {
   EpochSet,
   HISTORY_DAYS,
@@ -902,12 +926,26 @@ export async function loadTodayBoard(userId: string, day: DayKey, now: Date = ne
   return cached(`today:${userId}:${day}`, ["life", "activity", "ideas", "roadmap"], async () => {
     // Each task's icon and colour (fails soft: none before the life_exercise_style migration).
     // Each task's steps and today's ticked ones (fails soft: none before the life_subtasks migration).
-    const [read, dueNow, styles, subtasks] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now), loadTaskStyles(userId), loadSubtasks(userId, day)]);
+    // Proof of work (P23): the proof kinds and the open timers, read only while it is in force today (null otherwise).
+    const [read, dueNow, styles, subtasks, proof] = await Promise.all([
+      loadBoardCore(userId, day, now),
+      loadDueNow(day, now),
+      loadTaskStyles(userId),
+      loadSubtasks(userId, day),
+      loadBoardProof(userId, day),
+    ]);
     // M2: BoardData.duty (duty-view.ts DutyBoard), read in the same wave.
     // Roadmap (F16 seam 3): BoardData.roadmapGoals, the stored series of the open ROADMAP goals.
     const roadmapGoals = await loadBoardRoadmapGoals(userId, read.core.templates, day);
-    return { ...read.core, dueNow, duty: read.duty, roadmapGoals, styles, subtasks };
+    if (!proof) return { ...read.core, dueNow, duty: read.duty, roadmapGoals, styles, subtasks };
+    const templates = withProofKinds(read.core.templates, proof.kinds);
+    return { ...read.core, templates, dueNow, duty: read.duty, roadmapGoals, styles, subtasks, proof: proof.proof };
   });
+}
+
+/** The board's templates with their proof kinds (P23): only those carrying one change; the rest are the same objects. */
+function withProofKinds(templates: readonly BoardTemplate[], kinds: Readonly<Record<string, ProofKind>>): BoardTemplate[] {
+  return templates.map((t) => (kinds[t.id] ? { ...t, proof: kinds[t.id] } : t));
 }
 
 /**
@@ -1299,7 +1337,9 @@ async function insertCapture(
   let parentId: string | null = boardId ? null : linkedParentOf(kind, opts.link);
   if (!boardId && !parentId && parsed.parentHint && kind !== "GOAL") parentId = matchParentGoal(parsed.parentHint, await loadOpenGoals(userId))?.id ?? null;
 
-  // A study task completes itself from reviews (the game's): never on a work tab.
+  // A study task completes itself from reviews (the game's): never on a work tab. A reading task ('30 pages', P24) is
+  // PAGES with its day's target: written for such a line only, it is ticked by hand like any task (its pages are asked
+  // for once PROOF_LAUNCH_DAY is in force).
   const autoMetric = parsed.autoMetric && kind !== "GOAL" && !boardId ? parsed.autoMetric : null;
   const autoTarget =
     autoMetric && parsed.autoTarget != null && Number.isFinite(parsed.autoTarget)
@@ -1341,6 +1381,10 @@ async function insertCapture(
     gradeSource: "LEXICAL",
     gradeConfidence: Math.max(0, Math.min(1, sizing.confidence)),
     gradeBasis: sizing.basis.slice(0, 200),
+    // Proof of work (P23, D20): '#proof' opts a task or a habit in (never a goal, an idea draft or a work tab's task). The
+    // column is written only for such a line, so every other capture is exactly as before; the gate itself waits for
+    // PROOF_LAUNCH_DAY.
+    ...(parsed.proof && !boardId && (kind === "TASK" || kind === "HABIT") ? { proof: "MINUTES" } : {}),
     captureSource: opts.captureSource,
     captureKey,
     boardId,
@@ -1521,7 +1565,9 @@ async function tickCaptured(
   a: { minutes: number | null; today: DayKey; now: Date; instances: readonly BoardInstance[] }
 ): Promise<CreatedTask> {
   try {
-    const done = await completeInstanceCore(userId, t.id, { day: "today", minutes: a.minutes, now: a.now });
+    // Pages proof (P24): a done-now reading line ('x read 30 pages') names its pages, so its tick reports them.
+    const target = t.autoMetric === "PAGES" ? pagesTargetOf(t) : null;
+    const done = await completeInstanceCore(userId, t.id, { day: "today", minutes: a.minutes, now: a.now, ...(target != null ? { proof: { kind: "PAGES", qty: target } } : {}) });
     if (!done.ok) return { ...created, doneNowError: done.error };
     const v = done.value;
     const ticked: BoardInstance = { id: v.instanceId, templateId: t.id, day: v.day, slot: v.slot, status: v.status, source: v.source, xpPaid: v.receipt.xp };
@@ -1550,6 +1596,16 @@ export interface CompleteOptions {
   minutes?: number | null;
   mvv?: boolean;
   now?: Date;
+  /**
+   * Proof of work (blueprint P23): the timer (TaskSession id) this tick counts. Absent: the template's own timer of
+   * that day not yet counted, if any. Read only while PROOF_LAUNCH_DAY is in force.
+   */
+  sessionId?: string | null;
+  /**
+   * Pages proof (blueprint P24): a reading task's pages ({ kind: 'PAGES', qty }). Read only while PROOF_LAUNCH_DAY is
+   * in force, and only for a pages task; recorded on the instance and the receipt, never priced.
+   */
+  proof?: TickProofInput | null;
 }
 
 export interface Completion {
@@ -1603,6 +1659,11 @@ interface CompletionRead {
    * that day (a TaskDecision not undone): the day counts as not kept, so it takes no record.
    */
   decidedNotKept?: boolean;
+  /**
+   * Proof of work (blueprint P23; task-sessions-server readCompletionProof): the template's proof kind, its previous
+   * tick and its timers not yet counted, read only while proof is in force on the completion's day. Absent: no proof.
+   */
+  proof?: CompletionProof | null;
 }
 
 /**
@@ -1619,7 +1680,7 @@ async function readForCompletion(
   day: DayKey,
   now: Date
 ): Promise<(CompletionRead & { row: TemplateRow }) | null> {
-  const [row, instances, totals, events, settings, debts, frozen, momentum, decided] = await Promise.all([
+  const [row, instances, totals, events, settings, debts, frozen, momentum, decided, proof] = await Promise.all([
     prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: TEMPLATE_SELECT }),
     prisma.taskInstance.findMany({
       where: { templateId, userId, day: { gte: dateColumn(addDays(today, -HISTORY_DAYS)) } },
@@ -1637,6 +1698,8 @@ async function readForCompletion(
     day < today
       ? prisma.taskDecision.findFirst({ where: { userId, templateId, day: dateColumn(day), undoneAt: null, compulsory: true }, select: { id: true } })
       : Promise.resolve(null),
+    // Proof of work (P23): null, with no read, while it is not in force on `day`.
+    readCompletionProof(userId, templateId, day),
   ]);
   if (!row) return null;
   return {
@@ -1652,6 +1715,7 @@ async function readForCompletion(
     frozen: !!frozen,
     ...(momentum ? { momentum } : {}),
     decidedNotKept: !!decided,
+    ...(proof ? { proof } : {}),
   };
 }
 
@@ -1837,7 +1901,84 @@ type SettleArgs = {
   detail?: string | null;
   /** Momentum §A.6 (completeLinkedCore): the walk that completes the task; prices as SESSION and is stored on the instance. */
   workoutId?: string;
+  /** Proof of work (P23): the timer this tick names (CompleteOptions.sessionId). */
+  sessionId?: string | null;
+  /** Pages proof (P24): the pages this tick reports (CompleteOptions.proof's). */
+  pages?: number | null;
 };
+
+/**
+ * What a tick prices with under proof of work (P23): the template with its proof kind, the minutes, the timer it
+ * counts (its segments) and the row's timers it closes counting nothing (a report took their place).
+ */
+interface TickProof {
+  template: BoardTemplate;
+  minutes: number | null | undefined;
+  segments: SessionRow[];
+  closes: string[];
+  facts: ProofFacts | null;
+  /** Pages proof (P24): a pages task's tick in force, and the pages it records on its instance (null: none). */
+  pagesOn: boolean;
+  pages: number | null;
+}
+
+/**
+ * Proof of work for one tick (blueprint P23, D20), from the read (CompletionRead.proof, present only while proof is
+ * in force on its day): a proof template's full tick needs minutes, reported or from its timer (the one named, else
+ * its own of that day not yet counted, every segment), else it is refused (proof.ts PROOF_MINUTES_REFUSAL). The count
+ * is bounded by the clock (proof.ts tickWallOf): a timer by the minutes it ran; a report by the time since the task's
+ * previous tick that same life day, live (an Again; never a record of yesterday or another day's tick, H9). A named
+ * timer must be this row's (timerBelongsTo: today's timer never counts for yesterday). A manual tick that reports its
+ * minutes closes the row's timers counting nothing, so none is left running or picked up later. The minimum version,
+ * #play, a study task, an automatic or a walk's completion are never gated. Without the read: the tick exactly as before.
+ * Pages proof (P24, D21): a pages task's full tick reports its pages, at least its day's target when it has one
+ * (pagesRefusalOf); they are recorded on the instance and the receipt, never priced.
+ */
+function tickProofOf(read: CompletionRead, a: SettleArgs): LifeResult<TickProof> {
+  const p = read.proof;
+  if (!p) return ok({ template: read.t, minutes: a.minutes, segments: [], closes: [], facts: null, pagesOn: false, pages: null });
+  const template: BoardTemplate = p.kind ? { ...read.t, proof: p.kind } : read.t;
+  const gated = proofGated(template, a.day, p.launchDay);
+  const plain = !a.auto && !a.workoutId && !a.mvv;
+  const reported = typeof a.minutes === "number" && Number.isFinite(a.minutes) && a.minutes > 0 ? a.minutes : null;
+  // The row's timers (proof.ts timerBelongsTo): today's, and one still running from yesterday; a record's, its day's stopped one.
+  const mine = timerGroupsOf(p.sessions.filter((s) => s.templateId === template.id)).filter((g) => timerBelongsTo(groupTimerOf(g), a.day, a.today));
+  let segments: SessionRow[] = [];
+  if (a.sessionId && plain) {
+    const named = p.sessions.find((s) => s.id === a.sessionId && s.templateId === template.id) ?? null;
+    if (!named) return fail(TIMER_GONE);
+    if (!mine.some((g) => g.some((s) => s.id === named.id))) return fail(TIMER_OTHER_DAY);
+    if (reported == null) segments = segmentsWith(p.sessions, named, a.day === a.today ? p.prevTickAt : null);
+  } else if (plain && reported == null) {
+    const latest = sessionForTick(p.sessions, { templateId: template.id, day: a.day, prevTickAt: p.prevTickAt });
+    if (latest) segments = segmentsWith(p.sessions, latest, p.prevTickAt);
+  }
+  const timed = segments.length > 0 ? groupMinutesOf(segments, a.now) : 0;
+  const fromTimer = reported == null && timed >= 1;
+  const minutes = reported ?? (fromTimer ? timed : null);
+  const pays = !template.intrinsic && !(template.autoMetric && STUDY_METRICS.has(template.autoMetric));
+  const refusal = proofRefusalOf({ gated, mvv: a.mvv, auto: a.auto || !!a.workoutId, pays, minutes });
+  if (refusal) return fail(refusal);
+  // Pages proof (P24): a full tick of a pages task brings its pages (the minimum version and an automatic one bring none).
+  const pagesOn = pagesGated(template, a.day, p.launchDay);
+  const pages = pagesOn && plain ? pagesQtyOf(a.pages) : null;
+  const pagesRefusal = pagesRefusalOf({ gated: pagesOn, target: pagesTargetOf(template), mvv: a.mvv, auto: a.auto || !!a.workoutId, pays, pages });
+  if (pagesRefusal) return fail(pagesRefusal);
+  const wall = gated && minutes != null ? tickWallOf({ timed: fromTimer ? timed : null, prevTickAt: p.prevTickAt, day: a.day, today: a.today, now: a.now }) : null;
+  const counted = fromTimer ? segments : [];
+  // A manual tick (a report, or the minimum) closes the row's other timers counting nothing: the tick took their place.
+  const closes = !a.auto && !a.workoutId ? mine.flat().filter((s) => !counted.some((c) => c.id === s.id)).map((s) => s.id) : [];
+  const latest = counted[counted.length - 1] ?? null;
+  return ok({
+    template,
+    minutes: plain ? (minutes ?? a.minutes) : a.minutes,
+    segments: counted,
+    closes,
+    facts: { launchDay: p.launchDay, wall, session: latest?.id ?? null, ...(pagesOn ? { pages } : {}) },
+    pagesOn,
+    pages,
+  });
+}
 
 const RETRY = Symbol("retry");
 
@@ -1867,21 +2008,27 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
   const refusal = tickRefusalFor(read, a.day, a.today, !!rule);
   if (refusal) return fail(refusal);
 
+  // Proof of work (P23): read only while it is in force on a.day; a proof template's full tick needs its minutes or timer.
+  const tp = tickProofOf(read, a);
+  if (!tp.ok) return fail(tp.error);
+  const proof = tp.value;
+
   const streakDays = rule && !a.auto ? streakDaysFor(t, rule, history, a.day) : 0;
   // Momentum (lane A): only when its facts were read, i.e. momentum is live on a.day; planCompletion holds the gate too.
   const momentum = planMomentumOf(userId, read.momentum, a.now);
   const plan = planCompletion({
-    template: t,
+    template: proof.template,
     day: a.day,
     today: a.today,
     slot: a.slot,
-    minutes: a.minutes,
+    minutes: proof.minutes,
     mvv: a.mvv,
     ledger,
     streakDays,
     auto: a.auto,
     ...(momentum ? { momentum } : {}),
     ...(a.workoutId ? { session: true } : {}),
+    ...(proof.facts ? { proof: proof.facts } : {}),
   });
 
   // Each undo of this slot bumps the attempt, so re-completing writes a new
@@ -1901,6 +2048,9 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
   });
   const minutes = Math.round(plan.receipt.minutes) || null;
   const dayCol = dateColumn(a.day);
+  // Pages proof (P24, migration 20270102000000_proof_qty): only a pages task's tick in force writes the two columns (a
+  // re-tick of an undone slot clears what the first wrote when it brings none); every other tick's row is as before.
+  const pagesCols = proof.pagesOn ? (proof.pages != null ? { proofKind: "PAGES", proofQty: proof.pages } : { proofKind: null, proofQty: null }) : null;
 
   const ops: Prisma.PrismaPromise<unknown>[] = [
     lifeLockOp(userId),
@@ -1922,8 +2072,17 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
         minutes,
         xpPaid: plan.receipt.xp,
         ...(a.workoutId ? { workoutId: a.workoutId } : {}),
+        ...(pagesCols?.proofKind ? pagesCols : {}),
       },
-      update: { status: plan.status, source: plan.source, completedAt: a.now, minutes, xpPaid: plan.receipt.xp, ...(a.workoutId ? { workoutId: a.workoutId } : {}) },
+      update: {
+        status: plan.status,
+        source: plan.source,
+        completedAt: a.now,
+        minutes,
+        xpPaid: plan.receipt.xp,
+        ...(a.workoutId ? { workoutId: a.workoutId } : {}),
+        ...(pagesCols ?? {}),
+      },
     }),
     activityOp(userId, event),
     // The grade freezes at the first completion: from here on neither the AI
@@ -1935,6 +2094,10 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
   if (!rule) {
     ops.push(prisma.taskTemplate.updateMany({ where: { id: t.id, completedAt: null }, data: { completedAt: a.now } }));
   }
+  // Proof of work (P23): the timer this tick counted is counted once (each segment's share set, stopped if it still
+  // ran); the row's timers a report took the place of are closed counting nothing.
+  if (proof.segments.length > 0) ops.push(...countSessionOps(userId, proof.segments, plan.receipt.minutes, a.now));
+  if (proof.closes.length > 0) ops.push(...closeSessionOps(userId, proof.closes, a.now));
 
   try {
     const results = await prisma.$transaction(ops);
@@ -2070,7 +2233,7 @@ export async function completeInstanceCore(userId: string, templateId: string, o
     );
   }
 
-  return settleCompletion(userId, read, { day, today, slot: 0, minutes: opts.minutes, mvv: opts.mvv, now }, load);
+  return settleCompletion(userId, read, { day, today, slot: 0, minutes: opts.minutes, mvv: opts.mvv, now, sessionId: opts.sessionId, pages: tickPagesOf(opts.proof) }, load);
 }
 
 /** 'Again': the same habit once more today, in the next slot. Repeat decay prices it lower. */
@@ -2083,13 +2246,14 @@ export async function againCore(userId: string, templateId: string, opts: Comple
   const reason = completableReason(read.t, read.row) ?? deferredRefusalOf(read.t, now);
   if (reason) return fail(reason);
   if (!ruleOf(read.t)) return fail("Again is for repeating tasks.");
-  if (read.t.autoMetric) return fail("A study task completes once a day.");
+  // A pages task (P24) is ticked by hand, so it takes an Again like any habit; every other metric completes itself.
+  if (completesItself(read.t.autoMetric)) return fail("A study task completes once a day.");
   const onDay = read.history.filter((i) => i.day === today);
   if (!onDay.some((i) => isDoneStatus(i.status))) return fail("Do it once first.");
   const slot = Math.max(...onDay.map((i) => i.slot)) + 1;
   if (slot > SLOT_MAX) return fail("That's plenty for one day.");
   if (read.row.boardId) return completeWorkCore(userId, read, { day: today, today, slot, minutes: opts.minutes, mvv: opts.mvv, now });
-  return settleCompletion(userId, read, { day: today, today, slot, minutes: opts.minutes, mvv: opts.mvv, now }, load);
+  return settleCompletion(userId, read, { day: today, today, slot, minutes: opts.minutes, mvv: opts.mvv, now, sessionId: opts.sessionId, pages: tickPagesOf(opts.proof) }, load);
 }
 
 // ── A walk that completes an exercise task (momentum.md §A.6) ─────────────
@@ -2320,6 +2484,18 @@ async function stepTickOnce(
     return ok(result(inst!.xpPaid ?? live?.xp ?? 0, 0, true, inst!.id, (live?.receipt as unknown as Receipt) ?? null));
   }
 
+  // Proof of work (P23): a proof task is paid by its whole tick with its minutes, never through its steps; until then
+  // its steps are a checklist (a share a step paid before the launch stands as it is). Pages proof (P24): so is a
+  // reading task, paid by its whole tick with its pages.
+  if (read.proof && (proofGated(read.proof.kind ? { ...t, proof: read.proof.kind } : t, day, read.proof.launchDay) || pagesGated(t, day, read.proof.launchDay))) {
+    const ops = tickOps();
+    if (ops.length > 0) {
+      const failed = await write(ops);
+      if (failed) return failed;
+    }
+    return ok(result(live?.xp ?? 0, 0, false, live ? inst!.id : null, (live?.receipt as unknown as Receipt) ?? null));
+  }
+
   const pay = stepPayOf({ compulsory: t.compulsory, done: after.size, total: ids.length });
   const sameShare = pay.kind === "pay" && liveSteps && liveSteps.done === pay.steps.done && liveSteps.total === pay.steps.total;
   // Nothing to re-price: the share is the one already paid, or nothing was paid and nothing will be.
@@ -2344,7 +2520,18 @@ async function stepTickOnce(
   const momentum = planMomentumOf(userId, read.momentum, now);
   const plan =
     pay.kind === "pay"
-      ? planCompletion({ template: t, day, today, slot: 0, ledger, streakDays: rule ? streakDaysFor(t, rule, history, day) : 0, steps: pay.steps, ...(momentum ? { momentum } : {}) })
+      ? planCompletion({
+          template: t,
+          day,
+          today,
+          slot: 0,
+          ledger,
+          streakDays: rule ? streakDaysFor(t, rule, history, day) : 0,
+          steps: pay.steps,
+          ...(momentum ? { momentum } : {}),
+          // Proof of work (P23): an EXERCISE task's step share records that no minutes came (a proof task never gets here).
+          ...(read.proof ? { proof: { launchDay: read.proof.launchDay } } : {}),
+        })
       : null;
   const full = pay.kind === "pay" && pay.steps.done === pay.steps.total;
   const undoCount = inst ? events.filter((e) => e.source === "UNDO" && e.sourceId === inst.id).length : 0;

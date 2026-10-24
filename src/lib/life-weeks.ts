@@ -108,6 +108,7 @@ import { expectedOn, ruleOn, type DutyTemplate } from "./duty-rule";
 import { MODE_LABEL } from "./life-grade";
 import { MOMENTUM, lifeModsOf, lifeMpModelOfWeek, planWeekMintKey } from "./momentum";
 import { walkCountedEffortOf } from "./exercise";
+import { exerciseMinutesCount } from "./proof";
 import { TRACKS, type Category, type InstanceStatus, type Receipt, type TaskKind, type Track } from "./life-types";
 import type { LifeLedger } from "./life-tracks";
 import { WEEKDAY_SHORT, occurrencesBetween, parseRule } from "./recurrence";
@@ -448,6 +449,9 @@ function trackWeekOf(rows: readonly WeekTaskRow[], track: Track, from: DayKey, t
         continue;
       }
       if (paidByWalk(r.receipt)) continue;
+      // Proof of work (blueprint P23, D20; forward only): a tick priced from PROOF_LAUNCH_DAY adds effort minutes only
+      // when they were reported. Every receipt before it carries no `proof`, so no week before the launch is re-judged.
+      if (!exerciseMinutesCount(r.receipt)) continue;
       const minutes = Number(r.receipt.minutes);
       if (Number.isFinite(minutes) && minutes > 0) effort += minutes * effortWeightOfB(bFactorOf(r.receipt));
     }

@@ -58,6 +58,20 @@ data class TaskItem(
     val icon: String? = null,
     val dueLabel: String? = null,
     val xpHint: Double? = null,
+    /**
+     * Proof of work (blueprint P23): a full tick of this row needs its minutes or its timer (a deep-work task marked
+     * proof). The tick opens the minutes sheet instead (unless its timer has run). False while the server has proof of
+     * work switched off, and from an older server.
+     */
+    val proof: Boolean = false,
+    /** The row's open timer (running, or stopped and waiting for its tick); null with none. */
+    val timer: TaskTimer? = null,
+    /**
+     * Pages proof (blueprint P24): a reading task. Its full tick reports the pages read (the sheet's chips), at least
+     * [TaskPages.target] when it has one, so its tap opens the sheet. Null on every other row, while the server has proof
+     * of work switched off, and from an older server.
+     */
+    val pages: TaskPages? = null,
 ) {
     /** Can be ticked (a LOCKED study task completes itself from the day's reviews). */
     val open: Boolean get() = status == "OPEN"
@@ -72,6 +86,28 @@ data class TaskItem(
 
 @Serializable
 data class TasksSummary(val open: Int = 0, val done: Int = 0, val allDone: Boolean = false)
+
+/** A task's timer (POST /tasks/start; blueprint P23): a row on the server, so it survives an app restart. */
+@Serializable
+data class TaskTimer(
+    val sessionId: String,
+    val templateId: String = "",
+    val startedAt: String,
+    val endedAt: String? = null,
+    val running: Boolean = false,
+    /** The life day it started on ("2026-10-24"): one still running from yesterday ran across 04:00 (its tap asks first). Null from an older server. */
+    val day: String? = null,
+    /** The minutes of its earlier segments (stopped, then resumed the same day); 0 with none, and from an older server. */
+    val priorMinutes: Int = 0,
+)
+
+/** A reading task's pages (/check's `pages`; blueprint P24): the day's target, or null when the pages are optional. */
+@Serializable
+data class TaskPages(val target: Int? = null)
+
+/** POST /tasks/start and /tasks/stop's answer: the timer as it now stands, and its line. */
+@Serializable
+data class TimerResult(val timer: TaskTimer? = null, val line: String? = null)
 
 /**
  * The daily quests (docs/mobile-api.md `daily`; decisions D14, D15): the web Must lane's own count and its 1/0 strip.
@@ -691,5 +727,54 @@ data class IdeaResult(
     val field: String? = null,
     val domain: String? = null,
     val points: Double? = null,
+    val line: String? = null,
+)
+
+// ── POST /exercise (blueprint P27: Health Connect's walks, hikes and weigh-ins) ──
+
+/** One walking or hiking session as the sync sends it: its Health Connect record id, its instants (ISO), its distance and climb. */
+@Serializable
+data class HealthWalk(
+    val externalId: String,
+    val kind: String,
+    val start: String,
+    val end: String,
+    val distanceKm: Double,
+    val climbM: Double? = null,
+    val origin: String? = null,
+)
+
+/** One weigh-in as the sync sends it. */
+@Serializable
+data class HealthWeight(val externalId: String, val at: String, val kg: Double)
+
+/** A batch: [since] is when the sync was switched on (a walk that started before it is the backfill: recorded, never paid). */
+@Serializable
+data class HealthBatch(val since: String, val walks: List<HealthWalk> = emptyList(), val weights: List<HealthWeight> = emptyList())
+
+/** POST /exercise's counts: walks [added] ([paid] and [recorded]), [matched] to a walk typed by hand, [duplicate]s, and their [xp]. */
+@Serializable
+data class HealthWalkCounts(
+    val added: Int = 0,
+    val paid: Int = 0,
+    val recorded: Int = 0,
+    val matched: Int = 0,
+    val duplicate: Int = 0,
+    val xp: Double = 0.0,
+)
+
+@Serializable
+data class HealthWeightCounts(val added: Int = 0, val kept: Int = 0)
+
+/** An item a core refused, with its own line (the rest of the batch still landed). */
+@Serializable
+data class HealthRefusal(val kind: String = "walk", val externalId: String = "", val error: String = "")
+
+/** POST /exercise (P27): what the batch did, and the server's [line] (Settings › Health Connect shows it). */
+@Serializable
+data class HealthSyncResult(
+    val walks: HealthWalkCounts = HealthWalkCounts(),
+    val weights: HealthWeightCounts = HealthWeightCounts(),
+    val refused: List<HealthRefusal> = emptyList(),
     val line: String? = null,
 )

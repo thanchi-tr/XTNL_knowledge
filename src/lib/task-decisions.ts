@@ -37,6 +37,7 @@ import { addDays, dayEndOf, dayKeyOf, weekdayOf, zonedToInstant, LIFE_TZ, type D
 import { isFixedSchedule, occurrencesBetween, parseRule } from "./recurrence";
 import { UNDO_WINDOW_MINUTES } from "./life-grade";
 import type { MustNote } from "./daily-quests";
+import { completesItself } from "./life-types";
 
 // ── Kinds, scopes, reasons ────────────────────────────────────────────────
 
@@ -607,7 +608,8 @@ export function planDefer(
   const { now, until } = input;
   const today = dayKeyOf(now, tz);
   if (t.deferUntil && t.deferUntil.getTime() > now.getTime()) return planFail(`Already deferred until ${untilLabelOf(t.deferUntil, now, tz)}.`);
-  if (t.autoMetric) return planFail(DEFER_AUTO);
+  // A pages task (P24) is ticked by hand, so it defers like any task; every other metric completes itself.
+  if (completesItself(t.autoMetric)) return planFail(DEFER_AUTO);
   const rule = parseRule(t.recurrence);
   if (!rule && t.completed) return planFail(DECISION_DONE);
   if (rule && instances.some((i) => i.day === today && DONE.has(i.status))) return planFail(DECISION_DONE_TODAY);

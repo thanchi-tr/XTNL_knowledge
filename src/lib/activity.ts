@@ -63,6 +63,8 @@ export const DEFAULT_SINK: Record<ActivitySource, Sink> = {
   // The Mall's rows (mall-server.ts; blueprint P19): a purchase and its undo spend and give back credits, never XP.
   MALL_BUY: "NONE",
   MALL_REFUND: "NONE",
+  // A Health Connect walk's dedupe row (health-ingest.ts; blueprint P27): a record of where the walk came from, never pay.
+  INGEST: "NONE",
   // Momentum's rows (momentum.md §D.2); each writer still sets its own sink when it pays.
   ...MOMENTUM_DEFAULT_SINK,
 };

@@ -28,6 +28,7 @@ import {
 import { dutyPhaseOf, dutySettledLine, preLaunchNotice } from "@/lib/rituals";
 import { CREDIT_KIND_LABEL, CREDIT_UNIT, creditModelOn, creditRows, creditsLaunchDay, type CreditModel } from "@/lib/credits";
 import { MALL_UNDO_MINUTES } from "@/lib/mall";
+import { proofLaunchDay, proofOn, proofRuleLines } from "@/lib/proof";
 import {
   BODY_EFFORT_MINUTES,
   CAPPED_REASONS,
@@ -401,6 +402,23 @@ function GroundRules({ momentumOn }: { momentumOn: boolean }) {
           The Mall prices only the rewards you list (You › Mall), and none is listed for you. Play, rest days and sleep are
           never priced: a reward named for #play, sleep or a rest day is refused.
         </li>
+      </ul>
+    </Card>
+  );
+}
+
+/**
+ * Proof of work (blueprint 2.6; P23, decision D20): deep work counts its time. Its lines are proof.ts proofRuleLines
+ * (every figure read from the code that applies it), rendered only once proof is in force (PROOF_LAUNCH_DAY), so before
+ * the user's go this page shows no Proof card at all.
+ */
+function ProofRules({ launchDay }: { launchDay: DayKey }) {
+  return (
+    <Card id="proof" title="Proof of work: deep work counts its time" sub={`In force since ${longDayLabel(launchDay)}; nothing before it is judged again`} wide>
+      <ul className="rules-bullets">
+        {proofRuleLines().map((line) => (
+          <li key={line}>{line}</li>
+        ))}
       </ul>
     </Card>
   );
@@ -1885,6 +1903,9 @@ export default async function RulesPage() {
   // Ground rules line, which says they are not counted yet.
   const creditsLaunch = creditsLaunchDay();
   const creditsModel = creditModelOn(today, creditsLaunch);
+  // Proof of work (blueprint P23): its card only once it is in force; before PROOF_LAUNCH_DAY nothing here changes.
+  const proofLaunch = proofLaunchDay();
+  const proofLive = proofLaunch != null && proofOn(today, proofLaunch);
   const settledLine = dutyLive ? dutySettledLine(await loadDutyCursor(getCurrentUserId()), today) : null;
 
   return (
@@ -1961,6 +1982,8 @@ export default async function RulesPage() {
         </Card>
 
         <GroundRules momentumOn={momentumOn} />
+
+        {proofLive && proofLaunch && <ProofRules launchDay={proofLaunch} />}
 
         <Card title="The price" sub="One formula, the same in the browser and on the server" wide>
           <Formula>raw = B × E × T × C × D × V × K</Formula>

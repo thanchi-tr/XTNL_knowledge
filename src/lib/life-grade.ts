@@ -53,6 +53,14 @@ export const FORMULA_VERSION = "life-1";
  * byte for byte. Lane A's priceTask writes it; nothing does before launch.
  */
 export const FORMULA_VERSION_MOMENTUM = "life-2";
+/**
+ * Proof of work (blueprint P23, D20): a receipt priced while PROOF_LAUNCH_DAY is in force for a proof template or an
+ * EXERCISE one is 'life-3' and carries `proof` (proof.ts priceProofOf: whether minutes came, and a proof template's
+ * wall-clock bound). Every other receipt stays 'life-1' or 'life-2', byte for byte; nothing is 'life-3' before launch.
+ * Pages proof (P24, D21) rides on the same switch and version: a pages task's receipt is 'life-3' with `proof.pages`,
+ * at exactly the price it had before (the pages are recorded, never priced).
+ */
+export const FORMULA_VERSION_PROOF = "life-3";
 /** The momentum factors in the order a receipt lists them, after K: raw = round1(B·E·T·C·D·V·K · S · M · X). */
 export const MOMENTUM_FACTOR_KEYS: readonly MomentumFactorKey[] = ["S", "M", "X"];
 
@@ -332,12 +340,20 @@ export function estEff(est: number, machine: number): number {
   return Math.min(e, EST_EFF_MACHINE_MULTIPLE * m);
 }
 
-/** Reported minutes as the formula counts them: within [0.5, 2] × est_eff and ≤ 480; none reported counts est_eff. */
-export function clampMinutes(reported: number | null | undefined, estEffMinutes: number): number {
+/**
+ * Reported minutes as the formula counts them: within [0.5, 2] × est_eff and ≤ 480; none reported counts est_eff.
+ * Proof of work (P23): a proof template's tick passes its clock bound (proof.ts tickWallOf), and the count is the
+ * plan's min(reported, wall, 480): the clamped report, then the clock, at least 1. The clock applies after the clamp,
+ * so it is a real bound (a 5-minute Again counts 5, a 20-minute timer 20), and never raises a report. Without a bound
+ * it is exactly the drawer's clamp (every golden stands).
+ */
+export function clampMinutes(reported: number | null | undefined, estEffMinutes: number, wallMinutes?: number | null): number {
   if (reported == null || !Number.isFinite(reported)) return estEffMinutes;
   const lo = Math.max(1, REPORTED_MIN_SHARE * estEffMinutes);
   const hi = Math.min(REPORTED_MINUTES_MAX, REPORTED_MAX_SHARE * estEffMinutes);
-  return clamp(Math.round(reported), lo, hi);
+  const clamped = clamp(Math.round(reported), lo, hi);
+  if (wallMinutes == null || !Number.isFinite(wallMinutes)) return clamped;
+  return Math.max(1, Math.min(clamped, Math.floor(Math.max(0, wallMinutes))));
 }
 
 /** E(m). */
@@ -420,6 +436,27 @@ export interface PriceMomentum {
 }
 
 /**
+ * Proof of work's part of one price (blueprint P23; proof.ts priceProofOf decides it): `gated` on a proof template's
+ * tick (its report is bounded by `wall`), false on an EXERCISE one (recorded only). Present: the receipt is 'life-3'
+ * and carries `proof`. Absent or null: the price and the receipt are exactly as before.
+ */
+export interface PriceProof {
+  gated: boolean;
+  /**
+   * The clock's bound in whole minutes (proof.ts tickWallOf: the time since the previous live tick that day, or the
+   * minutes the counted timer ran); null: no bound. Read only when gated.
+   */
+  wall?: number | null;
+  /** The timer the minutes came from. */
+  session?: string | null;
+  /**
+   * Pages proof (blueprint P24): a pages task's tick (autoMetric PAGES) records the pages it reported (null: none came).
+   * Recorded only: the pages never change the price. Absent on every other price.
+   */
+  pages?: number | null;
+}
+
+/**
  * Prices one completion and returns its receipt — the one function both
  * the Today board (projection) and the server (payment) call.
  *
@@ -431,7 +468,7 @@ export interface PriceMomentum {
  * `momentum` (PriceMomentum) adds momentum's S, M and X after K; without it
  * the receipt is exactly what it always was.
  */
-export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, momentum?: PriceMomentum | null): Receipt {
+export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, momentum?: PriceMomentum | null, proof?: PriceProof | null): Receipt {
   const machineBand = toBand(input.band);
   const override = clampBandOverride(machineBand, input.bandOverride);
   const band = bandAt(bandIndex(machineBand) + override);
@@ -440,7 +477,9 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, 
 
   const typed = Number.isFinite(input.estMinutes) ? Math.round(input.estMinutes) : null;
   const eEff = estEff(input.estMinutes, input.machineMinutes);
-  const minutes = clampMinutes(input.minutes, eEff);
+  // Proof of work (P23): a proof template's report is bounded by the clock; nothing else changes the clamp.
+  const wall = proof?.gated && proof.wall != null && Number.isFinite(proof.wall) ? Math.max(0, Math.round(proof.wall)) : null;
+  const minutes = clampMinutes(input.minutes, eEff, wall);
   const reported = input.minutes != null && Number.isFinite(input.minutes) ? Math.round(input.minutes) : null;
 
   const B = BAND_BASE[band];
@@ -456,7 +495,8 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, 
   const K = steps ? roundTo(steps.done / steps.total, 3) : LIFE_PAY_MODE_FACTOR[mode];
 
   let effortNote: string | undefined;
-  if (reported != null && reported !== minutes) effortNote = `reported ${reported} min, counted ${minutes}`;
+  if (reported != null && wall != null && wall < reported) effortNote = `reported ${reported} min, ${wall} on the clock, counted ${minutes}`;
+  else if (reported != null && reported !== minutes) effortNote = `reported ${reported} min, counted ${minutes}`;
   else if (reported == null && typed != null && typed > eEff) effortNote = `typed ~${typed}m counts as ${eEff}`;
 
   const streakDays = Math.max(0, Number.isFinite(input.streakDays) ? input.streakDays : 0);
@@ -500,7 +540,7 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, 
   const xp = roundTo(kneePay(kneeBefore, raw), 3);
 
   return {
-    v: hasMomentum ? FORMULA_VERSION_MOMENTUM : FORMULA_VERSION,
+    v: proof ? FORMULA_VERSION_PROOF : hasMomentum ? FORMULA_VERSION_MOMENTUM : FORMULA_VERSION,
     factors,
     minutes,
     raw,
@@ -509,6 +549,18 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, 
     track,
     ...(override !== 0 ? { selfRated: true } : {}),
     ...(steps ? { steps } : {}),
+    ...(proof
+      ? {
+          proof: {
+            reported,
+            gated: !!proof.gated,
+            wall,
+            ...(proof.session ? { session: proof.session } : {}),
+            // Pages proof (P24): a pages task's receipt records its pages; every other proof receipt is as P23 wrote it.
+            ...(proof.pages !== undefined ? { pages: proof.pages != null && Number.isFinite(proof.pages) ? proof.pages : null } : {}),
+          },
+        }
+      : {}),
   };
 }
 

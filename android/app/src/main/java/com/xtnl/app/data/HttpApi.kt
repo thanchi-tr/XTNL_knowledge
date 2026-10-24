@@ -14,6 +14,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -163,13 +164,23 @@ class HttpApi(
 
     override suspend fun check() = call("/check", null, CheckData.serializer())
 
-    override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String) =
+    override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String, minutes: Int?, sessionId: String?, pages: Int?) =
         call("/tasks/complete", buildJsonObject {
             put("templateId", templateId)
             put("day", "today")
             if (mvv) put("mvv", true)
+            minutes?.let { put("minutes", it) }
+            sessionId?.let { put("sessionId", it) }
+            // P24: a reading task's pages.
+            pages?.let { putJsonObject("proof") { put("kind", "PAGES"); put("qty", it) } }
             put("clientId", clientId)
         }, CompleteResult.serializer())
+
+    override suspend fun startTimer(templateId: String, clientId: String) =
+        call("/tasks/start", buildJsonObject { put("templateId", templateId); put("clientId", clientId) }, TimerResult.serializer())
+
+    override suspend fun stopTimer(sessionId: String, clientId: String) =
+        call("/tasks/stop", buildJsonObject { put("sessionId", sessionId); put("clientId", clientId) }, TimerResult.serializer())
 
     override suspend fun undoTask(instanceId: String, clientId: String) =
         call("/tasks/undo", buildJsonObject { put("instanceId", instanceId); put("clientId", clientId) }, UndoTaskResult.serializer())
@@ -233,4 +244,12 @@ class HttpApi(
             put("purchaseId", purchaseId)
             put("clientId", clientId)
         }, UndoBuyResult.serializer())
+
+    // P27: a batch of Health Connect's walks and weigh-ins (the server writes each walk once per record).
+    override suspend fun syncHealth(batch: HealthBatch, clientId: String) =
+        call("/exercise", JsonObject(healthBody(batch) + ("clientId" to JsonPrimitive(clientId))), HealthSyncResult.serializer(), slow = true)
 }
+
+/** The batch as POST /exercise reads it: absent fields left out (an optional climb or origin is never sent as null). */
+internal fun healthBody(batch: HealthBatch): JsonObject =
+    Net.json.encodeToJsonElement(HealthBatch.serializer(), batch) as JsonObject

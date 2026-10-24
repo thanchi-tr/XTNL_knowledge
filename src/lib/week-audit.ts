@@ -53,7 +53,7 @@ import { expectedOn, ruleOn } from "./duty-rule";
 import { shortDate, weekdayName } from "./today-board";
 import { DAILY_QUESTS_TITLE, questOutcomeOf, questWeekOf, type QuestHeldDays, type QuestTemplate, type QuestWeek } from "./daily-quests";
 import { parseDecaying, type AuditDecaying } from "./audit-decay";
-import type { ActivityInput, Receipt } from "./life-types";
+import { completesItself, type ActivityInput, type Receipt } from "./life-types";
 import type { Notice } from "./notifications";
 import { WEEK_AUDIT_NOTICE_ID } from "../components/shell/shell-types";
 
@@ -257,7 +257,8 @@ export type AuditTemplate = QuestTemplate & { autoMetric?: string | null; intrin
  * daily quests); a weekly target ('3× a week', a must or not: never a daily quest) counts its n units, the days kept
  * (the minimum included) up to n, then the skipped and held days, up to what is left. A monthly target, a study task
  * that completes itself (autoMetric) and #play (intrinsic) are left out entirely, as is a work tab's task (the read is
- * the personal Board's). Days resolve as the quest week's do (daily-quests questOutcomeOf, then a held day).
+ * the personal Board's); a pages task is ticked by hand, so it counts (P24). Days resolve as the quest week's do
+ * (daily-quests questOutcomeOf, then a held day).
  */
 export function habitLaneOf(
   templates: readonly AuditTemplate[],
@@ -272,7 +273,7 @@ export function habitLaneOf(
   const order = [...templates].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id));
   for (const t of order) {
     const rule = parseRule(t.recurrence);
-    if (!rule || t.autoMetric || t.intrinsic) continue;
+    if (!rule || completesItself(t.autoMetric) || t.intrinsic) continue;
     const insts = instances.filter((i) => i.templateId === t.id);
     const outcomesOn = (d: DayKey) => insts.filter((i) => i.day === d).map((i) => questOutcomeOf(i.status));
     let kept = 0;

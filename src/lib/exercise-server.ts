@@ -8,6 +8,11 @@
  *                                            totals; with { momentum: true } on a live day, also each session's pay
  *                                            and the "Counts as" habit)
  *   logWalkCore(userId, raw, now?, opts?)  → { ok, value: LoggedWalk } | { ok: false, error }
+ *                                            (blueprint P27: opts.ingest writes a Health Connect walk's dedupe row
+ *                                            in the session's own transaction; opts.recordOnly, the backfill, is a
+ *                                            record on any day: no pay, no personal best; a walk typed by hand
+ *                                            that Health Connect already brought in that day is refused with
+ *                                            what is there, importedTwinOf, so it is never paid twice)
  *   logWalkMomentsCore(userId, raw, now?, opts?)  logWalkCore inside L3's moments on a live day (a PB Seal)
  *   deleteExerciseCore(userId, id, now?)   → { ok, value: WalkDeleteOutcome | null } | { ok: false, error }
  *
@@ -28,7 +33,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { cached, invalidate } from "./cache";
-import { activityOp, isDuplicateActivity } from "./activity";
+import { activityOp, invalidateActivity, isDuplicateActivity } from "./activity";
+import { HC_WALK_INGESTED, alreadyHereLineOf, importedTwinOf, ingestEventInput, isIngestReceipt, type IngestReceipt, type SameDaySession } from "./health-ingest";
 import { LIFE_TZ, addDays, dateColumn, dayKeyOf, keyOfDateColumn, todayKey, weekKeyOf, type DayKey } from "./life-day";
 import {
   bodyQuestDoneBy,
@@ -72,6 +78,7 @@ import {
 } from "./momentum";
 import { momentumRoll } from "./momentum-roll";
 import { effortWeightOfB } from "./life-economy";
+import { exerciseMinutesCount } from "./proof";
 import { needsSettledGuard } from "./duty-plan";
 import {
   completeLinkedCore,
@@ -87,7 +94,7 @@ import { captureSnapshot, detectCelebrations } from "./celebrations";
 import { withMoments } from "./today-board";
 import type { SnapshotPart } from "./celebration-detect";
 import type { CelebrationEvent } from "./celebration-types";
-import type { Track } from "./life-types";
+import type { Receipt, Track } from "./life-types";
 
 export type ExerciseResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -229,30 +236,89 @@ const LINK_HISTORY_DAYS = 400;
 export interface LogWalkOptions {
   /** "Counts as": the personal EXERCISE template this walk completes (live days, a walk dated today only). */
   countsAs?: string | null;
+  /**
+   * Health Connect (blueprint P27; health-ingest.ts): the walk's dedupe row ('ingest:hc:<externalId>', an INGEST row),
+   * written in one transaction with the session, so a resend writes nothing twice (HC_WALK_INGESTED).
+   */
+  ingest?: IngestReceipt;
+  /** P27 (H17): the history backfill is a record only, whatever its day: no pay and no personal bests. */
+  recordOnly?: boolean;
 }
+
+const SESSION_SELECT = { id: true, day: true, kind: true, angleDeg: true, distanceKm: true, durationMin: true, note: true } as const;
 
 export async function logWalkCore(userId: string, raw: Parameters<typeof cleanWalkInput>[0], now: Date = new Date(), opts: LogWalkOptions = {}): Promise<ExerciseResult<LoggedWalk>> {
   const clean = cleanWalkInput(raw, todayKey(now));
   if (!clean.ok) return clean;
   const v = clean.value;
+  // P27: a walk typed by hand that Health Connect already brought in that day (the import's match, the other way
+  // round): refused with what is there, nothing written, so one walk is never paid twice.
+  if (!opts.ingest) {
+    const twin = importedTwinOf(v, await importedWalksOn(userId, v.day));
+    if (twin) return { ok: false, error: alreadyHereLineOf(twin) };
+  }
   let session: ExerciseSessionView;
   try {
-    const row = await prisma.exerciseSession.create({
-      data: { userId, day: dateColumn(v.day), kind: "WALK", angleDeg: v.angleDeg, distanceKm: v.distanceKm, durationMin: v.durationMin, note: v.note },
-      select: { id: true, day: true, kind: true, angleDeg: true, distanceKm: true, durationMin: true, note: true },
-    });
+    const data = { userId, day: dateColumn(v.day), kind: "WALK", angleDeg: v.angleDeg, distanceKm: v.distanceKm, durationMin: v.durationMin, note: v.note };
+    const row = opts.ingest ? await createIngested(userId, data, v.day, opts.ingest, now) : await prisma.exerciseSession.create({ data, select: SESSION_SELECT });
     invalidate("exercise");
     session = viewOf(row);
   } catch (err) {
     if (isMissingExerciseTable(err)) return { ok: false, error: EXERCISE_NOT_READY };
+    // P27: the walk's key landed first (a raced resend): it is here already, and nothing was written.
+    if (opts.ingest && isDuplicateActivity(err)) return { ok: false, error: HC_WALK_INGESTED };
     console.error("Exercise: a walk wasn't saved.", err);
     return { ok: false, error: SAVE_FAILED };
   }
   // Before launch (and on any day before it) the walk is a record, never a reward: exactly as it always was.
   if (!momentumLive(session.day)) return { ok: true, value: session };
+  // P27 (H17): a Health Connect walk from before the sync was switched on is history: recorded, never paid, no PB.
+  if (opts.recordOnly) return { ok: true, value: session };
   // The record is saved whatever the pay does next.
   const pay = await payWalkCore(userId, session, now, opts);
   return { ok: true, value: { ...session, pay } };
+}
+
+/**
+ * The sessions Health Connect brought in on one life day (each with its own INGEST row naming it, not a match), as
+ * health-ingest.ts reads them: the hand-log guard's read. A failed read is none (logged): it never blocks a walk.
+ */
+async function importedWalksOn(userId: string, day: DayKey): Promise<SameDaySession[]> {
+  try {
+    const sessions = await prisma.exerciseSession.findMany({ where: { userId, day: dateColumn(day) }, select: { id: true, durationMin: true, distanceKm: true } });
+    if (sessions.length === 0) return [];
+    const rows = await prisma.activityEvent.findMany({ where: { userId, source: "INGEST", sourceId: { in: sessions.map((s) => s.id) } }, select: { sourceId: true, receipt: true } });
+    const at = new Map<string, { start: Date; end: Date }>();
+    for (const r of rows) {
+      if (r.sourceId && isIngestReceipt(r.receipt) && !r.receipt.matched) at.set(r.sourceId, { start: new Date(r.receipt.start), end: new Date(r.receipt.end) });
+    }
+    return sessions.filter((s) => at.has(s.id)).map((s) => ({ id: s.id, day, durationMin: s.durationMin, distanceKm: s.distanceKm, at: at.get(s.id) ?? null, claimed: false }));
+  } catch (err) {
+    if (!isMissingExerciseTable(err)) console.error("Exercise: the Health Connect walks of a day weren't read; the walk is logged.", err);
+    return [];
+  }
+}
+
+/**
+ * A Health Connect walk's session and its INGEST row ('ingest:hc:<externalId>', health-ingest.ts ingestEventInput) in
+ * one transaction: the session's id is minted here, so the row names it. The key's unique index refuses a second one
+ * (P2002), and the session goes with it.
+ */
+async function createIngested(
+  userId: string,
+  data: Prisma.ExerciseSessionUncheckedCreateInput,
+  day: DayKey,
+  receipt: IngestReceipt,
+  now: Date
+): Promise<Row> {
+  const id = globalThis.crypto.randomUUID();
+  const event = ingestEventInput(id, day, receipt, now);
+  try {
+    const [row] = await prisma.$transaction([prisma.exerciseSession.create({ data: { ...data, id }, select: SESSION_SELECT }), activityOp(userId, event)]);
+    return row;
+  } finally {
+    invalidateActivity(event);
+  }
 }
 
 /** What a walk's moments read: the streak, the habits (a linked one's rung), goals, levels, tracks and the PR rows. */
@@ -349,9 +415,14 @@ function clockOf(at: Date): string {
   }
 }
 
-/** A tick receipt's effort minutes (minutes × the WHO weight of its B), for an EXERCISE habit a walk tops up. */
+/**
+ * A tick receipt's effort minutes (minutes × the WHO weight of its B), for an EXERCISE habit a walk tops up. Proof of
+ * work (blueprint P23; forward only): a tick priced from PROOF_LAUNCH_DAY with no minutes reported counted none, so
+ * there is nothing to take off the walk's (proof.ts exerciseMinutesCount).
+ */
 function effortOfReceipt(receipt: Prisma.JsonValue): number {
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) return 0;
+  if (!exerciseMinutesCount(receipt as Pick<Receipt, "proof">)) return 0;
   const r = receipt as { minutes?: unknown; factors?: { key?: unknown; value?: unknown }[] };
   const minutes = Number(r.minutes);
   const b = Array.isArray(r.factors) ? r.factors.find((f) => f?.key === "B")?.value : undefined;

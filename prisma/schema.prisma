@@ -744,7 +744,9 @@ model TaskTemplate {
   /// The minimum viable version, e.g. "10 pushups".
   mvv                String?
   mvvMinutes         Int?
-  /// REVIEWS | IDEAS | REVIEW_DUE | STEPS | WORKOUT: completes itself from activity.
+  /// REVIEWS | IDEAS | REVIEW_DUE | STEPS | WORKOUT: completes itself from activity. PAGES (blueprint P24, decision D21):
+  /// a reading task ticked by hand, its day's pages target in autoTarget (src/lib/proof.ts; TEXT with no CHECK, so the
+  /// value needed no SQL).
   autoMetric         String?
   autoTarget         Float?
   autoFamily         String?
@@ -801,6 +803,11 @@ model TaskTemplate {
   /// none (every row before P5: it behaves exactly as before). A plain id, no foreign key (a link to a skill archived or
   /// gone counts toward nothing). Never on a work tab's task (competency-server refuses it). Hours are read, not stored.
   competencyId       String?
+  /// Proof of work (blueprint P23, decision D20; migration 20270101000000_task_proof): 'MINUTES' = the task counts its
+  /// time (a full tick needs its minutes or a timer, from PROOF_LAUNCH_DAY: src/lib/proof.ts); null = none (every row
+  /// before P23). Set by the '#proof' capture tag, or for the default deep-work set once the user approves the dry-run
+  /// list (scripts/proof-dry-run.ts). Not expressible in Prisma 6: CHECK "TaskTemplate_proof_check" (null or MINUTES).
+  proof              String?
 
   @@unique([userId, captureKey])
   @@index([userId, archivedAt])
@@ -836,6 +843,14 @@ model TaskInstance {
   repaired    Boolean      @default(false)
   judgedAt    DateTime?
   workoutId   String?
+  /// Pages proof (blueprint P24, decision D21; migration 20270102000000_proof_qty): what proofQty counts, 'PAGES' (a
+  /// reading task's tick, from PROOF_LAUNCH_DAY: src/lib/proof.ts); null on every other instance. A record, never a
+  /// price. Not expressible in Prisma 6: CHECK "TaskInstance_proofKind_check" (null or PAGES) and CHECK
+  /// "TaskInstance_proof_pair_check" (proofKind and proofQty both set, or neither).
+  proofKind   String?
+  /// The pages the tick reported (whole, 1 to 2000); null with none. Not expressible in Prisma 6: CHECK
+  /// "TaskInstance_proofQty_check" (null, or above 0 and at most 2000).
+  proofQty    Float?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
@@ -2064,5 +2079,43 @@ model MallReward {
 
   /// The Mall page's read: a user's live rewards, then the archived ones.
   @@index([userId, archivedAt])
+  @@schema("public")
+}
+
+// ── Proof of work: a task's timer (migration 20270101000000_task_proof; blueprint P23, decision D20) ──
+// A record of time, never a payment: nothing in the economy reads this table to pay. Only a tick pays (tasks.ts, its
+// 'life-3' receipt), and a timer only supplies and bounds the minutes that tick reports. src/lib/proof.ts holds the
+// rules (one running timer a user, a timer counted once, the wall-clock bound); src/lib/task-sessions-server.ts is its
+// only reader and writer, apart from the one column a tick sets when it counts a timer (minutes, and endedAt when it
+// still ran), inside the tick's own transaction. Every write waits for PROOF_LAUNCH_DAY (null in code).
+
+/// One timer of one task: started (startedAt, on life day `day`), stopped (endedAt; null while it runs; a start stops
+/// any other), and counted once by the tick that counts it (minutes; null until then). A plain templateId with no
+/// foreign key. `clientId` is the start's key (a resend answers the session it started). Every timestamp is timestamptz.
+/// Not expressible in Prisma 6: CHECK "TaskSession_minutes_check" (null or 0..480), CHECK "TaskSession_source_check" (web
+/// | phone), CHECK "TaskSession_ended_check" (endedAt null or at/after startedAt), CHECK "TaskSession_clientId_check"
+/// (1..64 characters), and partial UNIQUE "TaskSession_userId_running_key" (userId) WHERE endedAt IS NULL.
+model TaskSession {
+  id         String    @id @default(cuid())
+  userId     String
+  templateId String
+  /// The life day it started on (src/lib/life-day.ts dateColumn).
+  day        DateTime  @db.Date
+  startedAt  DateTime  @db.Timestamptz(3)
+  /// Stopped; null while it runs.
+  endedAt    DateTime? @db.Timestamptz(3)
+  /// What the tick that counted it counted (0..480); null until a tick counts it.
+  minutes    Int?
+  /// web | phone (proof.ts SESSION_SOURCES).
+  source     String    @default("web")
+  clientId   String
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@unique([userId, clientId])
+  /// The running timers' read (endedAt null).
+  @@index([userId, endedAt])
+  /// A tick's read: one task's timers not yet counted.
+  @@index([userId, templateId])
   @@schema("public")
 }

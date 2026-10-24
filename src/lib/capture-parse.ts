@@ -40,6 +40,7 @@
 import { compareTwoStrings } from "string-similarity";
 import { addDays, daysBetween, weekdayOf, weekStartKeyOf, type DayKey } from "./life-day";
 import type { AutoMetric, CaptureMode, CaptureToken, DueKind, Horizon, ParsedCapture, Track } from "./life-types";
+import { PROOF_CHIP_LABEL, pagesChipLabelOf } from "./proof";
 
 /** A character range of the capture line, [start, end). */
 export interface CaptureSpan {
@@ -71,6 +72,8 @@ export const MAX_REVIEW_TARGET = 500;
 export const MAX_IDEA_TARGET = 50;
 /** A bare 'Nm' or 'Np' above this is a distance or a resolution ('swim 400m', '720p'), never minutes. */
 export const MAX_BARE_MINUTES = 240;
+/** A day's pages a reading line can set ('read 30 pages', blueprint P24); more stays title text (a whole book, not a day's). */
+export const MAX_PAGES_TARGET = 500;
 
 export const COMPULSORY_WARNING = "Compulsory needs a fixed schedule or a deadline";
 
@@ -724,6 +727,8 @@ interface Found {
   compulsoryMarked: boolean;
   inbox: boolean;
   answer: string | null;
+  /** '#proof' (blueprint P23, D20): the task counts its time. */
+  proof: boolean;
 }
 
 function overlaps(a: CaptureSpan, b: CaptureSpan): boolean {
@@ -758,6 +763,7 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     compulsoryMarked: false,
     inbox: false,
     answer: null,
+    proof: false,
   };
 
   /**
@@ -903,6 +909,7 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     readParent();
     if (f.mode !== "GOAL") {
       readStudy();
+      readPages();
       readRecurrence();
     }
     readDates();
@@ -936,9 +943,16 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     }
   }
 
-  /** A '#tag' or a spoken tag: one track, one horizon, one play mark per line. */
+  /** A '#tag' or a spoken tag: one track, one horizon, one play mark and one proof mark per line. */
   function applyTag(raw: string): Draft | null {
     const tag = raw.toLowerCase();
+    // '#proof' (blueprint P23, D20): the task counts its time. A goal or an idea has no tick to prove, so it stays text there.
+    if (tag === "proof") {
+      if (f.mode === "GOAL" || f.mode === "IDEA") return null;
+      if (f.proof) return full();
+      f.proof = true;
+      return { field: "proof", label: PROOF_CHIP_LABEL };
+    }
     if (tag in TRACK_TAGS) {
       if (f.track) return full();
       f.track = TRACK_TAGS[tag];
@@ -960,6 +974,9 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
   // reads the rest of the line differently.
   function readTags(): void {
     scan(rx(`#(body|duty|craft|care|short|mid|long|play)`), (m) => applyTag(m[2]));
+    // '#proof' (P23) after the rest, so a horizon tag anywhere on the line has made it a goal first (a goal has no tick
+    // to prove: the word stays title text there).
+    scan(rx(`#(proof)`), (m) => applyTag(m[2]));
     // Dictation: 'hashtag long' closing a fresh line. A spoken horizon changes
     // how the whole line is read, so it is taken here, and only at the very
     // end; spoken tracks wait for the end-of-line pass (readSpokenTags).
@@ -1069,6 +1086,22 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
       const n = m[2] ? numberOf(m[2]) : 1;
       return n >= 1 ? ideas(Math.min(MAX_IDEA_TARGET, n)) : null;
     }, S);
+  }
+
+  // 5b. Pages (blueprint P24, D21): 'read 30 pages', '30pg', '30 pgs', '1 page a day'. The count is a reading task's
+  // day target (autoMetric PAGES): its tick reports its pages once proof of work is in force. The token is 'pg' or
+  // 'pages', never a bare 'p' ('30p' stays 30 minutes, Vietnamese phút), and the singular only for one ('a 10 page
+  // essay' is a length). It stays in the title, like a study link ('Read 30 pages' is the whole task), and one tap on
+  // its chip makes it plain text again. One autoMetric a line: after a study link it stays text.
+  function readPages(): void {
+    scan(rx(`(\\d{1,3})\\s*(pages|pgs|pg|page)`), (m) => {
+      const n = Number(m[2]);
+      if (n < 1 || n > MAX_PAGES_TARGET || (m[3].toLowerCase() === "page" && n !== 1)) return null;
+      if (f.autoMetric) return full();
+      f.autoMetric = "PAGES";
+      f.autoTarget = n;
+      return { field: "pages", label: pagesChipLabelOf(n), consume: false };
+    });
   }
 
   /**
@@ -1730,6 +1763,8 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     doneNow: f.doneNow,
     parentHint: f.parentHint,
     answer: f.answer,
+    // '#proof' only when it was read (a goal or an idea never takes it): every other line's shape is as before.
+    ...(f.proof ? { proof: true } : {}),
     tokens,
   };
 }

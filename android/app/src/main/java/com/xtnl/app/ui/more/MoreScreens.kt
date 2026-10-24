@@ -64,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xtnl.app.AppGraph
 import com.xtnl.app.BuildConfig
 import com.xtnl.app.core.AuditAlarm
+import com.xtnl.app.core.HealthLine
 import com.xtnl.app.core.MallLine
 import com.xtnl.app.core.ServerAddress
 import com.xtnl.app.core.StatusLine
@@ -100,7 +101,7 @@ fun MoreScreen(graph: AppGraph, onSettings: () -> Unit, onFullApp: () -> Unit, o
         // Blueprint P18: the rewards the user prices in credits (bought later, P19; edited and archived on the web).
         MoreRow(Glyphs.Mall, MallLine.TITLE, MallLine.MORE_SUB, onMall)
         MoreRow(Glyphs.Globe, "Open full app", "Everything else: Today, Library, Train, You", onFullApp)
-        MoreRow(Glyphs.Settings, "Settings", "Server, token, theme, motion, sound, haptics and notifications", onSettings)
+        MoreRow(Glyphs.Settings, "Settings", "Server, token, theme, motion, sound, haptics, notifications and Health Connect", onSettings)
         Spacer(Modifier.height(8.dp))
         XCard(Modifier.fillMaxWidth()) {
             Column {
@@ -272,6 +273,11 @@ fun SettingsScreen(graph: AppGraph, systemStill: Boolean, onBack: () -> Unit) {
 
         Section("Notifications") {
             WeekAuditReminder(graph, prefs.auditReminder, prefs.auditLive)
+        }
+
+        // Blueprint P27 (D22): walks, hikes and weight from Health Connect. Off until the user turns it on here.
+        Section(HealthLine.TITLE) {
+            HealthConnectSettings(graph) { title, sub, on, onChange -> Toggle(title, sub, on, onChange) }
         }
 
         Section("Data") {

@@ -83,6 +83,20 @@ import {
   type RewardView,
 } from "./mall";
 import type { MallView } from "./mall-server";
+import { PAGES_QTY_MAX, TIMER_GONE, pagesLabelOf, timerMinutesOf, type TickProofInput, type TimerView } from "./proof";
+import {
+  HC_EXTERNAL_ID_RE,
+  HC_FUTURE_SLACK_MS,
+  HC_KINDS,
+  HC_ORIGIN_RE,
+  HC_WALKS_MAX,
+  HC_WEIGHTS_MAX,
+  type HcBatch,
+  type HcKind,
+  type HcWalk,
+  type HcWeight,
+  type IngestSummary,
+} from "./health-ingest";
 
 // ── The endpoints ───────────────────────────────────────────────────────────
 
@@ -95,6 +109,8 @@ export const MOBILE_ENDPOINTS: readonly { method: MobileMethod; path: string }[]
   { method: "GET", path: "/check" },
   { method: "POST", path: "/tasks/complete" },
   { method: "POST", path: "/tasks/undo" },
+  { method: "POST", path: "/tasks/start" },
+  { method: "POST", path: "/tasks/stop" },
   { method: "POST", path: "/work/done" },
   { method: "POST", path: "/work/reopen" },
   { method: "GET", path: "/review/queue" },
@@ -109,6 +125,7 @@ export const MOBILE_ENDPOINTS: readonly { method: MobileMethod; path: string }[]
   { method: "POST", path: "/mall/rewards" },
   { method: "POST", path: "/mall/buy" },
   { method: "POST", path: "/mall/undo" },
+  { method: "POST", path: "/exercise" },
 ];
 
 // ── The token ───────────────────────────────────────────────────────────────
@@ -187,6 +204,8 @@ export const GONE_LINES: ReadonlySet<string> = new Set([
   // The Mall (blueprint P19): a reward archived, or a purchase that isn't there.
   REWARD_GONE,
   PURCHASE_GONE,
+  // Proof of work (blueprint P23): a timer that isn't there (or a tick naming one already counted).
+  TIMER_GONE,
 ]);
 
 export const SERVER_LINES: ReadonlySet<string> = new Set([
@@ -293,6 +312,39 @@ export function tickDayOf(v: unknown): "today" | "yesterday" | DayKey | undefine
   if (absent(v)) return undefined;
   if (v === "today" || v === "yesterday" || isDayKey(v)) return v;
   return bad("day must be 'today', 'yesterday' or a YYYY-MM-DD day.");
+}
+
+/** /tasks/complete's minutes (blueprint P7's phone minutes, P23): 1 to 480, whole. The core counts them through the drawer's clamp. */
+export const TICK_MINUTES_MIN = 1;
+export const TICK_MINUTES_MAX = 480;
+
+export function tickMinutesOf(v: unknown): number | undefined {
+  if (absent(v)) return undefined;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < TICK_MINUTES_MIN || v > TICK_MINUTES_MAX) {
+    bad(`minutes must be a whole number from ${TICK_MINUTES_MIN} to ${TICK_MINUTES_MAX}.`);
+  }
+  return v;
+}
+
+/**
+ * /tasks/complete's proof (blueprint P24, D21): a reading task's pages, { "kind": "PAGES", "qty": 30 }, whole pages from
+ * 1 to PAGES_QTY_MAX; nothing else on it. Left out or null: absent. The core reads it only for a pages task while proof
+ * of work is in force (recorded, never priced).
+ */
+export function tickProofInputOf(v: unknown): TickProofInput | undefined {
+  if (absent(v)) return undefined;
+  if (typeof v !== "object" || Array.isArray(v)) bad("proof must be an object: { kind: 'PAGES', qty }.");
+  const o = v as Record<string, unknown>;
+  if (Object.keys(o).some((k) => k !== "kind" && k !== "qty")) bad("proof takes only kind and qty.");
+  if (o.kind !== "PAGES") bad("proof.kind must be 'PAGES'.");
+  const qty = o.qty;
+  if (typeof qty !== "number" || !Number.isInteger(qty) || qty < 1 || qty > PAGES_QTY_MAX) bad(`proof.qty must be a whole number of pages from 1 to ${PAGES_QTY_MAX}.`);
+  return { kind: "PAGES", qty };
+}
+
+/** An optional row id (left out or null: absent), else idOf's check. */
+export function optionalIdOf(v: unknown, field: string): string | undefined {
+  return absent(v) ? undefined : idOf(v, field);
 }
 
 // ── Replays (a retried write returns the first result) ──────────────────────
@@ -410,6 +462,46 @@ export interface MobileTask {
   icon: string | null;
   dueLabel: string | null;
   xpHint: number | null;
+  /**
+   * Proof of work (blueprint P23): a full tick of this row needs its minutes or its timer (BoardRow.proof: proof in
+   * force, a proof task). False on every row while PROOF_LAUNCH_DAY is null.
+   */
+  proof: boolean;
+  /** The row's open timer (running, or stopped and not yet counted); null with none, and always while proof is off. */
+  timer: MobileTimer | null;
+  /**
+   * Pages proof (blueprint P24): a reading task's full tick reports its pages (BoardRow.pages), at least `target` when it
+   * has one (null: the pages are optional). Null on every other row, and on every row while PROOF_LAUNCH_DAY is null.
+   */
+  pages: { target: number | null } | null;
+}
+
+/**
+ * A task's timer as the app reads it (proof.ts TimerView): its latest segment, the life day it started on (a running
+ * one from yesterday ran across 04:00, and its tick asks first), and the minutes its earlier segments ran (stopped,
+ * then resumed). Its minutes are `priorMinutes` plus the latest segment's start to its stop (or now).
+ */
+export interface MobileTimer {
+  sessionId: string;
+  templateId: string;
+  day: DayKey;
+  startedAt: string;
+  endedAt: string | null;
+  running: boolean;
+  priorMinutes: number;
+}
+
+export function timerOf(v: TimerView): MobileTimer {
+  return { sessionId: v.sessionId, templateId: v.templateId, day: v.day, startedAt: v.startedAt, endedAt: v.endedAt, running: v.running, priorMinutes: v.priorMinutes };
+}
+
+/** /tasks/start's line. */
+export const TIMER_STARTED_LINE = "Timer started. Tick the task when you stop: the time it ran counts.";
+
+/** /tasks/stop's line: the minutes it ran, waiting for the tick. */
+export function timerStoppedLineOf(v: TimerView): string {
+  const m = timerMinutesOf(v, Date.parse(v.endedAt ?? v.startedAt));
+  return `Timer stopped at ${m} min. Tick the task to count them.`;
 }
 
 /** 'Wed 21 Oct'. */
@@ -460,6 +552,9 @@ export function checkTasksOf(board: Pick<Board, "must" | "todayRows" | "clear" |
         icon: data.styles?.[r.template.id]?.icon ?? null,
         dueLabel: r.dueLabel,
         xpHint: isDone(status) ? (r.paid ? round1(r.paid.xp) : null) : round1(r.projection.xp),
+        proof: !!r.proof,
+        timer: r.proof?.timer ? timerOf(r.proof.timer) : null,
+        pages: r.pages ? { target: r.pages.target } : null,
       };
     })
   );
@@ -960,6 +1055,92 @@ export function mallUndoLineOf(v: { title: string; price: number; duplicate: boo
   return v.duplicate ? `${v.title} was already undone.` : undoneLine(v.title, v.price);
 }
 
+// ── POST /exercise (Health Connect: walks, hikes and weight; P27) ───────────
+
+/** POST /exercise's fields (and clientId). */
+export const EXERCISE_KEYS = ["since", "walks", "weights"] as const;
+const HC_WALK_KEYS = ["externalId", "kind", "start", "end", "distanceKm", "climbM", "origin"] as const;
+const HC_WEIGHT_KEYS = ["externalId", "at", "kg"] as const;
+
+/** An ISO instant ('2026-10-21T07:30:00Z' or with an offset), or BadInput. */
+function instantOf(v: unknown, field: string): Date {
+  if (typeof v !== "string" || v.length > 40 || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) bad(`${field} must be an ISO instant.`);
+  const at = new Date(v as string);
+  if (!Number.isFinite(at.getTime())) bad(`${field} must be an ISO instant.`);
+  return at;
+}
+
+function numberOf(v: unknown, field: string): number {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) bad(`${field} must be a number of 0 or more.`);
+  return v as number;
+}
+
+function listOf(v: unknown, field: string, max: number): Record<string, unknown>[] {
+  if (absent(v)) return [];
+  if (!Array.isArray(v)) bad(`${field} must be a list.`);
+  const list = v as unknown[];
+  if (list.length > max) bad(`${field} takes at most ${max} at a time.`);
+  return list.map((x, i) => {
+    if (!x || typeof x !== "object" || Array.isArray(x)) bad(`${field}[${i}] must be an object.`);
+    return x as Record<string, unknown>;
+  });
+}
+
+function externalIdOf(v: unknown, field: string): string {
+  if (typeof v !== "string" || !HC_EXTERNAL_ID_RE.test(v)) bad(`${field} must be a Health Connect record id.`);
+  return v as string;
+}
+
+/**
+ * POST /exercise's body (blueprint P27, D22): `since`, when the sync was switched on (a walk that started before it is
+ * the backfill, a record only); up to HC_WALKS_MAX walking or hiking sessions and HC_WEIGHTS_MAX weigh-ins, each with
+ * its Health Connect record id. The shape is checked here (a wrong one is 400); a value a core refuses (a walk with no
+ * distance, a weight out of range) skips that item with the core's own line, and the rest lands.
+ */
+export function exerciseRequestOf(body: Record<string, unknown>, now: Date): HcBatch {
+  const since = instantOf(body.since, "since");
+  const latest = now.getTime() + HC_FUTURE_SLACK_MS;
+  const walks: HcWalk[] = listOf(body.walks, "walks", HC_WALKS_MAX).map((o, i) => {
+    onlyKeys(o, HC_WALK_KEYS);
+    const f = `walks[${i}]`;
+    const kind = o.kind;
+    if (typeof kind !== "string" || !(HC_KINDS as readonly string[]).includes(kind)) bad(`${f}.kind must be 'WALK' or 'HIKE'.`);
+    const start = instantOf(o.start, `${f}.start`);
+    const end = instantOf(o.end, `${f}.end`);
+    if (end.getTime() <= start.getTime()) bad(`${f}.end must be after its start.`);
+    if (start.getTime() > latest) bad(`${f}.start is in the future.`);
+    const origin = o.origin;
+    if (!absent(origin) && (typeof origin !== "string" || !HC_ORIGIN_RE.test(origin))) bad(`${f}.origin must be an app's package name.`);
+    return {
+      externalId: externalIdOf(o.externalId, `${f}.externalId`),
+      kind: kind as HcKind,
+      start,
+      end,
+      distanceKm: numberOf(o.distanceKm, `${f}.distanceKm`),
+      climbM: absent(o.climbM) ? null : numberOf(o.climbM, `${f}.climbM`),
+      origin: absent(origin) ? null : (origin as string),
+    };
+  });
+  const weights: HcWeight[] = listOf(body.weights, "weights", HC_WEIGHTS_MAX).map((o, i) => {
+    onlyKeys(o, HC_WEIGHT_KEYS);
+    const f = `weights[${i}]`;
+    const at = instantOf(o.at, `${f}.at`);
+    if (at.getTime() > latest) bad(`${f}.at is in the future.`);
+    return { externalId: externalIdOf(o.externalId, `${f}.externalId`), at, kg: numberOf(o.kg, `${f}.kg`) };
+  });
+  return { since, walks, weights };
+}
+
+/** The reply's counts, as the core summed them (health-ingest.ts IngestSummary), and its line. */
+export function exerciseReplyOf(s: IngestSummary & { line: string }) {
+  return {
+    walks: { ...s.walks, xp: round1(s.walks.xp) },
+    weights: { ...s.weights },
+    refused: s.refused.map((r) => ({ kind: r.kind, externalId: r.externalId, error: r.error })),
+    line: s.line,
+  };
+}
+
 // ── POST /tasks/complete ────────────────────────────────────────────────────
 
 /**
@@ -982,6 +1163,10 @@ export function tickCompetencyOf(skill: SkillView | null, celebrations: readonly
 export function tickLineOf(c: Pick<Completion, "duplicate" | "receipt" | "status" | "day">, today: DayKey): string {
   if (c.duplicate) return "Already recorded. Nothing is paid twice.";
   const parts = [`+${fmtXp(c.receipt.xp)} XP`, TRACK_LABEL[c.receipt.track] ?? c.receipt.track];
+  // Proof of work (P23): a proof task's tick says the minutes it counted ('· 45 min'); no other tick changes.
+  if (c.receipt.proof?.gated && c.status !== "DONE_MVV") parts.push(`${Math.round(c.receipt.minutes)} min`);
+  // Pages proof (P24): a reading task's tick says its pages ('· 30 pages').
+  if (c.receipt.proof?.pages != null) parts.push(pagesLabelOf(c.receipt.proof.pages));
   if (c.status === "DONE_MVV") parts.push("minimum");
   if (c.day !== today) parts.push("yesterday");
   return parts.join(" · ");

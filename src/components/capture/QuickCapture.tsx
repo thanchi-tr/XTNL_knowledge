@@ -37,6 +37,7 @@ import { CaptureChips } from "./CaptureChips";
 import { StatusLine, TOAST_MS, TOAST_SHORT_MS, dockToastOf, toastSentence, type Toast } from "./CaptureToast";
 import { captureModeOf, workSectionOf } from "@/components/shell/nav";
 import { workBoardIdOf } from "@/lib/work-boards";
+import { proofLaunchDay, proofOn } from "@/lib/proof";
 import { CAPTURE_EVENT, CAPTURED_EVENT, CAPTURE_MODE_START, isBareModeStart, type CaptureRequest } from "./events";
 import { InsertRow, SuggestRow, type Suggestion } from "./InsertRow";
 import { JustAdded } from "./JustAdded";
@@ -2082,6 +2083,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
         onKeepAsText={keepLineAsText}
         weightRange={weightOut ? (mustBlocked ? weightRangeBlocked(weightOut) : weightRangeNote(weightOut)) : null}
         duty={dutyLaunchDay === undefined ? undefined : { today: day, launchDay: dutyLaunchDay }}
+        proof={{ live: !!day && proofOn(day, proofLaunchDay()), work: workBoard !== null }}
       />
     );
 

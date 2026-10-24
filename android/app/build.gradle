@@ -16,8 +16,8 @@ android {
         applicationId "com.xtnl.app"
         minSdk 26
         targetSdk 35
-        versionCode 17
-        versionName "2.5"
+        versionCode 21
+        versionName "2.9"
         buildConfigField "String", "DEFAULT_SERVER", "\"${defaultServer}\""
     }
 
@@ -89,6 +89,10 @@ dependencies {
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
+    // Blueprint P27 (D22): walks, hikes and weight read from Health Connect, synced by a WorkManager job (off until
+    // the user turns it on in Settings).
+    implementation "androidx.health.connect:connect-client:1.1.0-alpha10"
+    implementation "androidx.work:work-runtime-ktx:2.9.1"
 
     testImplementation composeBom
     testImplementation "junit:junit:4.13.2"

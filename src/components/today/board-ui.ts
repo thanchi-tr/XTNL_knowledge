@@ -41,6 +41,7 @@ import {
   type SettledNotice,
 } from "../../lib/duty-view";
 import { FULL_DAY_MP } from "../../lib/full-day";
+import { PROOF_ROW_NOTE, pagesRowNoteOf } from "../../lib/proof";
 import { mustCountOf, type DeferredItem } from "../../lib/task-decisions";
 import type { DailyQuests } from "../../lib/daily-quests";
 import { RECORD_YESTERDAY_EVENT, RECORD_YESTERDAY_HREF, RECORD_YESTERDAY_PARAM } from "../../lib/shortcuts";
@@ -312,12 +313,18 @@ export const REMOVE_UNDO_MS = 10_000;
  * The Tick's accessible name. The Tick is a checkbox (aria-checked carries
  * done), so its name is the task itself: "Morning meds, checkbox, checked";
  * unchecking a done row inside its window is the undo. A locked study row
- * says what completes it; a skipped one says so.
+ * says what completes it; a skipped one says so. An open row whose tick asks
+ * for its minutes or pages first (proof of work, P23 and P24: the tick opens
+ * the drawer at its chips) says that, as a locked one says what it waits on.
  */
-export function tickNameOf(row: Pick<BoardRow, "state" | "progress"> & { template: { title: string } }): string {
+export function tickNameOf(
+  row: Pick<BoardRow, "state" | "progress"> & { template: { title: string }; proof?: BoardRow["proof"]; pages?: BoardRow["pages"] }
+): string {
   const title = row.template.title;
   if (row.state === "locked") return `${title}, completes itself at ${row.progress?.label ?? "its target"}`;
   if (row.state === "skipped") return `${title}, skipped today`;
+  if (row.state === "open" && row.pages?.target != null) return `${title}, ${pagesRowNoteOf(row.pages.target)}`;
+  if (row.state === "open" && row.proof) return `${title}, ${row.proof.timer ? "counts its timer" : PROOF_ROW_NOTE}`;
   return title;
 }
 

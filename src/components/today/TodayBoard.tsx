@@ -51,11 +51,15 @@ import {
   setBandOverride,
   setDailyCapacity,
   skipTask,
+  discardTaskTimer,
+  startTaskTimer,
+  stopTaskTimer,
   tickStep,
   unarchiveTask,
   undoCompletion,
   undoDecision,
 } from "@/app/actions/tasks";
+import { timerConfirmOf, timerMinutesOf } from "@/lib/proof";
 import { CAPTURED_EVENT, openCapture } from "@/components/capture/events";
 import { presentAll } from "@/components/celebrate/stage";
 import { Button } from "@/components/ui/Button";
@@ -384,6 +388,22 @@ function without<V>(record: Record<string, V>, key: string): Record<string, V> {
   return next;
 }
 
+/** A tick's pages proof (blueprint P24): { proof: { kind: 'PAGES', qty } } with pages picked, else nothing (the server's gate decides). */
+function pagesProofOf(pages: number | null | undefined): { proof?: { kind: "PAGES"; qty: number } } {
+  return pages != null && pages >= 1 ? { proof: { kind: "PAGES", qty: pages } } : {};
+}
+
+/** A timer start's key (P23): a UUID from the browser's own crypto, so a retried start starts it once. */
+function newTimerClientId(): string {
+  const c = globalThis.crypto;
+  if (typeof c?.randomUUID === "function") return c.randomUUID();
+  const b = c.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 // ── M2: device-local flags (a settled notice seen or dismissed, a miss
 // prompt put off). Every access is wrapped: storage can be missing or throw
 // (a private window, blocked site data); then the flag lives for this tab.
@@ -508,6 +528,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const [receiptKey, setReceiptKey] = useState<string | null>(null);
   /** Minutes picked in the open drawer. They belong to that drawer: closing it forgets them. */
   const [drawerMinutes, setDrawerMinutes] = useState<number | null>(null);
+  /** Pages picked in the open drawer (blueprint P24: a reading task's), the same way: closing it forgets them. */
+  const [drawerPages, setDrawerPages] = useState<number | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [yesterdayOpen, setYesterdayOpen] = useState(false);
   const [capacityOpen, setCapacityOpen] = useState(false);
@@ -560,6 +582,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const [arrivals, setArrivals] = useState<Record<string, "arrive" | "enter">>({});
   /** Where focus goes once the row it was on has moved (after the commit that moved it). */
   const [refocus, setRefocus] = useState<Refocus | null>(null);
+  /** Proof of work (P23, P24): a tick that opened its drawer at the chips moves focus to the first chip (this row's key). */
+  const [chipFocus, setChipFocus] = useState<string | null>(null);
   /** Done today shows all its rows (folded: the latest DONE_PILE_FOLDED). */
   const [doneOpen, setDoneOpen] = useState(false);
   /** The Board clear card was just played by a tap: it eases in this once (never on arrival). */
@@ -1020,6 +1044,16 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     }, m.hold + m.out);
   }
 
+  // A tick that opened its drawer at the chips (a proof or reading row): focus lands on the first chip, once painted.
+  useEffect(() => {
+    if (!chipFocus) return;
+    const raf = window.requestAnimationFrame(() => {
+      rowElOf(chipFocus)?.querySelector<HTMLButtonElement>("[data-chips] button:not(:disabled)")?.focus();
+      setChipFocus(null);
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [chipFocus]);
+
   // Focus follows a row that moved, once the commit that moved it has painted.
   useEffect(() => {
     if (!refocus) return;
@@ -1097,18 +1131,89 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
       }
     );
   }
-  /** Rows whose tick goes through their steps: today's, with steps, not already paid by a whole tick. */
-  const viaSteps = (row: BoardRow) => !!row.steps && !row.steps.checklist && row.state === "open";
+  /**
+   * Rows whose tick goes through their steps: today's, with steps, not already paid by a whole tick. A proof row (P23)
+   * never does: it is paid by its whole tick with its minutes. Nor does a reading task (P24): its whole tick, its pages.
+   */
+  const viaSteps = (row: BoardRow) => !!row.steps && !row.steps.checklist && row.state === "open" && !row.proof && !row.pages;
+
+  /**
+   * Proof of work (blueprint P23): a proof row's tick takes the drawer's minutes, else its timer's; with neither it opens
+   * the drawer at its minute chips (the server would refuse it: "Log the minutes"). A timer that ran across 04:00 or
+   * past twice the estimate opens the drawer too, saying so: its Done there (`confirmed`) is the one that counts it.
+   * Every other row ticks as before.
+   * Pages proof (P24): a reading task's tick takes the drawer's pages; with a day's target and fewer picked, it opens the
+   * drawer at its page chips with the target picked, one tap from "Done · 30 pages" (the server would refuse it).
+   * Either way the drawer's first chip takes focus and the reason is announced (the tick itself checks nothing).
+   */
+  function tickRow(row: BoardRow, minutes: number | null, from?: Element | null, confirmed = false) {
+    const timer = row.proof?.timer ?? null;
+    const pages = openKey === row.key ? drawerPages : null;
+    const toChips = (line: string) => {
+      if (openKey !== row.key) setDrawerMinutes(null);
+      setOpenKey(row.key);
+      setChipFocus(row.key);
+      announce(`${row.template.title}: ${line}`);
+    };
+    if (row.pages?.target != null && (pages == null || pages < row.pages.target)) {
+      toChips(`pick the pages you read, at least ${row.pages.target}.`);
+      setDrawerPages(row.pages.target);
+      return;
+    }
+    if (row.proof && minutes == null) {
+      const now = serverNow();
+      const timed = timer ? timerMinutesOf(timer, now) : 0;
+      const ask = timer && timed >= 1 && !confirmed ? timerConfirmOf(timer, row.day, row.estMinutes, now) : null;
+      if (timer && timed >= 1 && !ask) return complete(row, { sessionId: timer.sessionId, timed, pages }, from);
+      toChips(ask ?? "pick the minutes it took, or start its timer.");
+      return;
+    }
+    complete(row, { minutes, pages }, from);
+  }
+
+  /** Proof of work (P23): starts a proof row's timer (a start stops any other running one); its tick then counts it. */
+  function startTimer(row: BoardRow) {
+    if (staleDay()) return;
+    const clientId = newTimerClientId();
+    work(row.template.id, { kind: "timer" }, () => startTaskTimer(row.template.id, clientId, REFRESH), () =>
+      setNotice(`Timer started: ${row.template.title}. Tick it when you stop; the time it ran counts.`)
+    );
+  }
+
+  /** Stops a proof row's timer; its minutes wait for the tick (Resume adds more after a break). */
+  function stopTimer(row: BoardRow) {
+    const timer = row.proof?.timer;
+    if (!timer) return;
+    work(row.template.id, { kind: "timer" }, () => stopTaskTimer(timer.sessionId, REFRESH), (v) =>
+      setNotice(`Timer stopped: ${row.template.title}, ${timerMinutesOf(v, Date.parse(v.endedAt ?? v.startedAt))} min. Tick it to count them, or Resume.`)
+    );
+  }
+
+  /** Discards a proof row's stopped timer (a mis-tap, or a timer that didn't time the work): it counts nothing. */
+  function discardTimer(row: BoardRow) {
+    const timer = row.proof?.timer;
+    if (!timer) return;
+    work(row.template.id, { kind: "timer" }, () => discardTaskTimer(timer.sessionId, REFRESH), () =>
+      setNotice(`Timer discarded: ${row.template.title}. It counts nothing; pick the minutes, or start it again.`)
+    );
+  }
 
   /**
    * A forgotten tick: today's row ticked for yesterday (completeTask with day 'yesterday', the server's
    * yesterdayBookable gate). It pays against yesterday's ledger and counts on yesterday, as if ticked then.
    */
-  function recordYesterday(row: BoardRow) {
+  function recordYesterday(row: BoardRow, minutes: number | null = null, pages: number | null = null) {
     if (staleDay()) return;
     dispatch(
       null,
-      () => completeTask(row.template.id, { day: "yesterday" }, REFRESH),
+      // A proof row (P23) records yesterday with the drawer's minutes, a reading task (P24) with its pages; any other row
+      // as before.
+      () =>
+        completeTask(
+          row.template.id,
+          { ...(row.proof && minutes != null ? { day: "yesterday", minutes } : { day: "yesterday" }), ...(row.pages ? pagesProofOf(pages) : {}) },
+          REFRESH
+        ),
       (v) => {
         presentAll(v.celebrations);
         playMomentumT1(v.celebrations);
@@ -1122,25 +1227,34 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     );
   }
 
-  function complete(row: BoardRow, opts: { minutes?: number | null; mvv?: boolean } = {}, from?: Element | null) {
+  function complete(row: BoardRow, opts: { minutes?: number | null; mvv?: boolean; sessionId?: string; timed?: number; pages?: number | null } = {}, from?: Element | null) {
     if (staleDay()) return;
     const id = nextOpId();
+    // Proof of work (P23): a tick that counts a timer prices at the timer's minutes, bounded by them as the server
+    // bounds it (the server's are the authority).
+    const timerCount = opts.minutes == null && !!opts.sessionId && opts.timed != null;
+    const shownMinutes = opts.minutes ?? (timerCount ? (opts.timed ?? null) : null);
     // What the row said this tick would pay. The server's price is the
     // authority; if the day moved under the board (a size landed, another
     // device ticked), the difference is said out loud rather than hidden.
-    const shown = opts.mvv ? projectRow(current, row, { mvv: true }) : opts.minutes != null ? projectRow(current, row, { minutes: opts.minutes }) : row.projection;
+    const shown = opts.mvv
+      ? projectRow(current, row, { mvv: true })
+      : shownMinutes != null
+        ? projectRow(current, row, { minutes: shownMinutes, ...(timerCount ? { wall: shownMinutes } : {}) })
+        : row.projection;
     const op: BoardOp = {
       id,
       kind: "complete",
       templateId: row.template.id,
       day: row.day,
       slot: row.slot,
-      minutes: opts.minutes ?? null,
+      minutes: shownMinutes,
       mvv: opts.mvv,
       at: new Date().toISOString(),
     };
     setOpenKey(null);
     setDrawerMinutes(null);
+    setDrawerPages(null);
     markTick(row, shown.xp, from);
     // Off to Done today (yesterday's rows stay in Record yesterday).
     if (row.lane !== "yesterday") leaveLane(row);
@@ -1148,7 +1262,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
       op,
       // The row's own day: the server books only today or yesterday by its
       // own clock, so a board left open across 04:00 is refused, not misbooked.
-      () => completeTask(row.template.id, { day: row.day, minutes: opts.minutes ?? null, mvv: opts.mvv }, REFRESH),
+      // A reading task's pages (P24) ride along as its proof; every other tick is as before.
+      () => completeTask(row.template.id, { day: row.day, minutes: opts.minutes ?? null, mvv: opts.mvv, ...(opts.sessionId ? { sessionId: opts.sessionId } : {}), ...(opts.mvv ? {} : pagesProofOf(opts.pages)) }, REFRESH),
       (v) => {
         // The server's moments for this tick (a streak milestone, a habit
         // rung, a finished goal): Seals and Ascensions only, since
@@ -1169,8 +1284,11 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     );
   }
 
-  function again(row: BoardRow, minutes: number | null) {
+  function again(row: BoardRow, minutes: number | null, pages: number | null = null) {
     if (staleDay()) return;
+    // Proof of work (P23): a proof habit's Again takes the drawer's minutes, else its timer's.
+    const timer = minutes == null && row.proof?.timer ? row.proof.timer : null;
+    if (timer) minutes = Math.max(1, timerMinutesOf(timer, serverNow()));
     const op: BoardOp = {
       id: nextOpId(),
       kind: "complete",
@@ -1182,8 +1300,10 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     };
     setOpenKey(null);
     setDrawerMinutes(null);
-    markTick(row, projectRow(current, row, { minutes }).xp, null);
-    dispatch(op, () => againTask(row.template.id, { minutes }, REFRESH), (v) => {
+    setDrawerPages(null);
+    markTick(row, projectRow(current, row, { minutes, ...(timer ? { wall: minutes } : {}) }).xp, null);
+    // A reading task's Again (P24) brings its pages, as its first tick did.
+    dispatch(op, () => againTask(row.template.id, { ...(timer ? { sessionId: timer.sessionId } : { minutes }), ...(row.pages ? pagesProofOf(pages) : {}) }, REFRESH), (v) => {
       presentAll(v.celebrations);
       playMomentumT1(v.celebrations);
       if (!v.duplicate) markMomentum(row, v.receipt);
@@ -1691,6 +1811,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     const key = row.key;
     const drawerOpen = openKey === key;
     const minutes = rowMinutes(key, openKey, drawerMinutes);
+    // Pages proof (P24): the pages picked in this row's open drawer (a reading task's), as its minutes are.
+    const pagesPicked = rowMinutes(key, openKey, drawerPages);
     const projection = minutes != null ? projectRow(current, row, { minutes }) : row.projection;
     const busy = busyTemplates.has(row.template.id);
     const paid = row.paid;
@@ -1715,11 +1837,12 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         receiptOpen={receiptKey === key}
         receiptId={receiptIdOf(key)}
         pendingTitle={w?.kind === "rename" ? w.title : null}
-        onTick={(from) => (viaSteps(row) ? tickSteps(row, null, true, from) : complete(row, { minutes }, from))}
+        onTick={(from) => (viaSteps(row) ? tickSteps(row, null, true, from) : tickRow(row, minutes, from))}
         onUndo={() => undo(row)}
         onToggleDrawer={() => {
           setOpenKey((k) => (k === key ? null : key));
           setDrawerMinutes(null);
+          setDrawerPages(null);
         }}
         onToggleReceipt={() => setReceiptKey((k) => (k === key ? null : key))}
         onMinimum={row.lane === "must" && row.template.mvv ? (from) => complete(row, { mvv: true }, from) : undefined}
@@ -1731,6 +1854,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         onStep={(stepId, done, from) => tickSteps(row, stepId, done, from)}
         motion={motionOf(row, pile)}
         variant={pile ? "pile" : undefined}
+        timer={row.proof ? { busy: w?.kind === "timer", onStart: () => startTimer(row), onStop: () => stopTimer(row), onDiscard: () => discardTimer(row) } : null}
         work={isWork}
       >
         <TaskDrawer
@@ -1743,12 +1867,12 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
           minimumProjection={row.template.mvv ? projectRow(current, row, { mvv: true }) : null}
           busy={busy}
           working={w}
-          onDone={() => (viaSteps(row) ? tickSteps(row, null, true) : complete(row, { minutes }))}
-          onYesterday={() => recordYesterday(row)}
+          onDone={() => (viaSteps(row) ? tickSteps(row, null, true) : tickRow(row, minutes, null, true))}
+          onYesterday={() => recordYesterday(row, minutes, pagesPicked)}
           onMinimum={() => complete(row, { mvv: true })}
           onSkip={() => skip(row)}
           onTomorrow={() => moveToTomorrow(row)}
-          onAgain={() => again(row, minutes)}
+          onAgain={() => again(row, minutes, pagesPicked)}
           onRename={(title) => work(row.template.id, { kind: "rename", title }, () => renameTask(row.template.id, title, REFRESH))}
           onArchive={() => archive(row)}
           onDefer={() => openDecision(row, "defer")}
@@ -1759,6 +1883,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
           rule={drawerOpen ? drawerRuleOf(row) : null}
           taskStyle={current.styles?.[row.template.id] ?? null}
           work={isWork}
+          proof={row.proof ? { timer: row.proof.timer, project: (m) => projectRow(current, row, { minutes: m, wall: m }) } : null}
+          pages={row.pages ? { target: row.pages.target, picked: pagesPicked, onPick: setDrawerPages } : null}
         />
       </TaskRow>
     );

@@ -46,8 +46,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +55,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -102,6 +101,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.FadingLine
 import com.xtnl.app.core.Fmt
+import com.xtnl.app.core.ProofLine
 import com.xtnl.app.core.QuestLine
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.core.TimeLabels
@@ -484,15 +484,18 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
         }
     }
 
+    /** P7, P23, P24: the minutes sheet's row (a long press, a proof row's tap with no timer run, a reading task's tap); null when closed. */
+    var sheetFor by rememberSaveable { mutableStateOf<String?>(null) }
+
     /** A tick, at its release frame (T): the haptic and the pluck fire now, the row flips now, the motes follow. */
-    fun tick(t: TaskItem, mvv: Boolean) {
+    fun tick(t: TaskItem, mvv: Boolean, minutes: Int? = null, sessionId: String? = null, pages: Int? = null) {
         val clientId = UUID.randomUUID().toString()
         val id = tickId(t.templateId, clientId)
         val motes = motion == MotionLevel.FULL && (spots.seal?.tip() != null || fx.resolve("check") != null)
         val step = feel?.tick(id, motes) ?: 0
         val run = TickRun(id, t.templateId, step, TickMoment.motes(step, mvv), SystemClock.uptimeMillis(), motes)
         spots.runs[t.templateId] = run
-        vm.complete(t, mvv = mvv, clientId = clientId)
+        vm.complete(t, mvv = mvv, clientId = clientId, minutes = minutes, sessionId = sessionId, pages = pages)
         val seal = spots.seal
         when {
             motion == MotionLevel.FULL && t.xpHint != null -> {
@@ -513,7 +516,13 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
 
     val onTick: (TaskItem) -> Unit = tick@{ t ->
         when {
-            t.open -> tick(t, mvv = false)
+            // P23: a proof row ticks with its timer once it has run; with none, its tap opens the minutes sheet. P24: a
+            // reading task with a day's target opens it at its page chips. A chore (every other row) still ticks in one tap.
+            t.open -> when (ProofLine.tapOf(t, Instant.now(), ui.data?.day)) {
+                ProofLine.Tap.TICK -> tick(t, mvv = false)
+                ProofLine.Tap.TIMER -> tick(t, mvv = false, sessionId = t.timer?.sessionId)
+                ProofLine.Tap.SHEET -> { feel?.select(); sheetFor = t.templateId }
+            }
             t.kept && ui.kept.containsKey(t.templateId) -> undoTick(spots, fx, feel, vm, t.templateId, motion)
             t.kept -> { feel?.select(); snacks.show("Kept earlier today. Undo it on the web app.") }
             t.locked -> { feel?.select(); snacks.show("A study task: it completes itself from today's reviews.") }
@@ -521,6 +530,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
         }
     }
     val onMvv: (TaskItem) -> Unit = { t -> tick(t, mvv = true) }
+    val onSheet: (TaskItem) -> Unit = { t -> feel?.select(); sheetFor = t.templateId }
     val onImpact: (TaskItem, Offset) -> Unit = { t, p ->
         val run = spots.runs[t.templateId]
         val step = run?.step ?: 0
@@ -554,7 +564,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
         },
     ) {
         val data = ui.data
-        val rows = Rows(spots, onTick, onMvv, onImpact)
+        val rows = Rows(spots, onTick, onMvv, onImpact, onSheet)
         when {
             data == null && ui.loading -> LoadingBoard(top)
             data == null -> CantReach(ui.error ?: "Can't reach the server.", top, onRetry = { vm.refresh() }, onSettings = onOpenSettings, onDemo = onUseDemo)
@@ -600,10 +610,29 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
             )
         }
     }
+    // P7, P23: the minutes sheet, over either display; it closes with its row (ticked, gone or no longer open). Only once
+    // the board is there: after a restore the saved sheet waits for the cache's read instead of closing at the first draw.
+    val sheetTask = sheetFor?.let { id -> ui.tasks.firstOrNull { it.templateId == id && it.open } }
+    val sheetGone = sheetFor != null && ui.data != null && sheetTask == null
+    LaunchedEffect(sheetGone) { if (sheetGone) sheetFor = null }
+    sheetTask?.let { t ->
+        MinutesSheet(
+            task = t,
+            today = ui.data?.day,
+            onDismiss = { sheetFor = null },
+            onDone = { minutes, sessionId, pages -> sheetFor = null; tick(t, mvv = false, minutes = minutes, sessionId = sessionId, pages = pages) },
+            onMinimum = { sheetFor = null; tick(t, mvv = true) },
+            onStartTimer = { vm.startTimer(t) },
+            onStopTimer = { vm.stopTimer(t) },
+        )
+    }
 }
 
+/** How often a row's running timer moves its figure (the sheet's and the web chip's 15 s). */
+private const val ROW_TIMER_REFRESH_MS = 15_000L
+
 /** What a task row needs from the screen. */
-private class Rows(val spots: CheckSpots, val onTick: (TaskItem) -> Unit, val onMvv: (TaskItem) -> Unit, val onImpact: (TaskItem, Offset) -> Unit)
+private class Rows(val spots: CheckSpots, val onTick: (TaskItem) -> Unit, val onMvv: (TaskItem) -> Unit, val onImpact: (TaskItem, Offset) -> Unit, val onSheet: (TaskItem) -> Unit = {})
 
 // ── The list's parts ────────────────────────────────────────────────────────
 
@@ -656,7 +685,7 @@ private fun LazyListScope.tasks(ui: CheckViewModel.Ui, rows: Rows, motion: Motio
         val roll = spots.roll
         TaskRow(
             t,
-            onTick = { rows.onTick(t) }, onMvv = { rows.onMvv(t) },
+            onTick = { rows.onTick(t) }, onSheet = { rows.onSheet(t) },
             modifier = Modifier.animateItem(fadeInSpec = motion.fade(), placementSpec = motion.spr(Spr.glide), fadeOutSpec = motion.fade()),
             spots = spots,
             rollKey = if (t.templateId in roll.delays) roll.seq else 0,
@@ -959,8 +988,8 @@ private fun Streak(days: Int, keptToday: Boolean, spots: CheckSpots) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TaskRow(
-    t: TaskItem, onTick: () -> Unit, onMvv: () -> Unit, modifier: Modifier = Modifier, spots: CheckSpots,
-    rollKey: Int, rollDelay: Int, nodKey: Int, onImpact: (Offset) -> Unit,
+    t: TaskItem, onTick: () -> Unit, modifier: Modifier = Modifier, spots: CheckSpots,
+    rollKey: Int, rollDelay: Int, nodKey: Int, onImpact: (Offset) -> Unit, onSheet: () -> Unit = {},
 ) {
     val c = X.c
     val motion = LocalMotion.current
@@ -975,6 +1004,16 @@ private fun TaskRow(
     val plus = remember { Animatable(if (kept) 1f else 0f) }
     var figure by remember { mutableIntStateOf(0) }
     val figBump = rememberBump(figure, 6f)
+    // P23: a running timer's minutes move on the row as on the sheet and the web chip (every 15 s), not only on a refresh.
+    var timerNow by remember { mutableStateOf(Instant.now()) }
+    val timerRunning = t.timer?.running == true
+    LaunchedEffect(timerRunning, t.timer?.sessionId) {
+        timerNow = Instant.now()
+        while (timerRunning) {
+            delay(ROW_TIMER_REFRESH_MS)
+            timerNow = Instant.now()
+        }
+    }
     LaunchedEffect(kept) {
         val target = if (kept) 1f else 0f
         if (strike.targetValue == target && strike.value == target) return@LaunchedEffect
@@ -1004,7 +1043,6 @@ private fun TaskRow(
             }
         }
     }
-    var menu by remember { mutableStateOf(false) }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     var rowAt by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var circleAt by remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -1047,7 +1085,8 @@ private fun TaskRow(
                     indication = ripple(color = c.kept),
                     role = Role.Checkbox,
                     onClickLabel = if (t.open) "Check" else "Undo",
-                    onLongClick = if (t.open && t.mvv != null) ({ menu = true }) else null,
+                    // P7: a long press opens the minutes sheet on any open row (its chips, its minimum, a proof row's timer).
+                    onLongClick = if (t.open) onSheet else null,
                     onClick = onTick,
                 )
                 .semantics {
@@ -1099,6 +1138,10 @@ private fun TaskRow(
                     if (held) add(if (t.status == "HELD") "Held" else "Skipped")
                     if (t.locked) add("from reviews")
                     else if (!kept) t.mvv?.let { add("min: $it") }
+                    // P23: a proof row says its tick takes its minutes, and its timer while one is open.
+                    if (t.proof && !kept) add(t.timer?.let { tm -> ProofLine.timerLabel(tm, timerNow) } ?: "log the minutes")
+                    // P24: a reading task says its tick takes its pages ("log 30 pages").
+                    if (!kept) t.pages?.let { add(ProofLine.pagesNote(it.target)) }
                     if (t.status == "DONE_MVV") add("the minimum")
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1143,14 +1186,6 @@ private fun TaskRow(
                     }
                 }
             }
-        }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = c.overlay) {
-            DropdownMenuItem(
-                text = { Text("Kept the minimum: ${t.mvv}", color = c.ink0) },
-                onClick = { menu = false; onMvv() },
-                leadingIcon = { Icon(Glyphs.Tick, null, tint = c.kept) },
-            )
-            DropdownMenuItem(text = { Text("Kept it all", color = c.ink0) }, onClick = { menu = false; onTick() })
         }
     }
 }

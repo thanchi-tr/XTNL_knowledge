@@ -129,7 +129,17 @@ const read = (f: string) => readFileSync(join(__dirname, "..", f), "utf8");
   const drawer = read("src/components/today/TaskDrawer.tsx");
   check("drawer: the step editor shows only inside Edit", /\{editing && stepsAllowed\(t\) && row\.lane !== "yesterday" && \(\s*<StepsEditor/.test(drawer));
   const board = read("src/components/today/TodayBoard.tsx");
-  check("board: a row with steps ticks through them (every step), its steps one by one", /onTick=\{\(from\) => \(viaSteps\(row\) \? tickSteps\(row, null, true, from\) : complete\(row, \{ minutes \}, from\)\)\}/.test(board) && /onStep=\{\(stepId, done, from\) => tickSteps\(row, stepId, done, from\)\}/.test(board));
+  // Re-pinned for P23: the row's own tick goes through tickRow (a proof row's minutes or timer; every other row exactly
+  // complete(row, { minutes })), and a proof row never ticks through its steps: it is paid by its whole tick.
+  // Re-pinned for P24: nor does a reading task (row.pages), and the tick carries the drawer's pages (null on every other
+  // row, so complete(row, { minutes, pages }) is the old tick for them).
+  check(
+    "board: a row with steps ticks through them (every step), its steps one by one; a proof row (P23) or a reading task (P24) never through its steps",
+    /onTick=\{\(from\) => \(viaSteps\(row\) \? tickSteps\(row, null, true, from\) : tickRow\(row, minutes, from\)\)\}/.test(board) &&
+      /onStep=\{\(stepId, done, from\) => tickSteps\(row, stepId, done, from\)\}/.test(board) &&
+      /const viaSteps = \(row: BoardRow\) => !!row\.steps && !row\.steps\.checklist && row\.state === "open" && !row\.proof && !row\.pages;/.test(board) &&
+      /    complete\(row, \{ minutes, pages \}, from\);\n  \}/.test(board.replace(/\r\n/g, "\n"))
+  );
   const sql = read("prisma/migrations/20261210000000_life_subtasks/migration.sql").replace(/--.*$/gm, "");
   check("migration: two new tables only, no ALTER, DROP or foreign key", (sql.match(/CREATE TABLE/g) ?? []).length === 2 && !/\b(ALTER|DROP|REFERENCES)\b/.test(sql));
 }

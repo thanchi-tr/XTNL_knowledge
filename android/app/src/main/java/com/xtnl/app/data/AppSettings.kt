@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import java.security.KeyStore
+import java.time.Instant
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -40,6 +41,15 @@ data class Prefs(
     val auditLive: Boolean = false,
     /** The notification permission (Android 13+) was asked for once; the app never asks again by itself. */
     val notifyAsked: Boolean = false,
+    /** Settings › Health Connect (blueprint P27, D22): walks, hikes and weight read from Health Connect. Off until the user turns it on. */
+    val healthSync: Boolean = false,
+    /** When it was switched on (ISO): a walk that started before it is the backfill, recorded on the server, never paid. */
+    val healthSince: String? = null,
+    /** The last sync that reached the server (ISO) and its line; the last try (ISO) and why it didn't land (null when it did). */
+    val healthLastAt: String? = null,
+    val healthLine: String? = null,
+    val healthTriedAt: String? = null,
+    val healthError: String? = null,
 )
 
 /**
@@ -87,6 +97,12 @@ class AppSettings(context: Context) {
             auditReminder = prefs.getBoolean(K_AUDIT_REMINDER, true),
             auditLive = prefs.getBoolean(K_AUDIT_LIVE, false),
             notifyAsked = prefs.getBoolean(K_NOTIFY_ASKED, false),
+            healthSync = prefs.getBoolean(K_HEALTH_SYNC, false),
+            healthSince = prefs.getString(K_HEALTH_SINCE, null),
+            healthLastAt = prefs.getString(K_HEALTH_LAST, null),
+            healthLine = prefs.getString(K_HEALTH_LINE, null),
+            healthTriedAt = prefs.getString(K_HEALTH_TRIED, null),
+            healthError = prefs.getString(K_HEALTH_ERROR, null),
         )
     }
 
@@ -97,8 +113,15 @@ class AppSettings(context: Context) {
         val moved = origin != _state.value.server
         val edit = prefs.edit().putString(K_SERVER, origin)
         if (moved) edit.putBoolean(K_AUDIT_LIVE, false)
+        // Health Connect (P27): another server reads the whole window again (it answers what it has as duplicates).
+        if (moved) edit.remove(K_HEALTH_LAST).remove(K_HEALTH_LINE).remove(K_HEALTH_ERROR)
         edit.apply()
-        _state.update { it.copy(server = origin, hasToken = tokens.contains(tokenKey(origin)), auditLive = if (moved) false else it.auditLive) }
+        _state.update {
+            it.copy(
+                server = origin, hasToken = tokens.contains(tokenKey(origin)), auditLive = if (moved) false else it.auditLive,
+                healthLastAt = if (moved) null else it.healthLastAt, healthLine = if (moved) null else it.healthLine, healthError = if (moved) null else it.healthError,
+            )
+        }
     }
 
     fun setTheme(t: ThemeChoice) { prefs.edit().putString(K_THEME, t.name).apply(); _state.update { it.copy(theme = t) } }
@@ -110,8 +133,40 @@ class AppSettings(context: Context) {
         val moved = on != _state.value.demo
         val edit = prefs.edit().putBoolean(K_DEMO, on)
         if (moved) edit.putBoolean(K_AUDIT_LIVE, false)
+        if (moved) edit.remove(K_HEALTH_LAST).remove(K_HEALTH_LINE).remove(K_HEALTH_ERROR)
         edit.apply()
-        _state.update { it.copy(demo = on, auditLive = if (moved) false else it.auditLive) }
+        _state.update {
+            it.copy(
+                demo = on, auditLive = if (moved) false else it.auditLive,
+                healthLastAt = if (moved) null else it.healthLastAt, healthLine = if (moved) null else it.healthLine, healthError = if (moved) null else it.healthError,
+            )
+        }
+    }
+
+    /**
+     * Settings › Health Connect (P27). Turning it on starts the history at [now] (`since`: what came before is the
+     * backfill, recorded only) and forgets the last sync, so the first one reads the 30 days Health Connect allows.
+     */
+    fun setHealthSync(on: Boolean, now: Instant) {
+        val edit = prefs.edit().putBoolean(K_HEALTH_SYNC, on)
+        if (on) edit.putString(K_HEALTH_SINCE, now.toString()).remove(K_HEALTH_LAST).remove(K_HEALTH_LINE).remove(K_HEALTH_TRIED).remove(K_HEALTH_ERROR)
+        edit.apply()
+        _state.update {
+            if (on) it.copy(healthSync = true, healthSince = now.toString(), healthLastAt = null, healthLine = null, healthTriedAt = null, healthError = null)
+            else it.copy(healthSync = false)
+        }
+    }
+
+    /** A sync reached the server at [at]: its line, and no error. */
+    fun setHealthSynced(at: Instant, line: String?) {
+        prefs.edit().putString(K_HEALTH_LAST, at.toString()).putString(K_HEALTH_TRIED, at.toString()).putString(K_HEALTH_LINE, line).remove(K_HEALTH_ERROR).apply()
+        _state.update { it.copy(healthLastAt = at.toString(), healthTriedAt = at.toString(), healthLine = line, healthError = null) }
+    }
+
+    /** A try at [at] that didn't land, and why (the server's line, or the reason it couldn't read). */
+    fun setHealthFailed(at: Instant, error: String) {
+        prefs.edit().putString(K_HEALTH_TRIED, at.toString()).putString(K_HEALTH_ERROR, error).apply()
+        _state.update { it.copy(healthTriedAt = at.toString(), healthError = error) }
     }
     fun setAuditReminder(on: Boolean) { prefs.edit().putBoolean(K_AUDIT_REMINDER, on).apply(); _state.update { it.copy(auditReminder = on) } }
     fun setAuditLive(on: Boolean) { prefs.edit().putBoolean(K_AUDIT_LIVE, on).apply(); _state.update { it.copy(auditLive = on) } }
@@ -174,6 +229,12 @@ class AppSettings(context: Context) {
         const val K_AUDIT_REMINDER = "audit.reminder"
         const val K_AUDIT_LIVE = "audit.live"
         const val K_NOTIFY_ASKED = "notify.asked"
+        const val K_HEALTH_SYNC = "health.sync"
+        const val K_HEALTH_SINCE = "health.since"
+        const val K_HEALTH_LAST = "health.last"
+        const val K_HEALTH_LINE = "health.line"
+        const val K_HEALTH_TRIED = "health.tried"
+        const val K_HEALTH_ERROR = "health.error"
     }
 }
 

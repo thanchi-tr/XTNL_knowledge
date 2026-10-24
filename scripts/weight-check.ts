@@ -410,7 +410,19 @@ check(
   "the cores clamp again: logWeightCore clamps kg and checks the day, setWeightGoalCore clamps the target and checks its day",
   /clampKg\(kg\)/.test(server) && /logDayError\(day, today\)/.test(server) && /clampKg\(input\.targetKg\)/.test(server) && /targetDayError\(input\.targetDay, today\)/.test(server)
 );
-check("logWeightCore writes logWriteData (a replace keeps the note unless one is given)", /logWriteData\(value, now, source, opts\.note\)/.test(server) && /update: data\.update/.test(server) && !/note = cleanNote\(opts\.note\)/.test(server));
+// Re-pinned for P27 (Health Connect): the reading is measured at opts.measuredAt when one is given (an import's own
+// instant), else at `now` as before; a typed weigh-in passes none, so it writes exactly what it wrote.
+check(
+  "logWeightCore writes logWriteData (a replace keeps the note unless one is given), measured now unless an import says when",
+  /const measuredAt = opts\.measuredAt instanceof Date && Number\.isFinite\(opts\.measuredAt\.getTime\(\)\) \? opts\.measuredAt : now;/.test(server) &&
+    /logWriteData\(value, measuredAt, source, opts\.note\)/.test(server) &&
+    /update: data\.update/.test(server) &&
+    !/note = cleanNote\(opts\.note\)/.test(server)
+);
+check(
+  "an import (P27) never replaces a typed reading or a later import: importReplaces is read before the upsert, and a raced first log keeps what landed",
+  /if \(source === "import" && !importReplaces\(existing, measuredAt\)\) return kept;\s*await prisma\.bodyWeight\.upsert\(/.test(server) && /if \(source === "import"\) return kept;/.test(server)
+);
 check("setWeightGoalCore decides with planGoalChange (a target within 0.05 kg is not a change)", /planGoalChange\(current, /.test(fnBody(server, "setWeightGoalCore")) && !/target !== current\.targetKg/.test(server));
 check(
   "reads are cached under 'weight' and every write invalidates it",

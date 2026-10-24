@@ -108,7 +108,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
     sealed interface Event {
         /** [level]: the character's level after the tick, when the server sent it; [before], the level shown before it. */
         data class TaskKept(val templateId: String, val xp: Double, val line: String?, val hinted: Boolean, val level: LevelInfo? = null, val before: LevelInfo? = null) : Event
-        data class TaskFailed(val templateId: String, val message: String, val retry: () -> Unit) : Event
+        /** A tick the server refused; [retry] sends it again (null when a retry can only fail the same way: a timer that is gone). */
+        data class TaskFailed(val templateId: String, val message: String, val retry: (() -> Unit)?) : Event
         data class TaskUndone(val templateId: String, val xp: Double) : Event
         data class UndoFailed(val message: String) : Event
         data class WorkDone(val item: WorkItem) : Event
@@ -287,7 +288,12 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun staleFor(ms: Long): Boolean = _ui.value.fetchedAtMs?.let { System.currentTimeMillis() - it > ms } ?: true
 
-    fun complete(task: TaskItem, mvv: Boolean = false, clientId: String = UUID.randomUUID().toString()) {
+    /**
+     * A tick, optimistic. [minutes] (the minutes sheet's chip, blueprint P7) and [sessionId] (a proof row's timer, P23)
+     * go to the server as they are; it counts them with the web drawer's clamp and gates a proof row's full tick. [pages]
+     * (a reading task's, P24) go as its proof; the server gates them against the day's target and never prices them.
+     */
+    fun complete(task: TaskItem, mvv: Boolean = false, clientId: String = UUID.randomUUID().toString(), minutes: Int? = null, sessionId: String? = null, pages: Int? = null) {
         val before = _ui.value
         if (task.templateId in before.pending) return
         touchedAt = System.currentTimeMillis()
@@ -301,7 +307,7 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
             )
         }
         viewModelScope.launch {
-            when (val r = graph.api.completeTask(task.templateId, mvv, clientId)) {
+            when (val r = graph.api.completeTask(task.templateId, mvv, clientId, minutes, sessionId, pages)) {
                 is Outcome.Ok -> {
                     // Board clear is the server's call (its allDone, habits included). A tick only ever clears more,
                     // so an earlier tick's answer arriving late never takes a clear board back. One already undone here doesn't count.
@@ -334,9 +340,62 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                 is Outcome.Err -> {
                     undoWhenKept.remove(task.templateId)
                     overlapped.remove(task.templateId)
-                    _ui.update { it.copy(kept = it.kept - task.templateId, pending = it.pending - task.templateId) }
-                    _events.tryEmit(Event.TaskFailed(task.templateId, r.message) { complete(task, mvv, clientId) })
+                    // P23: a named timer the server no longer has (another device's tick counted it, or it was discarded):
+                    // the row drops it here and /check is read again, so the next tap opens the sheet. A retry of the same
+                    // timer can only fail the same way, so none is offered.
+                    val timerGone = r.code == "gone" && sessionId != null
+                    _ui.update {
+                        it.copy(
+                            kept = it.kept - task.templateId, pending = it.pending - task.templateId,
+                            data = if (!timerGone) it.data else it.data?.copy(tasks = it.data.tasks.map { t -> if (t.templateId == task.templateId && t.timer?.sessionId == sessionId) t.copy(timer = null) else t }),
+                        )
+                    }
+                    if (timerGone) graph.changes.tryEmit("timer")
+                    _events.tryEmit(Event.TaskFailed(task.templateId, r.message, if (timerGone) null else ({ complete(task, mvv, clientId, minutes, sessionId, pages) })))
                 }
+            }
+        }
+    }
+
+    /**
+     * Proof of work (P23): a proof row's timer, started (one runs at a time: the server stops any other). The row shows
+     * it from the answer at once; the next /check brings the server's own.
+     */
+    fun startTimer(task: TaskItem, clientId: String = UUID.randomUUID().toString()) {
+        if (task.templateId in _ui.value.pending) return
+        viewModelScope.launch {
+            when (val r = graph.api.startTimer(task.templateId, clientId)) {
+                is Outcome.Ok -> {
+                    val timer = r.value.timer
+                    _ui.update { s ->
+                        s.copy(data = s.data?.copy(tasks = s.data.tasks.map { t ->
+                            when {
+                                t.templateId == task.templateId -> t.copy(timer = timer)
+                                t.timer?.running == true -> t.copy(timer = t.timer.copy(running = false, endedAt = timer?.startedAt))
+                                else -> t
+                            }
+                        }))
+                    }
+                    _events.tryEmit(Event.Note(r.value.line ?: "Timer started."))
+                    graph.changes.tryEmit("timer")
+                }
+                is Outcome.Err -> _events.tryEmit(Event.Note(r.message))
+            }
+        }
+    }
+
+    /** Its stop: the minutes wait for the tick that counts them. */
+    fun stopTimer(task: TaskItem, clientId: String = UUID.randomUUID().toString()) {
+        val sessionId = task.timer?.sessionId ?: return
+        viewModelScope.launch {
+            when (val r = graph.api.stopTimer(sessionId, clientId)) {
+                is Outcome.Ok -> {
+                    val timer = r.value.timer
+                    _ui.update { s -> s.copy(data = s.data?.copy(tasks = s.data.tasks.map { t -> if (t.templateId == task.templateId) t.copy(timer = timer) else t })) }
+                    _events.tryEmit(Event.Note(r.value.line ?: "Timer stopped."))
+                    graph.changes.tryEmit("timer")
+                }
+                is Outcome.Err -> _events.tryEmit(Event.Note(r.message))
             }
         }
     }

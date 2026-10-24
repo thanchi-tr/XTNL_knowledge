@@ -68,3 +68,16 @@ Recorded as the user decides each conflict with the existing app. Decision ids (
 - **D31 Buying rules.** No overdraft, and a 10-minute undo. Penalties never debit credits. A purchase is permission now.
 - **D32 Chance.** Credits stay deterministic; chance stays with the existing chest and crits only.
 - **The live switch.** CREDITS_LAUNCH_DAY is built inert and is flipped only on the user's direct go, the same as every other launch switch.
+
+**2026-10-24: order and decisions for Stages 7 and 6.**
+- **Order.** The user asked for Stage 7 (proof of work) next, then Stage 6 (Duty). Stage 2 follows later. P23 needs P7's phone minutes, so the minimum of P7 (minutes on phone ticks) is built inside P23.
+- **D20 Proof scope.** Proof is required for deep-work templates only. The default set is WORK, STUDY or CREATIVE at Demanding or above on the personal board, switched on from a dry-run list the user approves first. A #proof tag opts a task in. Chores stay one tap, and the minimum version is unaffected. It applies from PROOF_LAUNCH_DAY forward only (never re-judging the past), and the switch is flipped only on the user's go.
+- **D21 / D22 Telemetry.** Minutes (P23) and pages (P24) are built, and Health Connect (P27: walks, hikes and weight only, with a record-only backfill) was chosen. GitHub commits (P26) and strength volume (P25) were not chosen and are skipped.
+- **D18 Missed daily quest.** Duty debt is scaled and capped: at most 20 per miss, 3 open per task and 100 in total, with make-ups and "accept the loss", and no level-down ceremony. It is rehearsed first and DUTY_LAUNCH_DAY is flipped only on the user's go. No flat HP pool.
+- **D19 Rest Tokens.** One unified bank (momentum freezes). A token can excuse one day's missed musts, one per day, with at most 2 banked. The minimum version, make-ups and rest days keep working.
+
+**2026-10-24: Stage 7 build decisions (taken by the coordinator; the user may revisit them).**
+- **Counted minutes.** A proof tick counts min(reported, wall clock, 480), the plan's formula: the drawer's clamp (0.5× to 2× the estimate) first, then the clock, and at least 1. An earlier draft let half the estimate act as a floor over the clock; that was dropped. To restore it, change only the last line of life-grade clampMinutes and re-pin proof-check §2 and life-grade-check.
+- **A timer never bounds picked minutes.** A timer bounds only its own count. Picked minutes are bounded only by an earlier tick of the same task that day, because a running timer would only cut honest corrections (a timer started late). Picking minutes closes the row's timer at 0.
+- **Health Connect and hand-logged walks.** Train › Exercise refuses a walk that Health Connect already imported ("Already here from Health Connect: …"). Both orders are pinned in health-ingest-check.
+- **The default proof set (dry run, read only, 2026-10-24).** Against the live data the default rule would mark 2 templates: "Play guitar for at least" (CREATIVE habit, self-rated Demanding) and "Read" (STUDY habit, self-rated Demanding). It would leave out 1: "Idea: complete ALM finance reconcilliation…" (WORK, Intro). Nothing is marked until the user approves the list, and PROOF_LAUNCH_DAY stays null until their go.
