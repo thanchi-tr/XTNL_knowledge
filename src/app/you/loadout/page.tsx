@@ -17,11 +17,13 @@ export const dynamic = "force-dynamic";
  */
 export default async function LoadoutPage() {
   const progression = await loadProgression(getCurrentUserId());
-  const slots = progression.loadout.map((e, slot) => ({ slot, skill: e?.skill ?? null, active: e?.active ?? false }));
+  // Blueprint P28 (D24b): a frozen slot carries its thaw line (never while condition decay is off).
+  const slots = progression.loadout.map((e, slot) => ({ slot, skill: e?.skill ?? null, active: e?.active ?? false, ...(e?.frozen ? { frozen: e.frozen } : {}) }));
   return (
     <div className="you-grid">
       <div className="you-stack">
-        <LoadoutGrid slots={slots} bench={progression.benchedSkills} />
+        {/* P28: the frozen emblems, for the bench's marks; the prop is left out while condition decay is off. */}
+        <LoadoutGrid slots={slots} bench={progression.benchedSkills} {...(Object.keys(progression.frozen).length > 0 ? { frozen: progression.frozen } : {})} />
       </div>
       <div className="you-stack">
         <div>

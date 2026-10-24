@@ -34,9 +34,11 @@ interface Props {
   equippedByCode: Record<string, number>;
 }
 
-function nodeLabel(n: LadderNode): string {
+function nodeLabel(n: LadderNode, frozen?: string): string {
   const rank = n.skill.rank.charAt(0) + n.skill.rank.slice(1).toLowerCase();
-  const state = n.state === "owned" ? "owned" : n.state === "ready" ? "ready to unlock" : `${n.percent}% of its requirements`;
+  // Blueprint P28 (D24b): a frozen emblem is still owned; its line says what it thaws at.
+  const owned = frozen ? `owned, ${frozen.charAt(0).toLowerCase()}${frozen.slice(1)}` : "owned";
+  const state = n.state === "owned" ? owned : n.state === "ready" ? "ready to unlock" : `${n.percent}% of its requirements`;
   return `${n.skill.name}, ${rank}, depth ${n.depth}, ${state}`;
 }
 
@@ -90,7 +92,7 @@ export function PathLadder({ attribute, ctx, equippedByCode }: Props) {
                     <button
                       type="button"
                       className={n.state === "owned" ? "node owned" : "node"}
-                      aria-label={nodeLabel(n)}
+                      aria-label={nodeLabel(n, ctx.frozen?.[n.skill.code])}
                       data-emblem={n.skill.code}
                       onClick={() => setPicked(n.skill.code)}
                     >

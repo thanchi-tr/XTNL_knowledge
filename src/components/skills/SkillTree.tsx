@@ -10,12 +10,14 @@ import { RANK_META } from "@/lib/skill-visuals";
 import { RANK_MATERIAL } from "@/lib/materials";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { LOADOUT_SLOTS } from "@/lib/loadout";
+import { FROZEN_HINT, FROZEN_WORD } from "@/lib/skill-decay";
 import { cx } from "@/components/ui/cx";
 import { SkillLogo } from "./SkillLogo";
 import { EmblemDetail, EmblemDetailSheet } from "./EmblemDetail";
 import type { LadderContext } from "./ladder";
 
-export type SkillStatus = "active" | "dormant" | "locked";
+/** Blueprint P28 (D24b): frozen is owned, paused by an idle attribute's condition, and thawed by practice (never locked). */
+export type SkillStatus = "active" | "dormant" | "frozen" | "locked";
 
 /**
  * The skill tree, drawn top-down as the directed graph it actually is.
@@ -276,7 +278,7 @@ export function SkillTree({ attribute, skills, statusOf, blockersOf, ctx, equipp
             const status = statusOf(skill.code);
             const unlockable = status === "locked" && blockersOf(skill).length === 0;
             const isSelected = skill.code === selectedCode;
-            const state = status === "locked" ? (unlockable ? "ready to unlock" : "locked") : status === "dormant" ? "owned, dormant" : "owned";
+            const state = status === "locked" ? (unlockable ? "ready to unlock" : "locked") : status === "dormant" ? "owned, dormant" : status === "frozen" ? "owned, frozen" : "owned";
 
             return (
               <g
@@ -321,6 +323,15 @@ export function SkillTree({ attribute, skills, statusOf, blockersOf, ctx, equipp
                   <SkillLogo skill={skill} size={NODE} animated={false} />
                 </g>
                 {status === "dormant" && <circle cx={NODE + 1} cy={-1} r={3.5} fill="var(--owed)" stroke="var(--card)" strokeWidth={1} />}
+                {/* Frozen (P28): the held hue only with its glyph (tokens.css), the freeze mark; its word is in the label and the card. */}
+                {status === "frozen" && (
+                  <g transform={`translate(${NODE - 6}, -7)`} aria-hidden="true">
+                    <circle cx={7} cy={7} r={7} fill="var(--card)" stroke="var(--held)" strokeWidth={1} />
+                    <svg x={2} y={2} width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="var(--held)" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+                      <use href="#h-freeze" />
+                    </svg>
+                  </g>
+                )}
               </g>
             );
           })}
@@ -425,9 +436,9 @@ function HoverCard({
         style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--line-1)", display: "flex", justifyContent: "space-between", gap: 8 }}
         className="t-meta"
       >
-        <span>{status === "locked" ? "Time to reach" : status === "dormant" ? "Dormant" : "Active"}</span>
+        <span>{status === "locked" ? "Time to reach" : status === "dormant" ? "Dormant" : status === "frozen" ? FROZEN_WORD : "Active"}</span>
         <b className="num" style={{ color: status === "locked" ? ETA_TONE[eta.status] : "var(--ink-0)" }}>
-          {status === "locked" ? eta.label : status === "dormant" ? "requirements lapsed" : "in effect"}
+          {status === "locked" ? eta.label : status === "dormant" ? "requirements lapsed" : status === "frozen" ? FROZEN_HINT : "in effect"}
         </b>
       </div>
       {status === "locked" && eta.bottleneck && (

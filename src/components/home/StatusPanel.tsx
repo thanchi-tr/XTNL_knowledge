@@ -19,11 +19,17 @@
  *
  * Skills (blueprint P5, decisions D7 to D9): under a row's targets, its attribute's live skills counted ("2 skills ›"),
  * a 44 px link to You › Skills, where each skill's hours and tier are. A count moves no level; none shows with none.
+ *
+ * Condition (blueprint P28, decisions D24 and D24b): once DECAY_LAUNCH_DAY is in force, a row whose attribute has been
+ * idle past the grace says so under its line, in skill-decay.ts's words ("Body 82% · 12 days idle · a Body tick restores
+ * it"). The level, the meter and the line stay the track's own: a condition lowers only what the traits read. Nothing
+ * shows at 100%, and nothing at all while the switch is off.
  */
 import Link from "next/link";
 import { SectionHeader } from "@/components/ui/Tabs";
 import { SKILLS_PATH } from "@/components/shell/nav";
 import { skillCountLabel } from "@/lib/competency";
+import { conditionNoteOf, conditionShows } from "@/lib/skill-decay";
 import { TASK_ICONS } from "@/lib/task-style";
 import {
   CAPITAL_NAME,
@@ -77,6 +83,13 @@ export function SkillCount({ count }: { count: number }) {
       {skillCountLabel(count)} ›
     </Link>
   );
+}
+
+/** A row's condition (P28) while it is below 100%; nothing at 100% or while condition decay is off. */
+export function ConditionNote({ row }: { row: Pick<StatusRow, "key" | "name" | "condition"> }) {
+  const c = row.condition;
+  if (!c || !conditionShows(c)) return null;
+  return <div className="t-meta status-cond">{conditionNoteOf({ kind: "attribute", key: row.key, attribute: row.key, name: row.name, condition: c.condition, idleDays: c.idleDays })}</div>;
 }
 
 /** Capital's row: a reading, never a level (no meter, no pips, no cap). With no deal won, it shows only for its targets. */
@@ -151,6 +164,7 @@ export function StatusPanel({
             seenKey={statusSeenKey(r, seenPrefix)}
             extra={
               <>
+                <ConditionNote row={r} />
                 <TargetLines targets={r.targets} />
                 <SkillCount count={r.skills} />
               </>

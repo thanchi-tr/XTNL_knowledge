@@ -33,6 +33,11 @@ export function PathView({ attribute, ctx, equippedByCode, masteryPerDay, scoreP
     const map = new Map<string, SkillStatus>();
     for (const skill of skills) {
       if (!ownedSet.has(skill.code)) continue;
+      // Blueprint P28 (D24b): frozen by an idle attribute's condition (the server's own read), never dormant or locked.
+      if (ctx.frozen?.[skill.code]) {
+        map.set(skill.code, "frozen");
+        continue;
+      }
       map.set(
         skill.code,
         meetsRequirements(skill, ctx.scores, ctx.modifiers.resonancePercent, ctx.modifiers.attributePenaltyPercent) ? "active" : "dormant"

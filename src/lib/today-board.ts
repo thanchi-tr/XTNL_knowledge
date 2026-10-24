@@ -103,6 +103,7 @@ import { settledFor, type RestKind } from "./duty-economy";
 import type { DutyBoard, OwedCard } from "./duty-view";
 import { deferNoteOf, isDeferredNow, type DeferredItem, type TemplateDecisions } from "./task-decisions";
 import { pagesGated, pagesTargetOf, priceProofOf, proofGated, timerBelongsTo, type ProofFacts, type ProofKind, type TimerView } from "./proof";
+import { streakLive, streakRunOn, streakViewOf, type BoardStreak, type StreakView } from "./streak-mult";
 import { completesItself } from "./life-types";
 
 // ── Constants ─────────────────────────────────────────────────────────────
@@ -395,6 +396,12 @@ export interface BoardData {
    * proof is in force today; absent, no row is gated, no timer shows and every projection is exactly as before.
    */
   proof?: BoardProof;
+  /**
+   * The streak multiplier (blueprint P29, streak-mult.ts): the first day it prices a tick and the judged Full days in a
+   * row for a tick dated today and one dated yesterday. tasks.ts sends it only while the multiplier is in force today;
+   * absent, every projection is exactly as before.
+   */
+  streak?: BoardStreak;
 }
 
 /** BoardData.proof: what a proof row's tick, its timer chip and its projection read. */
@@ -592,6 +599,18 @@ export interface PlanInput {
    * wall-clock bound and the timer. Absent, or a day before its launchDay: the price is exactly as before.
    */
   proof?: ProofFacts | null;
+  /**
+   * The streak multiplier (blueprint P29, streak-mult.ts): the first day it prices a tick and d for this completion's
+   * day (the board's BoardData.streak, the server's own read of the same rows). Absent, or a day before launchDay: the
+   * price is exactly as before.
+   */
+  streak?: PlanStreak | null;
+}
+
+/** PlanInput.streak: d, the judged Full days in a row before the completion's day, from the launch day in force. */
+export interface PlanStreak {
+  launchDay: DayKey;
+  days: number;
 }
 
 /** PlanInput.momentum: what a live day's price reads beyond the ledger. */
@@ -701,6 +720,14 @@ function momentumOf(p: PlanInput, mom: PlanMomentum, mode: LifePayMode): { price
   };
 }
 
+/**
+ * Who the streak multiplier reaches (blueprint P29, D25): a full tick of the player's own, one-offs and step shares
+ * included; never the minimum, #play, a study-linked task, a walk's SESSION, a make-up or an auto-completion.
+ */
+export function streakReachOf(p: Pick<PlanInput, "auto" | "makeUp" | "session"> & { mode: LifePayMode }): boolean {
+  return p.mode === "FULL" && !p.session && !p.auto && !p.makeUp;
+}
+
 /** Prices one completion. Pure: the same inputs give the same receipt, in the browser and on the server. */
 export function planCompletion(p: PlanInput): CompletionPlan {
   const t = p.template;
@@ -725,11 +752,15 @@ export function planCompletion(p: PlanInput): CompletionPlan {
   const mom = p.momentum && momentumLive(p.day, p.momentum.launchDay) ? momentumOf(p, p.momentum, mode) : null;
   // Proof of work (P23), only for a proof or EXERCISE template on or after its launch day; otherwise null and nothing changes.
   const proof = priceProofOf(t, p.day, p.proof);
-  const receipt = proof
-    ? priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track, mom?.price ?? null, proof)
-    : mom?.price
-      ? priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track, mom.price)
-      : priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track);
+  // The streak multiplier (P29), only for a full personal tick dated on or after its launch day; otherwise null and nothing changes.
+  const streak = p.streak && streakLive(p.day, p.streak.launchDay) && streakReachOf({ ...p, mode }) ? { days: p.streak.days } : null;
+  const receipt = streak
+    ? priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track, mom?.price ?? null, proof, streak)
+    : proof
+      ? priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track, mom?.price ?? null, proof)
+      : mom?.price
+        ? priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track, mom.price)
+        : priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track);
   // A completion that can never pay (#play, study, a walk's SESSION) records
   // to NONE, so no level ever reads it; everything else is life XP on its
   // track, even when the knee has flattened it to nothing.
@@ -1484,6 +1515,11 @@ export interface Board {
    * rest are Anytime's Deferred list. None is a row: no tick, no count, no quest.
    */
   deferred: DeferredItem[];
+  /**
+   * The streak multiplier (blueprint P29): today's d, m(d) and the chip's words ('Streak ×1.16 · day 3'), from
+   * BoardData.streak. Absent while the server sends none (the multiplier not in force).
+   */
+  streak?: StreakView;
 }
 
 /** Deadline and planned-date labels: 'by Fri', 'late 2d', 'from Tue'. */
@@ -1948,7 +1984,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?
     const strength = rule && stats ? (doneToday ? stats.strength.ifDone : stats.strength.before) : null;
     const streakDays = rule && stats ? (day === today ? stats.streak.before.days : stats.streakDaysYesterday) : 0;
     const auto = day === today ? autoStateOf(t, counts) : null;
-    const projection = planCompletion({ template: t, day, today, slot, ledger: ledgerFor(d, day), streakDays, momentum: projectionMomentumOf(d, t, ledgerFor(d, day)), proof: proofFactsOf(d) }).receipt;
+    const projection = planCompletion({ template: t, day, today, slot, ledger: ledgerFor(d, day), streakDays, momentum: projectionMomentumOf(d, t, ledgerFor(d, day)), proof: proofFactsOf(d), streak: planStreakOf(d, day) }).receipt;
     // Proof of work (P23): a proof row's tick needs its minutes or a timer; its open timer rides on today's row only
     // (proof.ts timerBelongsTo: today's, or one still running across 04:00). A Record yesterday row has none: a timer
     // can only time today, and today's never counts for yesterday.
@@ -1985,6 +2021,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?
               streakDays: rule && stats ? stats.streakDaysYesterday : 0,
               momentum: projectionMomentumOf(d, t, ledgerFor(d, yesterday)),
               proof: proofFactsOf(d),
+              streak: planStreakOf(d, yesterday),
             }).receipt.xp,
           }
         : null;
@@ -2141,6 +2178,8 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?
     restToday,
     dutyLive,
     deferred,
+    // The streak multiplier (P29): only while the server sent it, so the board is exactly as before without it.
+    ...(d.streak ? { streak: streakViewOf(d.streak.today) } : {}),
   };
 }
 
@@ -2200,12 +2239,22 @@ export function projectRow(data: BoardData, r: BoardRow, opts: { minutes?: numbe
     streakDays: r.streakDays,
     momentum: projectionMomentumOf(data, r.template, ledgerFor(data, r.day)),
     proof: proof && opts.wall != null ? { ...proof, wall: opts.wall } : proof,
+    streak: planStreakOf(data, r.day),
   }).receipt;
 }
 
 /** A projection's proof facts (P23): the launch day only (no wall-clock bound: the server's payment reads it); null while BoardData.proof is absent. */
 export function proofFactsOf(data: Pick<BoardData, "proof">): ProofFacts | null {
   return data.proof ? { launchDay: data.proof.launchDay } : null;
+}
+
+/**
+ * The streak a tick dated `day` prices with (P29): BoardData.streak's launch day and the run for that day (today's, or
+ * yesterday's for a record of yesterday); null while BoardData.streak is absent. The server's payment reads the same
+ * rows through streak-mult-server, so the row's projection is the tick's price.
+ */
+export function planStreakOf(data: Pick<BoardData, "streak" | "today">, day: DayKey): PlanStreak | null {
+  return data.streak ? { launchDay: data.streak.launchDay, days: streakRunOn(data.streak, day, data.today).days } : null;
 }
 
 /**
@@ -2562,6 +2611,8 @@ export function applyOps(data: BoardData, ops: readonly BoardOp[]): BoardData {
       streakDays: stats ? (op.day === d.today ? stats.streak.before.days : stats.streakDaysYesterday) : 0,
       // Momentum: priced at the tap (S and M; a crit only ever comes back on the server's receipt).
       ...(d.momentum ? { momentum: { launchDay: d.momentum.launchDay, perks: d.momentum.perks, frogTemplateId: d.momentum.frogTemplateId, at: op.at } } : {}),
+      // The streak multiplier (P29): the same d the row projected.
+      ...(d.streak ? { streak: planStreakOf(d, op.day) } : {}),
     });
     const receipt = op.receipt ?? plan.receipt;
     const instanceId = op.instanceId ?? `opt:${op.id}`;

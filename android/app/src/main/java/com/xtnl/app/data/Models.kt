@@ -50,6 +50,12 @@ data class CheckData(
     val dutyOn: Boolean = false,
     /** The open debts (blueprint P22, decision D18), oldest first, in the web MakeUpCard's words; empty with none and from an older server. */
     val owed: List<OwedItem> = emptyList(),
+    /**
+     * Condition decay (blueprint 3.1b, P28; decisions D24 and D24b): every attribute and skill whose condition is under
+     * 0.9, the lowest first. Empty while the server has it switched off (DECAY_LAUNCH_DAY, until the user's go), with
+     * nothing under 0.9, and from an older server.
+     */
+    val skills: List<CheckSkill> = emptyList(),
     val work: List<WorkItem> = emptyList(),
     val level: LevelInfo? = null,
     val streak: StreakInfo? = null,
@@ -140,8 +146,19 @@ data class DailyQuests(
 @Serializable
 data class DailyQuest(val templateId: String, val title: String = "", val kept: Boolean = false, val minimum: Boolean = false)
 
+/** The Review hub's figures. [fatigued] (blueprint P30): the fatigue in effect, null with none, while off and from an older server. */
 @Serializable
-data class ReviewSummary(val due: Int = 0, val doneToday: Int = 0, val target: Int? = null, val nextDueAt: String? = null)
+data class ReviewSummary(val due: Int = 0, val doneToday: Int = 0, val target: Int? = null, val nextDueAt: String? = null, val fatigued: Fatigue? = null)
+
+/**
+ * Review fatigue (docs/mobile-api.md `fatigued`; blueprint 3.3b, P30, decision D26): once a life day's answers reach 200,
+ * right or wrong, the server applies Fatigued once that day, a lower combo ceiling for 18 hours. [until] is when the one in
+ * effect lifts. Never for a miss or a quiet day, and no sleep rule; the answers' own `multiplier` already carries it. Null
+ * while the server has it switched off (FATIGUE_LAUNCH_DAY, until the user's go), with none in effect, and from an older
+ * server.
+ */
+@Serializable
+data class Fatigue(val until: String? = null)
 
 /**
  * The ideas past their grace (docs/mobile-api.md `fading`; blueprint 3.1a, decision D23): each card keeps its own
@@ -196,9 +213,17 @@ data class WeekAudit(
 @Serializable
 data class WeekDecaying(val count: Int = 0, val top: List<DecayItem> = emptyList(), val unread: Int = 0)
 
-/** One thing that fell: [kind] streak | field | domain | habit | ideas | trait | mp, and its words. */
+/** One thing that fell: [kind] streak | field | domain | habit | ideas | condition (P28) | trait | mp, and its words. */
 @Serializable
 data class DecayItem(val kind: String = "", val title: String, val detail: String = "")
+
+/**
+ * One idle attribute or skill (docs/mobile-api.md `skills`; blueprint 3.1b, P28): [kind] attribute (named as on the
+ * Status card: Body, Knowledge, Craft, Duty, Care) or skill (its own name), [condition] 0.5..1 (3 decimals) and the idle
+ * life days behind it. A reading: no level, XP or hours ever drop with it, and one practice brings it back to 1.
+ */
+@Serializable
+data class CheckSkill(val kind: String = "attribute", val name: String, val condition: Double = 1.0, val idleDays: Int = 0)
 
 @Serializable
 data class WorkItem(
@@ -241,10 +266,25 @@ data class CreditsChange(val delta: Int = 0, val balance: Int = 0, val today: In
 /**
  * The daily streak (docs/mobile-api.md `streak`). [restTokens] (blueprint P21, decision D19) is the one Rest Token bank,
  * the momentum freezes: null while the bank is not live and from a server before it; [freezes] is the same number (0
- * then), kept for older apps.
+ * then), kept for older apps. [multiplier] (blueprint P29, decision D25) is the streak multiplier, a separate count.
  */
 @Serializable
-data class StreakInfo(val days: Int = 0, val keptToday: Boolean = false, val freezes: Int = 0, val restTokens: Int? = null)
+data class StreakInfo(
+    val days: Int = 0,
+    val keptToday: Boolean = false,
+    val freezes: Int = 0,
+    val restTokens: Int? = null,
+    val multiplier: StreakMultiplier? = null,
+)
+
+/**
+ * The streak multiplier (docs/mobile-api.md `streak.multiplier`; blueprint 3.2a, P29, decision D25): [value] is m(d) =
+ * min(1.2, 1.05^d) to two places, the C every full tick pays (each row's xpHint already carries it), [fullDays] is d, the
+ * judged Full days in a row (at least that with [floor]), and [line] is Today's chip in the web's words. Null while the
+ * server has it switched off (STREAK_LAUNCH_DAY, until the user's go) and from an older server.
+ */
+@Serializable
+data class StreakMultiplier(val value: Double = 1.0, val fullDays: Int = 0, val floor: Boolean = false, val line: String = "")
 
 // ── Duty: the owed cards and POST /tasks/makeup (blueprint P22; decision D18) ──
 
@@ -694,8 +734,9 @@ data class WorkResult(val id: String? = null, val doneAt: String? = null)
 
 // ── Review ──────────────────────────────────────────────────────────────────
 
+/** GET /review/queue. [fatigued] (blueprint P30): the fatigue in effect, as /check's `review.fatigued`. */
 @Serializable
-data class ReviewQueue(val now: String? = null, val dueTotal: Int = 0, val cards: List<ReviewCard> = emptyList())
+data class ReviewQueue(val now: String? = null, val dueTotal: Int = 0, val cards: List<ReviewCard> = emptyList(), val fatigued: Fatigue? = null)
 
 @Serializable
 data class ReviewCard(

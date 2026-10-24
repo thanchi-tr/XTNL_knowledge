@@ -73,14 +73,35 @@
  * Duty (blueprint P22, D18): nothing here reads DUTY_LAUNCH_DAY, so the output is byte for byte the same with it null.
  * With it in force (`XTNL_DUTY_LAUNCH_DAY=2026-10-26 npx tsx scripts/balance-horizon.ts`, or the constant once set) one
  * line under 3b-m says so: settlement then records the full days that 3b-m prices and the cap trims (92.5 > 91).
+ *
+ * Condition decay (blueprint P28, D24 and D24b): while DECAY_LAUNCH_DAY is null and XTNL_DECAY_LAUNCH_DAY is unset nothing
+ * here reads it, byte for byte. With the override set (`XTNL_DECAY_LAUNCH_DAY=2026-10-26 npx tsx scripts/balance-horizon.ts`)
+ * 9c pins that an idle track's condition only lowers what its life row gives the traits (9 only gets safer: the flood at
+ * every idle count, the floor included, stays at or under 9's and below the gate), and L3c that no condition reaches a
+ * level: the character level a year of life alone reads is L3's own.
+ *
+ * The streak multiplier (blueprint P29, D25): while STREAK_LAUNCH_DAY is null and XTNL_STREAK_LAUNCH_DAY is unset nothing
+ * here reads it, byte for byte. With the override set (`XTNL_STREAK_LAUNCH_DAY=2026-10-26 npx tsx scripts/balance-horizon.ts`)
+ * the committed player, who never misses, has every day Full, so every basket row (one-offs included) is priced with
+ * C = m(d) at d = BASKET_FULL_DAYS, the cap (life-grade streakMult, 'life-4'): 4s re-pins assertion 4 at 110.7 and 4b-s
+ * 4b at 120.8 (the plan estimated about 110.8 and 121), both still inside their bands, and says the MP blocks read no
+ * XP, so the multiplier moves none of them. The pacing pins 5 to 8 and L1 to L3 still hold (8 at its edge: L7 at week 13).
+ *
+ * Review fatigue (blueprint P30, D26): while FATIGUE_LAUNCH_DAY is null and XTNL_FATIGUE_LAUNCH_DAY is unset nothing here
+ * reads it, byte for byte. With the override set (`XTNL_FATIGUE_LAUNCH_DAY=2026-10-26 npx tsx scripts/balance-horizon.ts`)
+ * a last block, FATIGUE, prices a day answer by answer through the real formulas: F1 the committed player's 25 answers
+ * never reach the breaker, so every figure above stands; F2 199 answers apply nothing and a day of 200 pays exactly as
+ * before (the 200th is paid before it applies); F3 the MP horizon only lengthens (a grinder's MP a day is never more,
+ * here exactly the same: mastery's combo bonus reads the run, never the ceiling); F4 the answers past it pay fewer
+ * review points, at the ceiling FATIGUED folds to (10 → 5).
  */
 import "./_no-model";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SKILL_POOL, requiredAttributeScore } from "../src/lib/skill-pool";
-import { IDEA_MASTERY_POINTS, REVIEW_MASTERY_PER_LEVEL } from "../src/lib/mastery";
+import { IDEA_MASTERY_POINTS, REVIEW_MASTERY_PER_LEVEL, comboMasteryBonus, reviewMasteryFraction } from "../src/lib/mastery";
 import type { QuestionType } from "@prisma/client";
-import { EASE_DEFAULT, MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, XP_BASE, cleanRecallOnTime, domainLevel, fieldBreadth, fieldLevel, fieldLevelRaw, reviewReward, riseBaseIntervalDays } from "../src/lib/xp";
+import { COMBO_CAP, EASE_DEFAULT, MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, XP_BASE, cleanRecallOnTime, domainLevel, fieldBreadth, fieldLevel, fieldLevelRaw, reviewReward, riseBaseIntervalDays } from "../src/lib/xp";
 import { characterLevel } from "../src/lib/character";
 import { TITLE_BANDS } from "../src/lib/titles";
 import { MATERIALS, crestBandStarts } from "../src/lib/materials";
@@ -115,6 +136,10 @@ import { MOMENTUM_MP_MODEL, MOMENTUM_MP_REASONS, PRE_MOMENTUM_MP_MODEL, ROADMAP_
 import { MOMENTUM_LAUNCH_DAY, PERKS, lifeModsOf } from "../src/lib/momentum";
 import { statedForMilestone, type StatedInput } from "../src/lib/roadmap-economy";
 import { captureGoalFields, linkedGoalFields } from "../src/lib/tasks";
+import { ATTRIBUTE_DECAY_CLASS, DECAY_LAMBDA, conditionOf, decayLaunchDay, scaleLifeRows, traitScaleOf } from "../src/lib/skill-decay";
+import { STREAK_MULT_CAP, STREAK_MULT_CAP_DAYS, streakMult, type PriceStreak } from "../src/lib/life-grade";
+import { streakLaunchDay } from "../src/lib/streak-mult";
+import { FATIGUE_ANSWERS, FATIGUE_HOURS, fatigueDueOf, fatigueLaunchDay, fatiguedComboCap } from "../src/lib/review-fatigue";
 
 /** A committed player: reviews daily, never misses, adds steadily. */
 const REVIEWS_PER_DAY = 25;
@@ -166,6 +191,13 @@ const TRACK_CURVE: TrackCurve = trackCurveLaunchDay() == null ? "SQUARE" : "POWE
 const PROOF_ON = proofLaunchDay() != null;
 /** The basket rows the default deep-work rule marks as proof (D20: Craft's deep work, Demanding), logged at their minutes. */
 const PROOF_ROWS: ReadonlySet<string> = new Set(["deep work"]);
+
+/** The streak multiplier (P29): in force once a launch day is set, since every model week is after it. */
+const STREAK_ON = streakLaunchDay() != null;
+/** The committed player never misses, so every judged day is Full: the run is past the cap's day. */
+const BASKET_FULL_DAYS = 30;
+/** What every basket row's price reads with the multiplier on (one-offs included); null while it is off. */
+const BASKET_STREAK: PriceStreak | null = STREAK_ON ? { days: BASKET_FULL_DAYS } : null;
 
 /** Life MP may add at most this share of the knowledge income, even in the worst case. */
 const LIFE_SHARE_CEILING = 0.03;
@@ -225,8 +257,8 @@ interface Persona {
   meanTrackXpPerWeek: number;
 }
 
-/** One completion's published raw price, as the board would project it. */
-function rawPriceOf(row: BasketRow): number {
+/** One completion's published raw price, as the board would project it (the streak multiplier's C once it is on, P29). */
+function rawPriceOf(row: BasketRow, streak: PriceStreak | null = BASKET_STREAK): number {
   return priceTask(
     {
       band: row.band,
@@ -243,6 +275,9 @@ function rawPriceOf(row: BasketRow): number {
     },
     { rawBefore: 0 },
     row.track,
+    null,
+    null,
+    streak,
   ).raw;
 }
 
@@ -266,16 +301,17 @@ function loggedRawPriceOf(row: BasketRow): number {
     row.track,
     null,
     { gated: true, wall: null },
+    BASKET_STREAK,
   ).raw;
 }
 
-function personaOf(name: PersonaName): Persona {
+function personaOf(name: PersonaName, streak: PriceStreak | null = BASKET_STREAK): Persona {
   const scale = PERSONA_SCALE[name];
   const rawPerWeek = { BODY: 0, DUTY: 0, CRAFT: 0, CARE: 0 } as Record<Track, number>;
   let perWeek = 0;
   for (const row of LIFE_BASKET) {
     // Proof of work (P23, the override only): a proof row is priced as the player logs it.
-    rawPerWeek[row.track] += (PROOF_ON && PROOF_ROWS.has(row.title) ? loggedRawPriceOf(row) : rawPriceOf(row)) * row.perWeek * scale;
+    rawPerWeek[row.track] += (PROOF_ON && PROOF_ROWS.has(row.title) ? loggedRawPriceOf(row) : rawPriceOf(row, streak)) * row.perWeek * scale;
     perWeek += row.perWeek * scale;
   }
   const rawPerDay = TRACKS.reduce((s, t) => s + rawPerWeek[t], 0) / 7;
@@ -745,6 +781,18 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
         " · the walk's and the gym's minutes are reported, so BODY's kept weeks stand",
     );
   }
+  if (STREAK_ON) {
+    // The streak multiplier (P29; the override only): every row at C = m(d), the cap; the plan's re-pin of 4 (≈ 110.8).
+    const before = personaOf("steady", null);
+    const cs = LIFE_BASKET.map((r) => priceTask({ band: r.band, bandOverride: 0, machineMinutes: r.minutes, estMinutes: r.minutes, minutes: null, timing: "ON_TIME", recurring: r.recurring, streakDays: r.recurring ? BASKET_STREAK_DAYS : 0, repeatN: 1, introBefore: 0, mode: "FULL" }, { rawBefore: 0 }, r.track, null, null, BASKET_STREAK));
+    check(
+      "4s. the streak multiplier (P29): every basket row, one-offs included, at C = m(30) = the cap, 'life-4'; the steady basket ≈ 110.7 XP/week (the plan's ≈ 110.8)",
+      cs.every((r) => r.v === "life-4" && r.streak?.days === BASKET_FULL_DAYS && r.factors.find((f) => f.key === "C")?.value === STREAK_MULT_CAP) &&
+        streakMult(BASKET_FULL_DAYS) === STREAK_MULT_CAP && STREAK_MULT_CAP_DAYS === 4 &&
+        steady.meanTrackXpPerWeek >= 110.3 && steady.meanTrackXpPerWeek <= 111.3 && steady.meanTrackXpPerWeek > before.meanTrackXpPerWeek,
+      `C ${STREAK_MULT_CAP} from day ${STREAK_MULT_CAP_DAYS} (d = ${BASKET_FULL_DAYS}); mean track ${fmt(before.meanTrackXpPerWeek, 1)} → ${fmt(steady.meanTrackXpPerWeek, 1)} XP/week in [80, 130]`,
+    );
+  }
 
   const s9 = paceAt(plans.steady, 9).level;
   const s13 = paceAt(plans.steady, 13).level;
@@ -796,6 +844,21 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
   console.log(
     `       (steady, every week kept, all at L${steady52.level} +${fmt(keptBonusPercent(steady52.keptStreak), 1)}%: ${steadyFlood.attribute} ${fmt(steadyFlood.score)})`,
   );
+  // Blueprint P28 (D24b): with condition decay in force an idle track's life row gives the traits level × condition.
+  if (decayLaunchDay() != null) {
+    const rows: FieldContribution[] = TRACKS.map((t) => ({ fieldName: `Life · ${TRACK_LABEL[t]}`, level: worst52.level * (1 + worstBonus / 100), composition: TRACK_SEED[t] }));
+    const at = (idle: number) => {
+      const c = (k: keyof typeof ATTRIBUTE_DECAY_CLASS) => ({ condition: conditionOf(idle, DECAY_LAMBDA[ATTRIBUTE_DECAY_CLASS[k]]) });
+      return topAttribute(computeAttributeScores(scaleLifeRows(rows, traitScaleOf({ VITALITY: c("VITALITY"), INTELLECT: c("INTELLECT"), CRAFT: c("CRAFT"), DUTY: c("DUTY"), CARE: c("CARE") }))));
+    };
+    const idles = [0, 3, 4, 10, 30, 60, 120, 365, 3650];
+    const tops = idles.map((n) => at(n));
+    check(
+      "9c. condition decay (P28): an idle track's row gives the traits less, never more, so 9 only gets safer",
+      tops[0].score === flood.score && tops.every((t, i) => t.score <= flood.score + 1e-9 && t.score < gate && (i === 0 || t.score <= tops[i - 1].score + 1e-9)) && tops[tops.length - 1].score >= flood.score * 0.5 - 0.01,
+      `the flood at ${idles.join(", ")} idle days: ${tops.map((t) => fmt(t.score)).join(" · ")} ≤ ${fmt(flood.score)} < ${gate} (the floor holds it at ≥ half)`,
+    );
+  }
 
   // Printed only: what life alone opens, against what life has paid by then.
   console.log("  emblems whose attribute gates and prerequisites life alone opens (printed, not asserted):");
@@ -941,6 +1004,14 @@ function momentumBlock(pool: number, knowledgePerDay: number): number {
   const steady = personaOf("steady");
   const lucky = steady.meanTrackXpPerWeek * (1 + LUCK_EV.crit + LUCK_EV.chain);
   check("4b. steady basket with crit and chain EV", lucky >= 80 && lucky <= 130, `${fmt(steady.meanTrackXpPerWeek, 1)} × (1 + ${LUCK_EV.crit} + ${LUCK_EV.chain}) = ${fmt(lucky, 1)} XP/week ≤ 130`);
+  // The streak multiplier (P29; the override only): the plan's re-pin of 4b (≈ 121), and no MP figure above reads XP.
+  if (STREAK_ON) {
+    check(
+      "4b-s. the streak multiplier (P29): the steady basket with crit and chain EV ≈ 120.8 (the plan's ≈ 121), still ≤ 130; 1-m to 3e-m read no XP, so none moves",
+      lucky >= 120.4 && lucky <= 121.6 && Math.round(worst * 1e4) === 217531,
+      `${fmt(steady.meanTrackXpPerWeek, 1)} × (1 + ${LUCK_EV.crit} + ${LUCK_EV.chain}) = ${fmt(lucky, 1)} XP/week; worst ${fmt(worst, 4)} MP/day as before`,
+    );
+  }
 
   console.log(failures ? `  MOMENTUM: ${failures} assertion(s) failed` : "  MOMENTUM: all assertions hold");
   return failures;
@@ -1001,6 +1072,70 @@ function knowledgeModel(fields: number): () => number[][] {
     const levels = domains.map((d) => domainLevel(d.points, d.ideas.map((i) => i.level)));
     return Array.from({ length: fields }, (_, f) => levels.slice(f * PACE_DOMAINS_PER_FIELD, (f + 1) * PACE_DOMAINS_PER_FIELD));
   };
+}
+
+// ── FATIGUE: review fatigue (blueprint P30, D26) ─────────────────────────────
+
+/** Review fatigue (P30): in force once a launch day is set, since every model day is after it. */
+const FATIGUE_ON = fatigueLaunchDay() != null;
+/** A grinder's day, well past the breaker: answers in one unbroken run (the most a combo pays). */
+const GRIND_ANSWERS = 300;
+
+/**
+ * Prints the FATIGUE block (the override only); returns the number of failed assertions. A day of `n` answers at the
+ * income model's mean level, each in one unbroken run: review points at the ceiling in force when it lands (FATIGUED
+ * from the answer after the one that reaches FATIGUE_ANSWERS, as srs.ts applies it after that answer's row), MP at
+ * reviewMasteryFraction × comboMasteryBonus, mastery's own per-review mint.
+ */
+function fatigueBlock(pool: number, perDay: number): number {
+  let failures = 0;
+  const check = (name: string, ok: boolean, detail: string) => {
+    if (!ok) failures += 1;
+    console.log(`  ${ok ? "PASS" : "FAIL"} ${name}: ${detail}`);
+  };
+  console.log("\n── Fatigue (P30) ────────────────────────────");
+  const level = (1 + MAX_LEVEL) / 2;
+  const cut = fatiguedComboCap();
+  const dayOf = (n: number, fatigue: boolean) => {
+    let pts = 0;
+    let mp = 0;
+    for (let i = 0; i < n; i++) {
+      pts += reviewReward(level, i, fatigue && i >= FATIGUE_ANSWERS ? cut : COMBO_CAP);
+      mp += reviewMasteryFraction(level) * comboMasteryBonus(i);
+    }
+    return { pts, mp };
+  };
+  const years = (mpPerDay: number) => pool / mpPerDay / 365;
+  console.log(`  Fatigued from the answer after the ${FATIGUE_ANSWERS}th: the combo ceiling ${COMBO_CAP} → ${cut} for ${FATIGUE_HOURS} h, once a day`);
+
+  const committed = [dayOf(REVIEWS_PER_DAY, false), dayOf(REVIEWS_PER_DAY, true)];
+  check(
+    "F1. the committed player never reaches the breaker, so every figure above stands",
+    REVIEWS_PER_DAY < FATIGUE_ANSWERS && committed[0].pts === committed[1].pts && committed[0].mp === committed[1].mp,
+    `${REVIEWS_PER_DAY} answers/day < ${FATIGUE_ANSWERS}; whole pool ${fmtYears(pool / perDay)} as above`,
+  );
+  const at = [dayOf(FATIGUE_ANSWERS - 1, true), dayOf(FATIGUE_ANSWERS - 1, false), dayOf(FATIGUE_ANSWERS, true), dayOf(FATIGUE_ANSWERS, false)];
+  check(
+    `F2. ${FATIGUE_ANSWERS - 1} answers apply nothing; ${FATIGUE_ANSWERS} apply it once, after the ${FATIGUE_ANSWERS}th is paid`,
+    !fatigueDueOf({ on: true, answers: FATIGUE_ANSWERS - 1, applied: false }) &&
+      fatigueDueOf({ on: true, answers: FATIGUE_ANSWERS, applied: false }) &&
+      !fatigueDueOf({ on: true, answers: FATIGUE_ANSWERS + 1, applied: true }) &&
+      at[0].pts === at[1].pts && at[2].pts === at[3].pts && at[2].mp === at[3].mp,
+    `a day of ${FATIGUE_ANSWERS} pays ${fmt(at[2].pts, 1)} points either way`,
+  );
+  const grind = [dayOf(GRIND_ANSWERS, false), dayOf(GRIND_ANSWERS, true)];
+  check(
+    "F3. the MP horizon only lengthens: a grinder's MP a day is never more with fatigue (mastery's combo bonus reads the run, never the ceiling)",
+    grind[1].mp <= grind[0].mp && years(grind[1].mp) >= years(grind[0].mp),
+    `${GRIND_ANSWERS} answers/day: ${fmt(grind[0].mp, 2)} → ${fmt(grind[1].mp, 2)} MP/day; the horizon at that pace × ${fmt(years(grind[1].mp) / years(grind[0].mp), 3)}`,
+  );
+  check(
+    `F4. the answers past it pay fewer review points (ceiling ${cut}), never a card's level or anything else`,
+    grind[1].pts < grind[0].pts && cut < COMBO_CAP,
+    `${GRIND_ANSWERS} answers/day: ${fmt(grind[0].pts, 1)} → ${fmt(grind[1].pts, 1)} points (−${fmt(grind[0].pts - grind[1].pts, 1)})`,
+  );
+  console.log(failures ? `  FATIGUE: ${failures} assertion(s) failed` : "  FATIGUE: all assertions hold");
+  return failures;
 }
 
 /** The pre-2026-10-11 rule, for comparison only: Σ L^0.75 for the Field (fieldBreadth is that, floored), and again for the character. */
@@ -1087,6 +1222,20 @@ function levelsBlock(): number {
   check("L1. about three months of steady use is about level 10", [d90.spread.level, d90.focused.level].every((l) => l >= 7 && l <= 11), `day 90: spread ${d90.spread.level}, focused ${d90.focused.level} in [7, 11]`);
   check("L2. a year of steady use is about level 20", [d365.spread.level, d365.focused.level].every((l) => l >= 16 && l <= 26), `day 365: spread ${d365.spread.level}, focused ${d365.focused.level} in [16, 26]`);
   check("L3. a year of life alone", d365.life.level >= 13 && d365.life.level <= 20, `day 365: life only ${d365.life.level} in [13, 20]`);
+  // Blueprint P28: no condition reaches a level (decay lowers what the traits read, never a track, Field or character level).
+  if (decayLaunchDay() != null) {
+    // Every track at the floor: the rows the traits read halve; the levels the character level reads are not touched.
+    const levels = tracksAt(365);
+    const rows: FieldContribution[] = TRACKS.map((t, i) => ({ fieldName: `Life · ${TRACK_LABEL[t]}`, level: levels[i], composition: TRACK_SEED[t] }));
+    const floor = { condition: conditionOf(3650, DECAY_LAMBDA.PHYSICAL) };
+    const scaled = scaleLifeRows(rows, traitScaleOf({ VITALITY: floor, INTELLECT: floor, CRAFT: floor, DUTY: floor, CARE: floor }));
+    const again = characterLevel([], levels).level;
+    check(
+      "L3c. condition decay (P28) never touches a level: at the floor the trait rows halve, and a year of life alone is still L3's character level",
+      again === d365.life.level && scaled.every((r, i) => Math.abs(r.level - rows[i].level * 0.5) < 1e-9) && rows.every((r, i) => r.level === levels[i]),
+      `day 365: life only ${again} = ${d365.life.level}; the rows ${rows.map((r) => fmt(r.level, 1)).join(", ")} read ${scaled.map((r) => fmt(r.level, 1)).join(", ")} by the traits`,
+    );
+  }
   const zeros = Array.from({ length: 30 }, () => 0);
   const ones = Array.from({ length: 30 }, () => 1);
   check("L4. 30 empty Domains are Field level 0", fieldLevel(zeros) === 0, `fieldLevel(30 × 0) = ${fieldLevel(zeros)} (the old rule: ${fieldBreadth(zeros)})`);
@@ -1159,7 +1308,8 @@ function main() {
   console.log(`  days to master one idea:    ${DAYS_TO_MASTER} (${fmtYears(DAYS_TO_MASTER)}; ${DAYS_TO_MASTER_BASELINE} on the baseline ladder)`);
   console.log(`  days to max one idea:       ${DAYS_TO_MAX} (${fmtYears(DAYS_TO_MAX)}; ${DAYS_TO_MAX_BASELINE} on the baseline ladder)`);
 
-  const failures = lifeBlock(total, perDay) + momentumBlock(total, perDay) + levelsBlock();
+  // Review fatigue (P30) prints last, and only with the override, so every block above reads exactly as before.
+  const failures = lifeBlock(total, perDay) + momentumBlock(total, perDay) + levelsBlock() + (FATIGUE_ON ? fatigueBlock(total, perDay) : 0);
   if (failures > 0) process.exitCode = 1;
 }
 

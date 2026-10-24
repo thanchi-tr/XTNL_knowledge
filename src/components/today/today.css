@@ -663,6 +663,11 @@ html[data-motion="calm"] .today-clear[data-fresh="1"] { animation: today-fade 20
 /* ── M2 on Today (lane D): Duty wired to the board ─────────────────────── */
 /* The Must lane's chips under its header: held ('Rest · nothing owed') or quiet; never owed. */
 .today-lane .lane-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; margin-top: -2px; }
+/* Blueprint P29: the streak multiplier's chip links to its rules card, a 44 px target; alone when the lane is hidden. */
+.lane-chip-link { display: inline-flex; align-items: center; min-height: 44px; color: inherit; text-decoration: none; border-radius: 8px; }
+.lane-chip-link:hover .chip { background: var(--raised); }
+.lane-chip-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.streak-solo { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px; }
 /* Daily quests (D14, D15; DailyStrip.tsx): one cell per quest asking today, kept fills --kept, the minimum a lighter
    --kept (it still counts 1), not yet the line. Cells share the row and shrink, so five fit at 344 px; never a target. */
 .today-lane .dq-strip { display: flex; gap: 4px; margin: -2px 0 0; padding: 0 4px 8px; list-style: none; }

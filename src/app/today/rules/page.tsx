@@ -26,6 +26,9 @@ import { dutyPhaseOf, dutySettledLine, preLaunchNotice } from "@/lib/rituals";
 import { CREDIT_KIND_LABEL, CREDIT_UNIT, creditModelOn, creditRows, creditsLaunchDay, type CreditModel } from "@/lib/credits";
 import { MALL_UNDO_MINUTES } from "@/lib/mall";
 import { proofLaunchDay, proofOn, proofRuleLines } from "@/lib/proof";
+import { conditionRuleLines, decayFromOf, decayLaunchDay, decayOn } from "@/lib/skill-decay";
+import { streakFromOf, streakLaunchDay, streakLive as streakInForce, streakMultText, streakRuleLines } from "@/lib/streak-mult";
+import { fatigueLaunchDay, fatigueOn, fatigueRuleLines } from "@/lib/review-fatigue";
 import { REST_TOKENS_PER_DAY, REST_TOKENS_WORD } from "@/lib/rest-tokens";
 import {
   BODY_EFFORT_MINUTES,
@@ -79,6 +82,10 @@ import {
   BAND_OVERRIDE_MIN,
   CONSISTENCY_CAP,
   CONSISTENCY_CAP_DAYS,
+  STREAK_MULT_BASE,
+  STREAK_MULT_CAP,
+  STREAK_MULT_CAP_DAYS,
+  streakMult,
   DEBT_CAP,
   DEBT_OPEN_PER_TEMPLATE,
   DEBT_OPEN_TOTAL_CAP,
@@ -415,6 +422,58 @@ function ProofRules({ launchDay }: { launchDay: DayKey }) {
     <Card id="proof" title="Proof of work: deep work counts its time" sub={`In force since ${longDayLabel(launchDay)}; nothing before it is judged again`} wide>
       <ul className="rules-bullets">
         {proofRuleLines().map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/**
+ * The streak multiplier (blueprint 3.2a; P29, decision D25): Full days in a row raise C on every full tick. Its lines are
+ * streak-mult.ts streakRuleLines (every figure read from the code that applies it), rendered only once the multiplier is
+ * in force (STREAK_LAUNCH_DAY, with Duty live), so before the user's go this page shows no Streak card at all.
+ */
+function StreakRules({ launchDay }: { launchDay: DayKey }) {
+  return (
+    <Card id="streak" title="Streak: Full days in a row raise C" sub={`In force since ${longDayLabel(launchDay)}; a receipt before it is never repriced`} wide>
+      <ul className="rules-bullets">
+        {streakRuleLines().map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/**
+ * Review fatigue (blueprint 3.3b; P30, decision D26): the cognitive breaker, Fatigued once a day's answers reach 200. Its
+ * lines are review-fatigue.ts fatigueRuleLines (every figure read from the code that applies it), rendered only once it
+ * is in force (FATIGUE_LAUNCH_DAY), so before the user's go this page shows no Fatigue card at all.
+ */
+function FatigueRules({ launchDay }: { launchDay: DayKey }) {
+  return (
+    <Card id="fatigue" title="Fatigue: a long day of reviews" sub={`In force since ${longDayLabel(launchDay)}; no sleep rule, no penalty for a quiet day`} wide>
+      <ul className="rules-bullets">
+        {fatigueRuleLines().map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/**
+ * Condition (blueprint 3.1b; P28, decisions D24 and D24b): an idle attribute or skill loses condition, never history.
+ * Its lines are skill-decay.ts conditionRuleLines (every figure read from the code that applies it), rendered only once
+ * condition decay is in force (the later of DECAY_LAUNCH_DAY and DUTY_LAUNCH_DAY, decayFromOf), so before the user's go
+ * this page shows no Condition card at all.
+ */
+function DecayRules({ launchDay }: { launchDay: DayKey }) {
+  return (
+    <Card id="condition" title="Condition: idle is shown, never erased" sub={`In force since ${longDayLabel(launchDay)}; no day before it is idle`} wide>
+      <ul className="rules-bullets">
+        {conditionRuleLines().map((line) => (
           <li key={line}>{line}</li>
         ))}
       </ul>
@@ -1833,8 +1892,11 @@ async function loadDutyCursor(userId: string): Promise<DayKey | null> {
  * Duty (m2-refit.md): the compulsory contract, its forgiveness and the
  * akrasia horizon. In force from the launch day only; every number is read
  * from duty-economy.ts and life-grade.ts, and every example is priced live.
+ * `streakLive` (blueprint P29): with the streak multiplier in force a missed
+ * must also ends the Full-day streak, the C every full tick pays, so the
+ * bullet says so; before then it reads exactly as before.
  */
-function DutyRules({ edge }: { edge: string }) {
+function DutyRules({ edge, streakLive = false }: { edge: string; streakLive?: boolean }) {
   // Two rest days, the example the judge's own check holds (character-check §5).
   const floors = keptFloorsOf(2);
   const makeUp = (t: (typeof DUTY_EXAMPLES)[number]) =>
@@ -1862,10 +1924,18 @@ function DutyRules({ edge }: { edge: string }) {
             A deadline task done late counts as kept when it is done within {MAKEUP_RESTORE_DAYS} days of its due day. Once its
             due day is settled with it open, it is made up from its card.
           </li>
-          <li>
-            A missed must breaks its own streak, its consistency bonus and the Duty week. It never breaks the daily streak on a
-            day you did other things. Settling a day locks it: nothing on it can be ticked or undone after.
-          </li>
+          {streakLive ? (
+            <li>
+              A missed must breaks its own streak, the Full-day streak (C back to {streakMultText(1)} on every full tick) and the
+              Duty week. It never breaks the daily streak on a day you did other things. Settling a day locks it: nothing on it can
+              be ticked or undone after.
+            </li>
+          ) : (
+            <li>
+              A missed must breaks its own streak, its consistency bonus and the Duty week. It never breaks the daily streak on a
+              day you did other things. Settling a day locks it: nothing on it can be ticked or undone after.
+            </li>
+          )}
           <li>An Inbox item is never owed until it is clarified. A study must met by the day&apos;s reviews is never owed.</li>
           <li>
             With Accept a loss on (Settings › Days), a debt {WRITE_OFF_MIN_DAYS} days old or more can be written off. The miss
@@ -1952,6 +2022,16 @@ export default async function RulesPage() {
   // Proof of work (blueprint P23): its card only once it is in force; before PROOF_LAUNCH_DAY nothing here changes.
   const proofLaunch = proofLaunchDay();
   const proofLive = proofLaunch != null && proofOn(today, proofLaunch);
+  // Condition decay (blueprint P28): its card only once it is in force, from the later of DECAY_LAUNCH_DAY and Duty's
+  // launch (decayFromOf: rest, sick and vacation days are held only once Duty is live); before then nothing here changes.
+  const decayLaunch = decayFromOf(decayLaunchDay(), dutyLaunch);
+  const decayLive = decayLaunch != null && decayOn(today, decayLaunch);
+  // The streak multiplier (blueprint P29): its card and its C only once it is in force; before then nothing here changes.
+  const streakFrom = streakFromOf(streakLaunchDay(), dutyLaunch);
+  const streakLive = streakFrom != null && streakInForce(today, streakFrom);
+  // Review fatigue (blueprint P30): its card only once it is in force; before FATIGUE_LAUNCH_DAY nothing here changes.
+  const fatigueLaunch = fatigueLaunchDay();
+  const fatigueLive = fatigueLaunch != null && fatigueOn(today, fatigueLaunch);
   const settledLine = dutyLive ? dutySettledLine(await loadDutyCursor(getCurrentUserId()), today) : null;
 
   return (
@@ -2031,14 +2111,28 @@ export default async function RulesPage() {
 
         {proofLive && proofLaunch && <ProofRules launchDay={proofLaunch} />}
 
+        {decayLive && decayLaunch && <DecayRules launchDay={decayLaunch} />}
+
+        {streakLive && streakFrom && <StreakRules launchDay={streakFrom} />}
+
+        {fatigueLive && fatigueLaunch && <FatigueRules launchDay={fatigueLaunch} />}
+
         <Card title="The price" sub="One formula, the same in the browser and on the server" wide>
           <Formula>raw = B × E × T × C × D × V × K</Formula>
           <Formula>paid = g(R_before + raw) − g(R_before)</Formula>
-          <p>
-            A price is rounded to 0.1. Under the daily knee it is exactly what is paid. The most one completion can be priced
-            at is <span className="t-mono">{f1(RAW_WORST_CASE)}</span>: Severe {BAND_BASE.SEVERE} × effort {f2(EFFORT_CAP)} ×
-            consistency {f2(CONSISTENCY_CAP)}, whatever is typed or claimed.
-          </p>
+          {streakLive ? (
+            <p>
+              A price is rounded to 0.1. Under the daily knee it is exactly what is paid. The most one completion can be priced
+              at is <span className="t-mono">{f1(RAW_WORST_CASE)}</span>: Severe {BAND_BASE.SEVERE} × effort {f2(EFFORT_CAP)} ×
+              streak {f2(STREAK_MULT_CAP)}, whatever is typed or claimed.
+            </p>
+          ) : (
+            <p>
+              A price is rounded to 0.1. Under the daily knee it is exactly what is paid. The most one completion can be priced
+              at is <span className="t-mono">{f1(RAW_WORST_CASE)}</span>: Severe {BAND_BASE.SEVERE} × effort {f2(EFFORT_CAP)} ×
+              consistency {f2(CONSISTENCY_CAP)}, whatever is typed or claimed.
+            </p>
+          )}
           {momentumOn && (
             <p>
               With momentum a price also takes S, M and X (Crits and chains, below), and the most one completion can be priced at
@@ -2102,17 +2196,30 @@ export default async function RulesPage() {
           </p>
         </Card>
 
-        <Card title="C · Consistency" sub="Recurring tasks only; the same curve as Field streaks">
-          <Formula>
-            C = 1 + min({Math.round((CONSISTENCY_CAP - 1) * 100)}, {streakRate} · √days) / 100
-          </Formula>
-          <Samples head={["days", "C"]} rows={streakSamples.map((d) => [String(d), f2(consistencyFactor(d))])} />
-          <p>
-            Days are kept occurrences in a row, converted to days: a Mon · Thu habit kept 10 times is 35 days. A target habit
-            counts kept weeks × 7. The cap, {f2(CONSISTENCY_CAP)}, is reached at {CONSISTENCY_CAP_DAYS} days. The minimum
-            version and one-off tasks use 1.00.
-          </p>
-        </Card>
+        {streakLive ? (
+          <Card title="C · Streak" sub="Every full tick, one-offs included; Full days in a row">
+            <Formula>
+              C = min({f2(STREAK_MULT_CAP)}, {f2(STREAK_MULT_BASE)}^d)
+            </Formula>
+            <Samples head={["Full days", "C"]} rows={[0, 1, 2, 3, STREAK_MULT_CAP_DAYS].map((d) => [String(d), f2(streakMult(d))])} />
+            <p>
+              d is the judged Full days in a row before the tick&apos;s day. The cap, {f2(STREAK_MULT_CAP)}, is reached on day{" "}
+              {STREAK_MULT_CAP_DAYS}. The minimum version and a make-up use {streakMultText(1)}.
+            </p>
+          </Card>
+        ) : (
+          <Card title="C · Consistency" sub="Recurring tasks only; the same curve as Field streaks">
+            <Formula>
+              C = 1 + min({Math.round((CONSISTENCY_CAP - 1) * 100)}, {streakRate} · √days) / 100
+            </Formula>
+            <Samples head={["days", "C"]} rows={streakSamples.map((d) => [String(d), f2(consistencyFactor(d))])} />
+            <p>
+              Days are kept occurrences in a row, converted to days: a Mon · Thu habit kept 10 times is 35 days. A target habit
+              counts kept weeks × 7. The cap, {f2(CONSISTENCY_CAP)}, is reached at {CONSISTENCY_CAP_DAYS} days. The minimum
+              version and one-off tasks use 1.00.
+            </p>
+          </Card>
+        )}
 
         <Card title="D · Repeats" sub="The same task again today pays less each time">
           <Formula>
@@ -2172,7 +2279,10 @@ export default async function RulesPage() {
         <Card title="Worked examples" sub="Priced now by the function that pays" wide>
           <ul className="rules-examples">
             {EXAMPLES.map((ex) => {
-              const r = priceTask({ ...EXAMPLE_BASE, ...ex.input }, { rawBefore: ex.rawBefore ?? 0 }, "DUTY");
+              // The streak multiplier (P29), once in force: each example's streak read as its Full days in a row (C = m(d)).
+              const r = streakLive
+                ? priceTask({ ...EXAMPLE_BASE, ...ex.input }, { rawBefore: ex.rawBefore ?? 0 }, "DUTY", null, null, { days: ex.input.streakDays ?? 0 })
+                : priceTask({ ...EXAMPLE_BASE, ...ex.input }, { rawBefore: ex.rawBefore ?? 0 }, "DUTY");
               return (
                 <li key={ex.name}>
                   <p className="ink-0">{ex.name}</p>
@@ -2254,7 +2364,7 @@ export default async function RulesPage() {
         <LevelsRules />
 
         {dutyLive ? (
-          <DutyRules edge={edge} />
+          <DutyRules edge={edge} streakLive={streakLive} />
         ) : (
           <Card title="Not yet in force" sub="Arrives with compulsory duties; nothing is charged today">
             <p>

@@ -157,6 +157,14 @@ class ScreensTest {
     @Test @Config(qualifiers = "w932dp-h704dp-420dpi")
     fun tabletop() = walk("tabletop", hinge = Hinge(vertical = false, startPx = 924, endPx = 924, halfOpen = true))
 
+    /** P30: the review screen's fatigue line (the demo's 200th answer of the day applies Fatigued) on the front display. */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun fatigueFront() = fatigue("front")
+
+    /** P30: the same on the main display (the runner's bar over the card, then the Start panel). */
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun fatigueMain() = fatigue("main")
+
     /** The minutes sheet (P7, P23, P24) on the cover screen and the main display, with demo data. */
     @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
     fun minutesSheetFront() = minutesSheet("front")
@@ -587,6 +595,43 @@ class ScreensTest {
         scrollTo(hasText("undo within 10 min"))
         settle()
         snap("$name-mall-undone")
+    }
+
+    /**
+     * Review fatigue (P30) with demo data, as a server with it switched on: the demo at its 199th answer of the day, so the
+     * run's first answer is the 200th, which applies Fatigued once (after it is paid). Ending the run and starting another
+     * reads the queue again, whose `fatigued` the runner says under its bar; that run ended before an answer, the Review
+     * tab's Start panel says it with its note, from /check's review.fatigued.
+     */
+    private fun fatigue(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        (graph.api as com.xtnl.app.data.DemoApi).seedAnswersToday(com.xtnl.app.data.DEMO_FATIGUE_ANSWERS - 1)
+        val links = MutableStateFlow<Uri?>(null)
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), links, { links.value = null }, WebHolder(), {})
+        }
+        settle()
+        links.value = Uri.parse("xtnl://app/review")
+        settle()
+        rule.onAllNodes(hasContentDescription("Fatigued until", substring = true)).assertCountEquals(0)
+        rule.onAllNodes(hasSetTextAction()).onFirst().performTextInput("ATP")
+        tap(hasText("Check answer"))
+        settle()
+        tap(hasContentDescription("End session"))
+        settle()
+        tap(hasText("Review more"))
+        settle()
+        // The line is one TalkBack node (its words are its description).
+        rule.onAllNodes(hasContentDescription("Fatigued until", substring = true)).onFirst().assertExists()
+        snap("$name-fatigue-1-runner")
+        // Ended before an answer, the run leaves nothing to sum up: the Review tab's Start panel, on /check's figures.
+        tap(hasContentDescription("End session"))
+        settle()
+        rule.onAllNodes(hasContentDescription(com.xtnl.app.core.FatigueLine.NOTE, substring = true)).onFirst().assertExists()
+        snap("$name-fatigue-2-start")
     }
 
     private fun walk(name: String, hinge: Hinge? = null, reviewToo: Boolean = true) {

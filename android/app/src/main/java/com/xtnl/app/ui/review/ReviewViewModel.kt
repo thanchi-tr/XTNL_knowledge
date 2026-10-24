@@ -7,6 +7,7 @@ import com.xtnl.app.core.AnswerDraft
 import com.xtnl.app.core.AnswerShape
 import com.xtnl.app.core.ReviewSession
 import com.xtnl.app.data.AnswerResult
+import com.xtnl.app.data.Fatigue
 import com.xtnl.app.data.Outcome
 import com.xtnl.app.data.Quest
 import com.xtnl.app.data.ReviewCard
@@ -44,6 +45,8 @@ class ReviewViewModel(private val graph: AppGraph) : ViewModel() {
         /** A line about the run itself: a card deleted on the web was skipped. */
         val note: String? = null,
         val now: String? = null,
+        /** Review fatigue (P30) as this run's queue said it: Fatigued's end, or null (none, switched off, an older server). */
+        val fatigued: Fatigue? = null,
         val quest: Quest? = null,
         val streakSecured: Boolean = false,
         val celebrations: List<String> = emptyList(),
@@ -89,12 +92,12 @@ class ReviewViewModel(private val graph: AppGraph) : ViewModel() {
                     // A short queue holds every due card the app can serve: the rest of dueTotal is for the web.
                     val webOnly = if (cards.size < QUEUE_LIMIT) (r.value.dueTotal - cards.size).coerceAtLeast(0) else 0
                     if (cards.isEmpty()) {
-                        _ui.update { it.copy(phase = Phase.EMPTY, dueTotal = r.value.dueTotal, webOnly = webOnly, now = r.value.now) }
+                        _ui.update { it.copy(phase = Phase.EMPTY, dueTotal = r.value.dueTotal, webOnly = webOnly, now = r.value.now, fatigued = r.value.fatigued) }
                     } else {
                         val s = ReviewSession(cards)
                         val u = _ui.value
                         _ui.value = cleared(u).copy(
-                            phase = Phase.ANSWERING, session = s, dueTotal = r.value.dueTotal, webOnly = webOnly, now = r.value.now,
+                            phase = Phase.ANSWERING, session = s, dueTotal = r.value.dueTotal, webOnly = webOnly, now = r.value.now, fatigued = r.value.fatigued,
                             draft = AnswerDraft.start(cards.first()), quest = seed, run = u.run + 1,
                         )
                     }

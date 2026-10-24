@@ -360,8 +360,9 @@ async function surfaces(): Promise<void> {
   const gradle = read("android/app/build.gradle");
   check(
     "Android: StreakInfo.restTokens (null from an older server), the demo's 2, the line's words, and the chip in the check's header (both displays draw the header)",
-    /data class StreakInfo\(val days: Int = 0, val keptToday: Boolean = false, val freezes: Int = 0, val restTokens: Int\? = null\)/.test(models) &&
-      /StreakInfo\(12, keptToday = false, freezes = 2, restTokens = 2\)/.test(read("android/app/src/main/java/com/xtnl/app/data/DemoApi.kt")) &&
+    // Re-pinned by blueprint P29: StreakInfo also carries the streak multiplier (null from an older server), one field a line.
+    /data class StreakInfo\(\s*val days: Int = 0,\s*val keptToday: Boolean = false,\s*val freezes: Int = 0,\s*val restTokens: Int\? = null,\s*val multiplier: StreakMultiplier\? = null,\s*\)/.test(models) &&
+      /StreakInfo\(12, keptToday = false, freezes = 2, restTokens = 2, multiplier = DEMO_STREAK_MULT\)/.test(read("android/app/src/main/java/com/xtnl/app/data/DemoApi.kt")) &&
       /const val WORD = "Rest tokens"/.test(read("android/app/src/main/java/com/xtnl/app/core/RestTokenLine.kt")) &&
       /RestTokenLine\.tokens\(data\.streak\)\?\.let \{ n ->\s*Spacer\(Modifier\.height\(6\.dp\)\)\s*RestTokensChip\(n\)/.test(screen) &&
       (screen.match(/header\(data, ui, vm, spots, onOpenSettings\)/g) ?? []).length === 2 &&

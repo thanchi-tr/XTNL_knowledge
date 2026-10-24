@@ -4,7 +4,9 @@
  * One emblem, in full (final-you.html ?detail=1): the rank-material chip,
  * the 88 px coin, what it grants, every requirement as a meter (kept when
  * met), the cost with the balance before → after, and the two-step gold
- * unlock. Owned emblems say where they sit and offer Equip (Tier 0).
+ * unlock. Owned emblems say where they sit and offer Equip (Tier 0). Blueprint P28 (D24b): an owned emblem frozen by
+ * an idle attribute's condition says so ("Frozen · Body 12 days idle · a Body tick thaws it (Physical 120)") and that it
+ * stays owned and one practice thaws it, with nothing to unlock again.
  *
  *   <EmblemDetail skill ctx equippedSlot? freeSlot?/>    the body (the graph's side panel from 1024)
  *   <EmblemDetailSheet skill? … onClose/>                the same body in the one Sheet
@@ -18,6 +20,7 @@ import { RANK_MATERIAL } from "@/lib/materials";
 import { depthOf } from "@/lib/skill-form";
 import type { Skill } from "@/lib/skill-pool";
 import { RANK_META } from "@/lib/skill-visuals";
+import { FROZEN_NOTE } from "@/lib/skill-decay";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { EmblemCoin } from "@/components/ui/Crest";
@@ -55,6 +58,7 @@ export function EmblemDetail({ skill, ctx, equippedSlot, freeSlot, onDone, showN
   const depth = depthOf(skill);
   const material = RANK_MATERIAL[skill.rank];
   const paths = skill.attributes.map((a) => ATTRIBUTE_META[a].label).join(" and ");
+  const frozen = state === "owned" ? (ctx.frozen?.[skill.code] ?? null) : null;
 
   function equip() {
     if (freeSlot === undefined) return;
@@ -97,6 +101,16 @@ export function EmblemDetail({ skill, ctx, equippedSlot, freeSlot, onDone, showN
           <Chip tone="kept" icon="check">
             {equippedSlot !== undefined ? `Owned · in slot ${equippedSlot + 1}` : "Owned · on the bench"}
           </Chip>
+          {frozen && (
+            <div style={{ marginTop: 8 }}>
+              <Chip tone="held" held="freeze" className="frozen-chip">
+                {frozen}
+              </Chip>
+              <p className="t-meta" style={{ marginTop: 6 }}>
+                {FROZEN_NOTE}
+              </p>
+            </div>
+          )}
           {equippedSlot === undefined && (
             <div style={{ marginTop: 12 }}>
               {freeSlot !== undefined ? (

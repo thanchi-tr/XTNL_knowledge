@@ -45,6 +45,7 @@ import {
   type LifeMintReason,
 } from "../src/lib/life-economy";
 import { FORMULA_VERSION, FORMULA_VERSION_MOMENTUM, LIFE_PAY_MODE_FACTOR, MODE_LABEL, PAY_MODE_FACTOR, RAW_WORST_CASE, kneeG } from "../src/lib/life-grade";
+import { STREAK_MULT_CAP, streakMult } from "../src/lib/life-grade";
 import { MOMENTUM_ACTIVITY_SOURCES, MOMENTUM_DEFAULT_SINK, TRACKS, type ActivitySource, type MomentumActivitySource } from "../src/lib/life-types";
 import { NEVER_STREAK_SOURCES, STREAK_SOURCES, countsForStreakOf } from "../src/lib/streak-curve";
 import { KIND_TIER, MOMENTUM_T0_KINDS, MOMENTUM_T1_KINDS, MOMENTUM_T2_KINDS, MOMENTUM_T3_KINDS, T0_KINDS, T1_KINDS, T2_KINDS, T3_KINDS } from "../src/lib/celebration-types";
@@ -246,6 +247,12 @@ console.log("§1 goldens G1–G10");
   check("G9 costs by tier: I 1, II 2, III 3, Cap 5; 3/3/2/1 per branch", PERKS.every((p) => p.cost === ({ 1: 1, 2: 2, 3: 3, 4: 5 } as const)[p.tier]) && perBranch.every((ps) => [1, 2, 3, 4].map((t) => ps.filter((p) => p.tier === t).length).join() === "3,3,2,1"));
 
   check("G10 RAW_WORST_CASE_MOMENTUM = 229.8 (58.8 × 1.04 × 1.08 × 1.15 × 1.21 × 2.5); g = 183.2 as a day's first", RAW_WORST_CASE === 58.8 && RAW_WORST_CASE_MOMENTUM === 229.8 && rawWorstCaseMomentum(58.8) === 229.8 && kneeG(229.8).toFixed(1) === "183.2", `${RAW_WORST_CASE_MOMENTUM}`);
+  // Re-pinned by blueprint P29 (D25): one-offs now take C (the streak multiplier), at most STREAK_MULT_CAP, which is the
+  // consistency cap's own 1.2, so G10's 58.8 base and its 229.8 stand for a one-off as for a habit.
+  check(
+    "G10 P29: re-derived with one-offs taking C (min(1.2, 1.05^d), the same cap): the base is still 58.8 and the worst still 229.8",
+    STREAK_MULT_CAP === 1.2 && streakMult(1e9) === STREAK_MULT_CAP && RAW_WORST_CASE === Math.round(35 * 1.4 * Math.max(1.2, STREAK_MULT_CAP) * 10) / 10 && rawWorstCaseMomentum(RAW_WORST_CASE) === 229.8
+  );
 }
 
 // ── §2 the launch gate and the inert pre-launch model ─────────────────────

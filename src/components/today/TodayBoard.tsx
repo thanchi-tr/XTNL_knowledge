@@ -159,6 +159,7 @@ import {
   type AskNotice,
   type DayMoment,
   type DaySnapshot,
+  type LaneChip,
   type RowMotion,
 } from "./board-ui";
 import { addDays, type DayKey } from "@/lib/life-day";
@@ -515,6 +516,25 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * launch the board is the pre-M2 board (debts, which only settlement
  * writes, render whenever they exist).
  */
+/**
+ * One chip under the Daily quests header (board-ui LaneChip). Blueprint P29: the streak multiplier's chip is a 44 px link
+ * to the rules page's Streak card, its full words (streakDescribe) its accessible name and title; every other chip is
+ * the plain Chip it always was.
+ */
+function LaneChipView({ chip }: { chip: LaneChip }) {
+  const body = (
+    <Chip tone={chip.tone} held={chip.held} icon={chip.icon}>
+      {chip.text}
+    </Chip>
+  );
+  if (!chip.href) return body;
+  return (
+    <Link href={chip.href} className="lane-chip-link" aria-label={chip.label} title={chip.label}>
+      {body}
+    </Link>
+  );
+}
+
 export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, momentum = null, momentumSettled = false, credits = null, elsewhere = null, mainQuest = null }: Props) {
   /** A work tab: nothing of the game (no XP, no moments, no goals, no plan card). */
   const isWork = workTab !== null;
@@ -2015,7 +2035,9 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const daily = isWork ? null : dailyQuestsOf(board);
   // Blueprint P21 (D19): the one Rest Token bank, the Momentum card's own number, as the Daily quests' 'Rest tokens 2' chip.
   const restTokens = !isWork && momentum?.live ? momentum.run.bank : null;
-  const mustView = mustLaneOf({ must: board.must, owed: laneCards, restToday: board.restToday, live, launchDay, today: current.today, deferred: board.deferred, ...(daily ? { daily } : {}), restTokens });
+  // Blueprint P29 (D25): the streak multiplier's chip, 'Streak ×1.16 · day 3', only while the server sends it.
+  const streakChip = !isWork && board.streak ? board.streak : null;
+  const mustView = mustLaneOf({ must: board.must, owed: laneCards, restToday: board.restToday, live, launchDay, today: current.today, deferred: board.deferred, ...(daily ? { daily } : {}), restTokens, ...(streakChip ? { streak: streakChip } : {}) });
   const hiddenMusts = board.deferred.filter((i) => i.must);
   const hiddenOther = board.deferred.filter((i) => !i.must);
   const owedTotal = owedTotalOf(openOwed);
@@ -2461,6 +2483,12 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         </div>
 
         <div className="c2" data-tour="today-lanes">
+          {/* P29: no musts and no debts hide the lane, but the streak multiplier still prices every full tick: its chip alone. */}
+          {!mustView.show && mustView.solo && (
+            <div className="lane-chips streak-solo o5">
+              <LaneChipView chip={mustView.solo} />
+            </div>
+          )}
           {mustView.show && (
             <Lane
               id="must"
@@ -2471,15 +2499,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               bodyRef={mustBodyRef}
               count={mustView.count ?? undefined}
               strip={daily ? <DailyStrip daily={daily} /> : undefined}
-              badge={
-                mustView.chips.length > 0
-                  ? mustView.chips.map((c) => (
-                      <Chip key={c.text} tone={c.tone} held={c.held} icon={c.icon}>
-                        {c.text}
-                      </Chip>
-                    ))
-                  : undefined
-              }
+              badge={mustView.chips.length > 0 ? mustView.chips.map((c) => <LaneChipView key={c.text} chip={c} />) : undefined}
               className="o5"
             >
               {mustRows.allDone && hiddenMusts.length === 0 && allKeptLine}

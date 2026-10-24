@@ -6,4 +6,8 @@
   .lo-strip:hover { background: var(--raised); }
   .lo-strip .coins { display: flex; gap: 4px; flex: 1; min-width: 0; overflow: hidden; }
   .lo-strip .lo-empty { width: 32px; height: 32px; border-radius: 50%; border: 1.5px dashed var(--ink-mute); flex: none; }
+  /* Frozen (blueprint P28, D24b): owned and dimmed, with the freeze glyph in the held hue; never the locked coin. */
+  .lo-strip .lo-frozen { position: relative; display: inline-flex; flex: none; }
+  .lo-strip .lo-frozen .coin > .glyph { opacity: .42; }
+  .lo-strip .lo-frozen > .lo-freeze { position: absolute; top: -2px; right: -2px; width: 12px; height: 12px; color: var(--held); background: var(--card); border-radius: 50%; }
 }

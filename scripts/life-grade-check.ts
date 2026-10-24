@@ -18,6 +18,7 @@ import {
   KNEE_CAP_AT_RAW,
   RAW_WORST_CASE,
   SIZING_LOCK_CONFIDENCE,
+  STREAK_MULT_CAP,
   bandIndex,
   clampMinutes,
   describeReceipt,
@@ -372,6 +373,14 @@ console.log("— pricing: golden prices —");
 console.log("— pricing: the worst forged task —");
 {
   check("RAW_WORST_CASE = SEVERE 35 × 1.4 × 1.2 = 58.8", RAW_WORST_CASE === 58.8 && near(CONSISTENCY_CAP, 1.2), String(RAW_WORST_CASE));
+  // Re-derived by blueprint P29 (D25): one-offs now take C too (the streak multiplier), capped at STREAK_MULT_CAP, the
+  // consistency cap's own 1.2, so the most one completion can price at is still 58.8.
+  const oneOffWorst = priceTask({ ...base, band: "SEVERE", machineMinutes: 240, estMinutes: 480, minutes: 480, recurring: false }, { rawBefore: 0 }, "DUTY", null, null, { days: 1e9 });
+  check(
+    "P29: re-derived with one-offs taking C: SEVERE × 1.4 × max(1.2, the streak cap 1.2) = 58.8, a one-off at the streak cap prices exactly that",
+    near(STREAK_MULT_CAP, CONSISTENCY_CAP) && RAW_WORST_CASE === Math.round(BAND_BASE.SEVERE * 1.4 * Math.max(CONSISTENCY_CAP, STREAK_MULT_CAP) * 10) / 10 && oneOffWorst.raw === 58.8 && oneOffWorst.v === "life-4",
+    `${oneOffWorst.raw}`
+  );
   const honest = price({ band: "SEVERE", machineMinutes: 240, estMinutes: 480, minutes: 480, recurring: true, streakDays: 64 });
   check("a SEVERE 240-min task at 480 min and a 64-day streak prices 58.8", honest.raw === 58.8, String(honest.raw));
   const forged = price({ band: "SEVERE", bandOverride: 9, machineMinutes: 240, estMinutes: 99999, minutes: 99999, recurring: true, streakDays: 1e9, repeatN: -4, introBefore: -9 });
@@ -814,6 +823,16 @@ console.log("— momentum: the worst case and the projection —");
     { perks: { mult: 1.04 * 1.08 * 1.15, names: ["Steady hand", "Deep work", "Frog eater"] }, chain: { links: 7, mult: chainMult(7, 7) }, crit: { crit: true, mult: 2.5, note: "sealed roll 0.010 under 0.100" } }
   );
   check("…priceTask's own worst (every task perk, a 7-link chain, a capstone crit) is 229.8, paying g = 183.2 as the day's first", worst.raw === RAW_WORST_CASE_MOMENTUM && worst.xp.toFixed(1) === "183.2", `${worst.raw} → ${worst.xp}`);
+  // Re-derived by blueprint P29: a one-off with the streak at its cap and every momentum factor is the same 229.8.
+  const worstOneOff = priceTask(
+    { ...base, band: "SEVERE", machineMinutes: 240, estMinutes: 480, minutes: 480, recurring: false },
+    { rawBefore: 0 },
+    "DUTY",
+    { perks: { mult: 1.04 * 1.08 * 1.15, names: ["Steady hand", "Deep work", "Frog eater"] }, chain: { links: 7, mult: chainMult(7, 7) }, crit: { crit: true, mult: 2.5, note: "sealed roll 0.010 under 0.100" } },
+    null,
+    { days: 30 }
+  );
+  check("P29: RAW_WORST_CASE_MOMENTUM re-derived with one-offs taking C: a one-off at the streak cap with every factor is 229.8 too ('life-4')", worstOneOff.raw === RAW_WORST_CASE_MOMENTUM && worstOneOff.v === "life-4", `${worstOneOff.raw}`);
 
   // The board's projection: S and M, never X (§0).
   const t = { id: "a", title: "Journal", normTitle: "journal", recurrence: null, dueDay: null, dueKind: null, intrinsic: false, autoMetric: null, mvv: null, track: "CARE", band: "STANDARD", bandOverride: 0, estMinutes: 15, machineMinutes: 15, kind: "TASK", inbox: false, startDay: "2026-01-01", horizon: null, parentId: null, krMetric: null, krTarget: null, krUnit: null, compulsory: false, autoTarget: null, category: "SPIRIT", lexicalBand: "STANDARD", aiBand: null, gradeSource: "LEXICAL", gradeConfidence: 0.4, gradeBasis: null, gradeModel: null, gradePromptVersion: null, gradeAttempts: 1, gradeFrozen: true, sizing: false, bandOverrideAt: null, gradeFrozenAt: null, topAttribute: null, note: null, completedAt: null, createdAt: "2026-06-01T00:00:00.000Z", sortOrder: 0 } as BoardTemplate;

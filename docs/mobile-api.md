@@ -45,7 +45,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 
 | Method | Path | Wraps |
 | --- | --- | --- |
-| GET | /check | the Today board's read, the Review hub's counts, the shell's level, the work tabs' due tasks, the week audit, the credits wallet, the owed cards |
+| GET | /check | the Today board's read, the Review hub's counts and its fatigue, the shell's level, the work tabs' due tasks, the week audit, the credits wallet, the owed cards, the idle skills and attributes |
 | POST | /tasks/complete | `completeTask` (actions/tasks.ts) |
 | POST | /tasks/undo | `undoCompletion` (actions/tasks.ts) |
 | POST | /tasks/start | `startTaskTimer` (actions/tasks.ts), a proof task's timer |
@@ -53,7 +53,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 | POST | /tasks/makeup | `makeUp`, `doMinimum`, `acceptLoss` and `undoMakeUp` (actions/duty.ts), an owed card's actions |
 | POST | /work/done | `doneScheduledTask` with no log (actions/scheduled-tasks.ts) |
 | POST | /work/reopen | `reopenScheduledTask` (actions/scheduled-tasks.ts) |
-| GET | /review/queue | the Review hub's due cards in the runner's order |
+| GET | /review/queue | the Review hub's due cards in the runner's order, and the fatigue in effect |
 | POST | /review/answer | `submitReview` (actions/review.ts) |
 | POST | /log | `createFromCapture` (actions/capture.ts) |
 | POST | /log/undo | `undoCapture` (actions/tasks.ts), `undoWeightCapture` (actions/capture.ts) |
@@ -83,7 +83,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   "tasksSummary": { "open": 3, "done": 2, "allDone": false },
   "daily": { "kept": 3, "total": 4, "full": false, "cap": 5, "minimum": 1, "over": 0,
     "quests": [ { "templateId": "…", "title": "Gym legs", "kept": true, "minimum": true } ] },
-  "review": { "due": 12, "doneToday": 4, "target": 20, "nextDueAt": "…" | null },
+  "review": { "due": 12, "doneToday": 4, "target": 20, "nextDueAt": "…" | null, "fatigued"?: { "until": "…" } | null },
   "fading": { "ideas": 5, "forgetting": 1, "domains": [ { "id": "…", "name": "Probability", "ideas": 3 } ] },
   "auditOn": true,
   "week": { "weekKey": "2026-W43", "label": "Week of 19 Oct", "rate": 86, "kept": 26, "due": 30, "minimum": 3,
@@ -102,6 +102,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
       "when": "Stretch · Monday", "text": "Monday's Stretch is still open. 10 min makes it right.",
       "window": "Within Thu 04:00 it brings back its streak of 12." }
   ],
+  "skills"?: [ { "kind": "attribute" | "skill", "name": "Body", "condition": 0.818, "idleDays": 13 } ],
   "work": [
     { "id": "…", "boardId": "…", "boardName": "Acme Sales", "title": "Call Jordan back",
       "dueAt": "…", "allDay": false, "channel": "CALL" | "VISIT" | "EMAIL" | "MESSAGE" | "OTHER",
@@ -109,7 +110,8 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
       "customer": { "id": "…", "name": "Jordan Lee", "number": "1042", "phone": "0412 345 678" | null } | null }
   ],
   "level": { "level": 1, "title": "Novice", "progress": 0.75 } | null,
-  "streak": { "days": 12, "keptToday": true, "freezes": 2, "restTokens": 2 | null } | null
+  "streak": { "days": 12, "keptToday": true, "freezes": 2, "restTokens": 2 | null,
+    "multiplier"?: { "value": 1.16, "fullDays": 3, "floor": false, "line": "Streak ×1.16 · day 3" } } | null
 } }
 ```
 
@@ -154,6 +156,13 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 - `review`: the Review hub's figures: `due` every card due now (including any DIAGRAM card, which the app can't
   show), `doneToday` today's reviews, `target` today's review quest target (fixed by the day's first open, at most
   20), `nextDueAt` when the soonest card not yet due falls due.
+  - `fatigued` (blueprint 3.3b, P30; decision D26): review fatigue, present only while it is in force
+    (`FATIGUE_LAUNCH_DAY`, null until the user's go); absent otherwise, so the object reads exactly as before. Once a life
+    day's answers reach 200 (its review rows, one per answer, right or wrong), the server applies Fatigued once that day:
+    the combo ceiling × 0.5 (10 answers in a row become 5) for 18 hours. `until` is when the one in effect lifts; null
+    with none in effect, and when it couldn't be read. It is never applied for a miss, a quiet day or a missed day, and
+    there is no sleep rule. It changes only the combo multiplier an answer is paid at (each answer's own `multiplier`
+    already carries it): never a card's level, life XP, MP or a streak.
 - `fading`: the ideas past their grace (blueprint 3.1a; decision D23), as the web's bell line "5 ideas fading" counts
   them. Each card keeps its own forgetting curve: past its grace its recall falls a little every day, and it loses a
   level for every 7.5 points of recall lost. The grace is never under 3 days past due (the 72 h floor), so nothing
@@ -184,7 +193,8 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   - `decaying`: "Decaying this week" (blueprint 5.2c; P12), as the web card lists it: what fell over the week, read
     from what the server already keeps and never applied. `count` is everything found, `top` its first three lines
     (`kind` is `streak` a life track's kept-week run ended, `field` or `domain` a level lost this week, `habit` a
-    habit's strength fell or dropped a rung, `ideas` the ideas past grace now, `trait` a trait below its score a
+    habit's strength fell or dropped a rung, `ideas` the ideas past grace now, `condition` (P28, only once
+    `DECAY_LAUNCH_DAY` is in force) an attribute or a skill below 100% condition, `trait` a trait below its score a
     week ago, `mp` mastery points lost to idle decay), in that order; on the web each line links to its fix.
     `unread` counts the sources that couldn't be read (left out, never guessed). A frozen copy keeps the decay it was
     frozen with. Null when it wasn't read.
@@ -226,6 +236,20 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   - `proof`: once proof of work is in force (`PROOF_LAUNCH_DAY`), what a full make-up brings, as the task's own tick
     does: a deep-work must's minute chips (`minutes`), a reading must's page chips and its day target (`pages`); null
     while the make-up is one tap (always while proof of work is switched off). The minimum version never needs any.
+- `skills` (blueprint 3.1b, P28; decisions D24 and D24b): condition decay, present only while it is in force; absent
+  otherwise, so the reply reads exactly as before. Every attribute and live skill whose condition is under 0.9, the
+  lowest first. `kind` is `attribute` (named as on the Status card: Body, Knowledge, Craft, Duty, Care) or `skill` (the
+  skill's own name); `condition` is 0.5 to 1, to 3 decimals rounded down (so the app's whole percent, also rounded
+  down, is the web's: 0.5599 is sent as 0.559, 55% on both); `idleDays` the idle life days behind it. A condition is
+  max(0.5, e^(−λ × (idle days − 3))): λ 0.02 for Body (and an exercise skill), 0.01 for Knowledge and Craft, 0.005 for
+  Duty and Care. It is in force from the later of `DECAY_LAUNCH_DAY` and `DUTY_LAUNCH_DAY` (both null until the user's
+  go: nothing is read), since a rest, sick or vacation day is declared and held only once Duty is live. A day is idle
+  only once it is over and only from then; a rest, sick or vacation day and a rest token's day never are, and one
+  practice (a tick on the track, a review or a new idea for Knowledge, a linked task's tick or, for an exercise skill,
+  a walk) brings it back to 1 at once. It never moves a level, XP, hours or a title: the traits it feeds read lower
+  while it is under 1, and an emblem they then miss is frozen (still owned, paused, thawed by one practice on the idle
+  attribute; an emblem that guards a card's level never freezes). `[]` with nothing under 0.9, and when the read
+  failed. The app shows it as "Body 81% · 13 days idle".
 - `work`: the open scheduled tasks across the open work tabs that are overdue or due today, in the Agenda's order
   (Overdue first, then Today; soonest first, an all-day task before the timed ones of its day), at most 30.
 - `level` (the character level, as the top bar shows it) and `streak` (the daily streak) are null when they couldn't be
@@ -240,8 +264,21 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     is not live (before momentum's launch, or when it couldn't be read); a whole number of tokens otherwise, 0 included.
   - `freezes`: the same number (0 while `restTokens` is null), kept for apps built before it. It used to read Duty's own
     freeze balance, which nothing ever earned, so it was always 0.
+  - `multiplier` (blueprint 3.2a, P29; decision D25): the streak multiplier, present only while it is in force
+    (`STREAK_LAUNCH_DAY`, null until the user's go, and Duty live); absent otherwise, so the object reads exactly as
+    before. `fullDays` is d, the judged Full days in a row (all three rings), counted back through the latest judged day:
+    settlement judges a day two days on, or sooner when yesterday is settled early from Today; today is never judged,
+    so a tick today never moves it. While it is in force the server runs Duty's lazy settle before the board's read (as
+    Today does), so each `xpHint` reads the d its tick pays. A rest, sick or vacation day and a rest token bridge it
+    without adding a day, and any other day that is not Full starts it again. `floor` is true when the run reached the
+    server's read window, so it is at least `fullDays`. `value` is m(d) = min(1.2, 1.05^d) to two places, the C every
+    full tick pays (one-offs included; never the minimum version, #play, a study task, a walk's pay, a make-up, a review
+    or MP), so each row's `xpHint` already carries it. `line` is Today's chip in its words: "Streak ×1.16 · day 3", or
+    "Streak ×1.00" before the first Full day. It is a separate count from `days` (the daily streak, any activity).
 - Before it reads, the server runs momentum's lazy writes, as Today does (the day's quest set first, so `xpHint` and a
-  tick made from this check price today's frog); they return at once when nothing is owed. After the reply it runs
+  tick made from this check price today's frog); they return at once when nothing is owed. While the streak
+  multiplier is in force (P29) it then runs Duty's lazy settle too, as Today does, so the rows' `xpHint` read the d
+  their ticks pay (at once when the cursor is not behind, and nothing at all while the multiplier is off). After the reply it runs
   what opening Today and the Review hub owe: the day's first open fixes the review quest's target, study tasks the
   day's reviews have met are recorded, and life maintenance.
 
@@ -285,7 +322,8 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 
 - `xp`: the life XP paid, to one decimal. `line`: `+8.3 XP · <track>` (Body, Duty, Craft or Care), with
   `· minimum` for the minimum version and `· yesterday` for a forgotten tick; a repeat of a tick already recorded
-  says `Already recorded. Nothing is paid twice.` (and pays nothing).
+  says `Already recorded. Nothing is paid twice.` (and pays nothing). Once the streak multiplier is in force (P29;
+  `streak.multiplier` on `/check`), a full tick above ×1.00 adds its C: `+12.0 XP · Craft · streak ×1.16`.
 - `allDone`: the board is clear after this tick (false when the board couldn't be read again).
 - `celebrations`: L3's moments for the tick (a streak milestone, a habit rung, a finished goal …), every tier.
 - `level`: the character's level after this tick, as `/check`'s `level` (null when it couldn't be read). The app steps
@@ -396,7 +434,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   them, each in the wording the web would show (its original question, or one of its other wordings at random).
 
 ```json
-{ "ok": true, "data": { "now": "…", "dueTotal": 12, "cards": [
+{ "ok": true, "data": { "now": "…", "dueTotal": 12, "fatigued"?: { "until": "…" } | null, "cards": [
   { "ideaId": "…", "type": "SHORT" | "CLOZE" | "NUMERIC" | "MCQ" | "LIST" | "ORDER" | "FORMULA",
     "prompt": "What does …?", "promptHasMath": false,
     "options": ["…"] | null, "listCount": 4 | null, "orderItems": ["…"] | null, "blanks": 2 | null,
@@ -405,6 +443,10 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 
 - `dueTotal` counts every due card. A DIAGRAM card (an image to label; the web form can't make one) keeps its place
   in the order but is left out of `cards`: review it on the web.
+- `fatigued` (P30): the same as `/check`'s `review.fatigued`, read as the queue is: present only while
+  `FATIGUE_LAUNCH_DAY` is in force, `{until}` while Fatigued is in effect, else null. The app's review screen says it
+  ("Fatigued until 10:30 pm"). The answer that reaches the day's 200th is applied after its reply, so the next queue
+  read is the first to show it.
 - `prompt`, as the runner shows it: an MCQ its question ("Choose the correct answer" when it has none); a CLOZE the
   sentence with each blank as a numbered marker, `[1]`, `[2]` …, in order (the runner puts an input in each); a LIST,
   an ORDER or a NUMERIC its prompt; a SHORT or a FORMULA its question.

@@ -17,6 +17,7 @@ import { BOON_META } from "@/lib/boon-meta";
 import { DEBUFF_META } from "@/lib/debuff-meta";
 import { MASTERY_LEVEL } from "@/lib/xp";
 import { questTargetOf } from "@/lib/review-facts";
+import { fatigueOn, fatiguedOf, type FatigueSummary } from "@/lib/review-fatigue";
 // Revision 5, lane 9 (contracts ruling 67): the Gemini mark on a Domain Gemini named
 import { AIM_PROMPT_COOKIE, geminiNamedOf, roadmapGoalsLive } from "@/lib/roadmap-types";
 import { weekQuestsShownOnToday } from "@/lib/today-board";
@@ -173,7 +174,7 @@ export default async function ReviewPage() {
   // Like LoadoutStripSlot, it shows nothing until the first emblem is owned.
   const loadoutStrip =
     progression.ownedCodes.length > 0 ? (
-      <LoadoutStrip slots={progression.loadout.map((e, slot) => ({ slot, skill: e?.skill ?? null, active: e?.active ?? false }))} />
+      <LoadoutStrip slots={progression.loadout.map((e, slot) => ({ slot, skill: e?.skill ?? null, active: e?.active ?? false, ...(e?.frozen ? { frozen: e.frozen } : {}) }))} />
     ) : null;
 
   const effects: ReviewEffects = {
@@ -194,6 +195,10 @@ export default async function ReviewPage() {
       until: d.expiresAt,
     })),
   };
+
+  // Review fatigue (blueprint P30): the hub publishes the rule, with today's answers (the trigger's own count) and the
+  // FATIGUED row in effect from the progression already read, only once FATIGUE_LAUNCH_DAY is in force; before, nothing.
+  const fatigue: FatigueSummary | null = fatigueOn(today) ? { answers: day.reviews, until: fatiguedOf(progression.debuffs, now)?.until ?? null } : null;
 
   const byId = new Map(allIdeas.map((x) => [x.idea.id, x]));
   const recent: RecentIdea[] = lastSeen.recent
@@ -227,6 +232,7 @@ export default async function ReviewPage() {
       dayStreak={streak.current}
       loadoutStrip={loadoutStrip}
       effects={effects}
+      {...(fatigue ? { fatigue } : {})}
       recent={recent}
       focus={focus}
       lead={lead}

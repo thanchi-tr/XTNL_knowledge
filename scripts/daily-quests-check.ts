@@ -428,8 +428,10 @@ console.log("— §4 the writes —");
   // Blueprint P11: week-audit-check (the weekly audit, on this check's week rule) follows it; P12: audit-decay-check
   // (the audit's decay and delivery) after that, before the rituals.
   check(
-    "package.json: life:check runs this check right after duty-actions-check, then week-audit-check and audit-decay-check; daily-quests:check runs it alone",
-    pkg.scripts["life:check"].includes("tsx scripts/duty-actions-check.ts && tsx scripts/daily-quests-check.ts && tsx scripts/week-audit-check.ts && tsx scripts/audit-decay-check.ts && tsx scripts/rituals-check.ts") &&
+    // Re-pinned for blueprint P28: skill-decay-check runs after audit-decay-check, before the rituals; for P29:
+    // streak-mult-check right after it; and for P30: review-fatigue-check right after that.
+    "package.json: life:check runs this check right after duty-actions-check, then week-audit-check, audit-decay-check, skill-decay-check, streak-mult-check and review-fatigue-check; daily-quests:check runs it alone",
+    pkg.scripts["life:check"].includes("tsx scripts/duty-actions-check.ts && tsx scripts/daily-quests-check.ts && tsx scripts/week-audit-check.ts && tsx scripts/audit-decay-check.ts && tsx scripts/skill-decay-check.ts && tsx scripts/streak-mult-check.ts && tsx scripts/review-fatigue-check.ts && tsx scripts/rituals-check.ts") &&
       pkg.scripts["daily-quests:check"] === "tsx scripts/daily-quests-check.ts"
   );
 }

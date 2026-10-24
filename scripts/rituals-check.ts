@@ -490,7 +490,8 @@ console.log("\n── §5 Copy and wiring");
   check("tour: still seven steps either way", tourSteps({ keyboard: true, dutyLive: true }).length === 7 && tourSteps({ keyboard: false, dutyLive: true }).length === 7);
 
   const rules = code(read("src/app/today/rules/page.tsx"));
-  check("rules: Duty's cards only once live; the old 'Not yet in force' card before", /\{dutyLive \? \(\s*<DutyRules edge=\{edge\} \/>\s*\) : \(\s*<Card title="Not yet in force"/.test(rules));
+  // Re-pinned for blueprint P29: the Duty cards also take whether the streak multiplier is in force (the missed-must line names it).
+  check("rules: Duty's cards only once live; the old 'Not yet in force' card before", /\{dutyLive \? \(\s*<DutyRules edge=\{edge\} streakLive=\{streakLive\} \/>\s*\) : \(\s*<Card title="Not yet in force"/.test(rules));
   check("rules: the pre-launch notice and the lag line", /preLaunchNotice\(today, dutyLaunch\)/.test(rules) && /dutySettledLine\(await loadDutyCursor\(getCurrentUserId\(\)\), today\)/.test(rules));
   check("rules: the Full-day row reads 'paid when the week is judged' once live", /paid when the week is judged, after the kept tracks/.test(rules) && /pays from daily settlement/.test(rules));
   const dutyCard = rules.slice(rules.indexOf("function DutyRules("), rules.indexOf("export default async function RulesPage"));

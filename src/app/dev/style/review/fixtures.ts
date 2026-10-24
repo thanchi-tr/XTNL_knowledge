@@ -23,6 +23,8 @@ import type { CardResult, RunCard } from "@/components/workspace/review-model";
 import type { RecentIdea, ReviewEffects } from "@/components/workspace/ReviewHub";
 import type { StripSlot } from "@/components/skills/LoadoutStrip";
 import { SKILL_POOL } from "@/lib/skill-pool";
+import { DEBUFF_META } from "@/lib/debuff-meta";
+import { FATIGUE_ANSWERS, FATIGUE_KIND, FATIGUE_MAGNITUDE, fatigueUntilOf, type FatigueSummary } from "@/lib/review-fatigue";
 
 export const FX_TODAY: DayKey = "2026-10-01";
 const NOW = new Date("2026-10-01T08:41:00+10:00");
@@ -219,6 +221,10 @@ export interface ReviewFixtureData {
   boss: { fieldId: string; name: string; need: number; total: number };
   bossVictory: Exclude<BossResolution, { outcome: "rejected" }>;
   effects: ReviewEffects;
+  /** The fatigue breaker (blueprint P30) as the hub shows it once FATIGUE_LAUNCH_DAY is in force: 142 answers today, none in effect. */
+  fatigue: FatigueSummary;
+  /** The same card once the day's answers reached FATIGUE_ANSWERS: Fatigued in effect (its row also among the penalties). */
+  fatigued: { fatigue: FatigueSummary; penalty: ReviewEffects["penalties"][number] };
   recent: RecentIdea[];
 }
 
@@ -380,6 +386,17 @@ export function reviewFixtures(): ReviewFixtureData {
           until: new Date(NOW.getTime() + 4 * 86_400_000),
         },
       ],
+    },
+    fatigue: { answers: 142, until: null },
+    fatigued: {
+      fatigue: { answers: FATIGUE_ANSWERS + 14, until: fatigueUntilOf(new Date(NOW.getTime() - 40 * 60_000)) },
+      penalty: {
+        kind: FATIGUE_KIND,
+        label: DEBUFF_META[FATIGUE_KIND].label,
+        effect: DEBUFF_META[FATIGUE_KIND].effectText(FATIGUE_MAGNITUDE),
+        clears: DEBUFF_META[FATIGUE_KIND].clears,
+        until: fatigueUntilOf(new Date(NOW.getTime() - 40 * 60_000)),
+      },
     },
     recent: [
       { id: "fx-4", title: "Coin tosses, exactly k heads", domainName: "Combinatorics", nextLabel: "next in 26 days", level: 7, mastered: false },

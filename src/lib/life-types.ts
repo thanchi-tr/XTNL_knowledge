@@ -308,7 +308,8 @@ export interface ReceiptFactor {
 export interface Receipt {
   /**
    * Formula version, e.g. 'life-1' ('life-2' once a momentum factor S, M or X is on it; 'life-3' with proof of work, P23:
-   * a proof or EXERCISE template's tick from PROOF_LAUNCH_DAY). Past rows are never repriced.
+   * a proof or EXERCISE template's tick from PROOF_LAUNCH_DAY; 'life-4' with the streak multiplier, P29: a full
+   * personal tick from STREAK_LAUNCH_DAY, its proof fields kept). Past rows are never repriced.
    */
   v: string;
   factors: ReceiptFactor[];
@@ -326,6 +327,23 @@ export interface Receipt {
    * proof template or an EXERCISE one (proof.ts priceProofOf). Absent on every other receipt, which reads as before.
    */
   proof?: ReceiptProof;
+  /**
+   * The streak multiplier (blueprint P29, D25; 'life-4'): only on a full personal tick priced while STREAK_LAUNCH_DAY is
+   * in force (streak-mult.ts): the Full-day streak it read and the C it paid. Absent on every other receipt.
+   */
+  streak?: ReceiptStreak;
+}
+
+/** A 'life-4' receipt's streak (streak-mult.ts): d, the judged Full days in a row before the tick, and m(d), its C. */
+export interface ReceiptStreak {
+  days: number;
+  mult: number;
+  /**
+   * The raw this tick would have had without the multiplier (C the per-habit consistency it replaced, 1 for a one-off;
+   * momentum's S, M and X as on `raw`): what the week judge counts toward the kept floor (life-weeks keptRawOf), so the
+   * kept weeks, and the MP minted for them, never move with the streak (plan P29: MP unaffected; D25).
+   */
+  plainRaw: number;
 }
 
 /** A 'life-3' receipt's proof of work (proof.ts): what the tick reported and what bounded it. */

@@ -79,6 +79,13 @@ export const DEBUFF_META: Record<DebuffKind, DebuffMeta> = {
   },
 };
 
+/**
+ * Blueprint P30 (D26; harm H8, never shaming): the debuffs that are a breaker rather than a thing owed. FATIGUED is the
+ * review breaker a long day of answers applies, and lifts by itself: a page shows it held (the rest glyph and its word),
+ * never in owed's colour, so studying a lot never reads as a penalty. Every other debuff keeps the owed chip.
+ */
+export const BREAKER_DEBUFFS: ReadonlySet<string> = new Set<DebuffKind>(["FATIGUED"]);
+
 export const DEBUFF_KINDS = Object.keys(DEBUFF_META) as DebuffKind[];
 
 export interface ActiveDebuffRow {

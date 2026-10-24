@@ -30,6 +30,19 @@ import { weekStartOf } from "./life-day";
 import { fieldBreadth } from "./xp";
 import type { OwnedAugment } from "./augments";
 import { loadLifeTracks } from "./life-tracks-server";
+import {
+  attributeConditionsOf,
+  frozenEmblemsOf,
+  guardsLevels,
+  idleFeedersOf,
+  scaleFieldLevel,
+  scaleLifeRows,
+  traitScaleOf,
+  withLevelGuards,
+  type ConditionBasis,
+  type TraitScale,
+} from "./skill-decay";
+import { loadConditionBasis } from "./skill-decay-server";
 
 /**
  * The database half of the progression system: reads Field/streak/skill/
@@ -61,17 +74,43 @@ export interface EquippedEntry {
   skill: Skill;
   /** False when equipped but the attribute requirements are no longer met. */
   active: boolean;
+  /**
+   * Blueprint P28 (D24b): its line ("Frozen · Body 12 days idle · a Body tick thaws it (Physical 120)") when it is
+   * inactive only because condition lowered a trait (the full traits meet it); null otherwise, never on a level guard,
+   * and always while DECAY_LAUNCH_DAY is not in force.
+   */
+  frozen: string | null;
 }
 
 export interface ProgressionState {
+  /** The traits now: from P28, each source counted at its attribute's condition (D24b); before it, the sources' own. */
   scores: AttributeScores;
+  /**
+   * The traits at full condition (P28): what the Fields and tracks built, the scores a frozen emblem thaws at, and what
+   * a title reads (titles never drop). The same object as `scores` while condition decay is not in force.
+   */
+  fullScores: AttributeScores;
   ownedCodes: string[];
   /** Slot -> skill, for the loadout bar. Sparse; length is always LOADOUT_SLOTS. */
   loadout: (EquippedEntry | null)[];
   /** Equipped AND requirements met — the only skills that fold into `modifiers`. */
   activeSkills: Skill[];
-  /** Equipped but requirements no longer met. */
+  /**
+   * P28 (D24: levels never drop): equipped and meeting the full traits, the emblems in effect as before P28. What the
+   * level guards read (srs.ts takes a DEGRADATION_WARD's charge from these; `modifiers`' ward, grace, interval and strike
+   * fields are their fold), so forgetting and a degrade never read the condition. The same array as `activeSkills`
+   * while condition decay is not in force.
+   */
+  fullActiveSkills: Skill[];
+  /** Equipped but requirements no longer met (the frozen ones included). */
   dormantSkills: Skill[];
+  /** P28: the equipped ones of those that are frozen (condition's doing, D24b): their effect and their slot's paused. */
+  frozenSkills: Skill[];
+  /**
+   * P28: every owned emblem that is frozen, equipped or benched: code → its line ("Frozen · Body 12 days idle · a Body
+   * tick thaws it (Physical 120)"). Never a level guard (skill-decay guardsLevels). Empty while decay is off.
+   */
+  frozen: Readonly<Record<string, string>>;
   /** Owned but not equipped. Contributes nothing. */
   benchedSkills: Skill[];
   /** Which set shapes the active loadout satisfies, and the power that unlocks. */
@@ -83,7 +122,14 @@ export interface ProgressionState {
   boons: ActiveBoonRow[];
   /** Permanent capital-bought upgrades on owned emblems. */
   augments: OwnedAugment[];
-  /** Passive capital earned per hour by the active loadout. */
+  /**
+   * Passive capital earned per hour by the active loadout. P28: a frozen emblem is not active, so its rate pauses with
+   * its effect (D24b). Capital is claimed, and an unclaimed window (at most capital.ts ACCRUAL_CAP_HOURS) is priced at
+   * the claim's rate, as it always was for a dormant emblem: hours before a freeze are paid at the rate on the day of
+   * the claim, and a thaw before the claim pays them at the full rate again. The dividend retires at CREDITS_LAUNCH_DAY,
+   * expected to flip before DECAY_LAUNCH_DAY (blueprint plan §5), so in the planned order no capital is priced under a
+   * freeze at all.
+   */
   capitalRate: CapitalRate;
 }
 
@@ -213,17 +259,73 @@ export async function loadAttributeScores(userId: string): Promise<AttributeScor
   return scoresWithStreak(rows, streakBonuses, 1, lifeRows);
 }
 
-async function loadProgressionUncached(userId: string, now: Date): Promise<ProgressionState> {
-  const [rows, streakBonuses, owned, debuffs, boons, augments, lifeRows] = await Promise.all([
-    loadFieldRows(),
-    loadFieldStreakBonuses(userId),
-    prisma.unlockedSkill.findMany({ where: { userId }, select: { skillCode: true, equippedSlot: true } }),
-    loadActiveDebuffs(userId, now),
-    loadActiveBoons(userId, now),
-    loadAugments(userId),
-    loadLifeRows(userId, now),
-  ]);
+/**
+ * Condition decay's basis (blueprint P28): null at once, with no read, while DECAY_LAUNCH_DAY is not in force. A failed
+ * read is full condition (nothing is lowered on a read that failed), and logged.
+ */
+async function loadBasis(userId: string, now: Date): Promise<ConditionBasis | null> {
+  try {
+    return await loadConditionBasis(userId, now);
+  } catch (err) {
+    console.error("[progression] condition read failed; traits read at full condition", err);
+    return null;
+  }
+}
 
+/**
+ * The scores bootstrap (loadProgression's two passes): base (1x streak) scores, the emblems they open, then the scores
+ * at the streak multiplier and the RESONANCE that first pass produced. `keep` holds an emblem in the first pass whatever
+ * these scores say (P28: a level guard the full traits' first pass opened, since a guard never freezes); `firstPass` is
+ * returned so the lowered pass can be told which.
+ */
+export function bootstrapScores(
+  rows: readonly FieldRow[],
+  streakBonuses: Record<string, number>,
+  lifeRows: readonly FieldContribution[],
+  equippedSkills: Skill[],
+  amplified: Set<string>,
+  grafted: Set<string>,
+  penalty: number,
+  keep: (s: Skill) => boolean = () => false
+): { scores: AttributeScores; resonancePercent: number; firstPass: Skill[] } {
+  const baseScores = scoresWithStreak(rows, streakBonuses, 1, lifeRows);
+  const firstPass = equippedSkills.filter((s) => meetsRequirements(s, baseScores, 0, penalty) || keep(s));
+  // Attenuated on both passes. Gating on printed values and then paying out
+  // attenuated ones would let a loadout unlock skills on strength it does
+  // not actually have. Set grants are folded in here too — Focus and
+  // Omniscient can grant RESONANCE on their own, with no individual skill
+  // involved, and that has to reach the bootstrap or a loadout whose only
+  // source of RESONANCE is a completed shape would gate as if it had none.
+  const firstResonance = resolveResonance(firstPass);
+  const firstFold = foldSetGrants(
+    attenuateModifiers(foldEffects(firstPass, amplified, grafted), firstResonance.powerShare),
+    firstResonance.sets
+  );
+
+  // The amplifier scales Field streaks only; the life rows ride along unamplified.
+  return { scores: scoresWithStreak(rows, streakBonuses, firstFold.streakMultiplier, lifeRows), resonancePercent: firstFold.resonancePercent, firstPass };
+}
+
+/** P28 (D24b): the Field rows at their breadth × Intellect's condition, the life rows at their level × their attribute's. */
+export function conditionedRows(rows: readonly FieldRow[], lifeRows: readonly FieldContribution[], scale: TraitScale): { rows: FieldRow[]; lifeRows: FieldContribution[] } {
+  return { rows: rows.map((f) => ({ ...f, level: scaleFieldLevel(f.level, scale) })), lifeRows: scaleLifeRows(lifeRows, scale) };
+}
+
+/** What resolveProgression folds: loadProgressionUncached's one wave of reads (the checks build it with no database). */
+export interface ProgressionReads {
+  rows: readonly FieldRow[];
+  streakBonuses: Record<string, number>;
+  owned: readonly { skillCode: string; equippedSlot: number | null }[];
+  debuffs: ActiveDebuffRow[];
+  boons: ActiveBoonRow[];
+  augments: OwnedAugment[];
+  lifeRows: readonly FieldContribution[];
+  /** Condition decay's basis (P28); null while it is not in force. */
+  basis: ConditionBasis | null;
+}
+
+/** The progression state from its reads (pure: loadProgressionUncached's fold, and what skill-decay-check drives). */
+export function resolveProgression({ rows, streakBonuses, owned, debuffs, boons, augments, lifeRows, basis }: ProgressionReads): ProgressionState {
   const ownedSkills = owned
     .map((o) => getSkill(o.skillCode))
     .filter((s): s is Skill => s !== undefined);
@@ -246,59 +348,89 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
   // resolved up front and applied in every pass below.
   const penalty = foldDebuffs(NEUTRAL_MODIFIERS, debuffs).attributePenaltyPercent;
 
-  const baseScores = scoresWithStreak(rows, streakBonuses, 1, lifeRows);
-  const firstPass = equippedSkills.filter((s) => meetsRequirements(s, baseScores, 0, penalty));
-  // Attenuated on both passes. Gating on printed values and then paying out
-  // attenuated ones would let a loadout unlock skills on strength it does
-  // not actually have. Set grants are folded in here too — Focus and
-  // Omniscient can grant RESONANCE on their own, with no individual skill
-  // involved, and that has to reach the bootstrap or a loadout whose only
-  // source of RESONANCE is a completed shape would gate as if it had none.
-  const firstResonance = resolveResonance(firstPass);
-  const firstFold = foldSetGrants(
-    attenuateModifiers(foldEffects(firstPass, amplified, grafted), firstResonance.powerShare),
-    firstResonance.sets
-  );
-
-  // The amplifier scales Field streaks only; the life rows ride along unamplified.
-  const scores = scoresWithStreak(rows, streakBonuses, firstFold.streakMultiplier, lifeRows);
-  const isActive = (s: Skill) => meetsRequirements(s, scores, firstFold.resonancePercent, penalty);
+  // The traits at full condition: exactly the scores before blueprint P28, and the only ones while it is off.
+  const full = bootstrapScores(rows, streakBonuses, lifeRows, equippedSkills, amplified, grafted, penalty);
+  // P28 (D24b): the traits now, each source at its attribute's condition, through the same two passes on the lowered
+  // rows (so a frozen emblem's RESONANCE leaves the bootstrap with it; a level guard the full first pass opened stays,
+  // since a guard never freezes). While decay is off this is `full` itself.
+  const conditions = basis ? attributeConditionsOf(basis) : null;
+  const scale = conditions ? traitScaleOf(conditions) : null;
+  const fullFirst = new Set(full.firstPass.map((s) => s.code));
+  const loweredBy = (t: TraitScale) => {
+    const c = conditionedRows(rows, lifeRows, t);
+    return bootstrapScores(c.rows, streakBonuses, c.lifeRows, equippedSkills, amplified, grafted, penalty, (s) => guardsLevels(s) && fullFirst.has(s.code));
+  };
+  const lowered = scale ? loweredBy(scale) : full;
+  const scores = lowered.scores;
+  const meetsFull = (s: Skill) => meetsRequirements(s, full.scores, full.resonancePercent, penalty);
+  // P28 (D24: levels never drop): a level guard is in effect whenever the full traits meet it. While decay is off the
+  // two sides are one, so this is the gate it always was.
+  const isActive = (s: Skill) => meetsRequirements(s, scores, lowered.resonancePercent, penalty) || (guardsLevels(s) && meetsFull(s));
   const activeSkills = equippedSkills.filter(isActive);
+  const fullActiveSkills = scale ? equippedSkills.filter(meetsFull) : activeSkills;
   const dormantSkills = equippedSkills.filter((s) => !isActive(s));
   const benchedSkills = ownedSkills.filter((s) => !slotOf.has(s.code));
+
+  // P28 (D24b): frozen, never re-locked. An owned emblem the lowered traits miss but the full ones meet stays owned;
+  // its effect (and its slot's) is out of the fold below while it is frozen, and it thaws on the read that finds the
+  // trait back. Nothing is written either way, so a thaw is never a new unlock. Its line names the idle attributes
+  // feeding the trait it missed (idleFeedersOf), so it says what thaws it.
+  const frozen: Record<string, string> =
+    scale && conditions ? frozenEmblemsOf(ownedSkills, lowered, full, penalty, (trait) => idleFeedersOf(trait, { fields: rows, life: lifeRows }, conditions)) : {};
+  const frozenSkills = dormantSkills.filter((s) => frozen[s.code] != null);
 
   const loadout: (EquippedEntry | null)[] = Array.from({ length: LOADOUT_SLOTS }, () => null);
   for (const skill of equippedSkills) {
     const slot = slotOf.get(skill.code)!;
-    loadout[slot] = { slot, skill, active: isActive(skill) };
+    loadout[slot] = { slot, skill, active: isActive(skill), frozen: frozen[skill.code] ?? null };
   }
 
   const resonance = resolveResonance(activeSkills);
+  // Order matters: skills are attenuated to what the loadout's coherence
+  // actually realises, set grants land on top of that at full strength
+  // (never attenuated by the powerShare they themselves produced — the
+  // same reason boons sit outside the attenuation), then boons lift that,
+  // then debuffs cut it. Applying debuffs last means a penalty bites the
+  // state you actually have rather than being cancelled out by a fresh
+  // buff.
+  const foldOf = (active: Skill[], r: LoadoutResonance) =>
+    foldDebuffs(foldBoons(foldSetGrants(attenuateModifiers(foldEffects(active, amplified, grafted), r.powerShare), r.sets), boons), debuffs);
+  const folded = foldOf(activeSkills, resonance);
 
   return {
     scores,
+    fullScores: full.scores,
     ownedCodes: owned.map((o) => o.skillCode),
     loadout,
     activeSkills,
+    fullActiveSkills,
     dormantSkills,
+    frozenSkills,
+    frozen,
     benchedSkills,
     resonance,
-    // Order matters: skills are attenuated to what the loadout's coherence
-    // actually realises, set grants land on top of that at full strength
-    // (never attenuated by the powerShare they themselves produced — the
-    // same reason boons sit outside the attenuation), then boons lift that,
-    // then debuffs cut it. Applying debuffs last means a penalty bites the
-    // state you actually have rather than being cancelled out by a fresh
-    // buff.
-    modifiers: foldDebuffs(
-      foldBoons(foldSetGrants(attenuateModifiers(foldEffects(activeSkills, amplified, grafted), resonance.powerShare), resonance.sets), boons),
-      debuffs
-    ),
+    // P28 (D24): while decay is in force the level guards (ward charges, grace, interval, strikes) are the full traits'
+    // fold, so neither a frozen emblem nor its resonance moves what keeps a card's level. Off, it is the one fold as before.
+    modifiers: scale ? withLevelGuards(folded, foldOf(fullActiveSkills, resolveResonance(fullActiveSkills))) : folded,
     debuffs,
     boons,
     augments,
     capitalRate: computeRate(activeSkills, augments),
   };
+}
+
+async function loadProgressionUncached(userId: string, now: Date): Promise<ProgressionState> {
+  const [rows, streakBonuses, owned, debuffs, boons, augments, lifeRows, basis] = await Promise.all([
+    loadFieldRows(),
+    loadFieldStreakBonuses(userId),
+    prisma.unlockedSkill.findMany({ where: { userId }, select: { skillCode: true, equippedSlot: true } }),
+    loadActiveDebuffs(userId, now),
+    loadActiveBoons(userId, now),
+    loadAugments(userId),
+    loadLifeRows(userId, now),
+    loadBasis(userId, now),
+  ]);
+  return resolveProgression({ rows, streakBonuses, owned, debuffs, boons, augments, lifeRows, basis });
 }
 
 /**

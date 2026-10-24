@@ -112,6 +112,8 @@ import {
   type TickProofInput,
 } from "./proof";
 import { closeSessionOps, countSessionOps, loadBoardProof, readCompletionProof, type CompletionProof } from "./task-sessions-server";
+import { loadStreakFacts } from "./streak-mult-server";
+import type { BoardStreak } from "./streak-mult";
 import {
   EpochSet,
   HISTORY_DAYS,
@@ -136,6 +138,7 @@ import {
   placementOf,
   planAutoCompletions,
   planCompletion,
+  planStreakOf,
   roadmapGoalIdsOf,
   ruleOf,
   shortDate,
@@ -654,7 +657,7 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
   const restoreFrom = dayStartOf(addDays(today, -(MAKEUP_RESTORE_EVERY_DAYS - 1)));
   // Momentum (lane A): the perks and today's frog, read only once momentum is live today (BoardData.momentum).
   const momentumOn = momentumLive(today);
-  const [settings, templateRows, instanceRows, totals, events, goalQtyRows, debtRows, restRows, dutyRows, momentumFacts, decisions, restTokens] = await Promise.all([
+  const [settings, templateRows, instanceRows, totals, events, goalQtyRows, debtRows, restRows, dutyRows, momentumFacts, decisions, restTokens, streak] = await Promise.all([
     prisma.lifeSettings.findUnique({
       where: { userId },
       select: { dailyCapacityMin: true, capacitySetAt: true, settledThroughDay: true, epochDay: true, debtWriteOff: true },
@@ -745,6 +748,12 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
           return null;
         })
       : Promise.resolve(null),
+    // Blueprint P29 (D25): the streak multiplier's judged Full days, null at once (no read) while it is not in force; a
+    // failed read projects without it (the tick reads its own and says so if that fails too).
+    loadStreakFacts(prisma, userId, today).catch((err: unknown) => {
+      console.error("Today board: the Full-day streak couldn't be read; projecting without the multiplier.", err);
+      return null;
+    }),
   ]);
 
   const templates = templateRows.map((r) => toBoardTemplate(r, now));
@@ -860,6 +869,8 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
     goalDays,
     ...(momentum ? { momentum } : {}),
     decisions,
+    // Blueprint P29: only while the multiplier is in force today, so the board is exactly as before without it.
+    ...(streak ? { streak } : {}),
   };
   return { core, duty, yesterdayMusts };
 }
@@ -1680,6 +1691,11 @@ interface CompletionRead {
    * tick and its timers not yet counted, read only while proof is in force on the completion's day. Absent: no proof.
    */
   proof?: CompletionProof | null;
+  /**
+   * The streak multiplier (blueprint P29; streak-mult-server loadStreakFacts): the judged Full days in a row, read only
+   * while it is in force today, the same rows the board projected from. Absent: no multiplier.
+   */
+  streak?: BoardStreak | null;
 }
 
 /**
@@ -1696,7 +1712,7 @@ async function readForCompletion(
   day: DayKey,
   now: Date
 ): Promise<(CompletionRead & { row: TemplateRow }) | null> {
-  const [row, instances, totals, events, settings, debts, frozen, momentum, decided, proof] = await Promise.all([
+  const [row, instances, totals, events, settings, debts, frozen, momentum, decided, proof, streak] = await Promise.all([
     prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: TEMPLATE_SELECT }),
     prisma.taskInstance.findMany({
       where: { templateId, userId, day: { gte: dateColumn(addDays(today, -HISTORY_DAYS)) } },
@@ -1716,6 +1732,8 @@ async function readForCompletion(
       : Promise.resolve(null),
     // Proof of work (P23): null, with no read, while it is not in force on `day`.
     readCompletionProof(userId, templateId, day),
+    // The streak multiplier (P29): null, with no read, while it is not in force today.
+    loadStreakFacts(prisma, userId, today),
   ]);
   if (!row) return null;
   return {
@@ -1732,6 +1750,7 @@ async function readForCompletion(
     ...(momentum ? { momentum } : {}),
     decidedNotKept: !!decided,
     ...(proof ? { proof } : {}),
+    ...(streak ? { streak } : {}),
   };
 }
 
@@ -2045,6 +2064,8 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
     ...(momentum ? { momentum } : {}),
     ...(a.workoutId ? { session: true } : {}),
     ...(proof.facts ? { proof: proof.facts } : {}),
+    // The streak multiplier (P29): the run read in this wave, for the completion's day (planCompletion holds the gate).
+    ...(read.streak ? { streak: planStreakOf({ streak: read.streak, today: a.today }, a.day) } : {}),
   });
 
   // Each undo of this slot bumps the attempt, so re-completing writes a new
@@ -2547,6 +2568,8 @@ async function stepTickOnce(
           ...(momentum ? { momentum } : {}),
           // Proof of work (P23): an EXERCISE task's step share records that no minutes came (a proof task never gets here).
           ...(read.proof ? { proof: { launchDay: read.proof.launchDay } } : {}),
+          // The streak multiplier (P29): a step share is a full tick, so it takes C = m(d) as the whole tick would.
+          ...(read.streak ? { streak: planStreakOf({ streak: read.streak, today }, day) } : {}),
         })
       : null;
   const full = pay.kind === "pay" && pay.steps.done === pay.steps.total;

@@ -12,6 +12,9 @@
  *            and the life rows, as progress-rate.ts measures growth; snapshot rows dated before xp.ts LEVEL_RULE_SINCE
  *            hold the old Field level and are ignored (no row there is ever an error, only no comparison)
  *   mp       mastery points eroded by idle decay this week (mastery.ts decayStaleMastery's DECAY rows)
+ *   condition  (blueprint P28, only while DECAY_LAUNCH_DAY is in force) an attribute or a skill whose condition is below
+ *            100% at the read (skill-decay.ts conditionItemsOf): its idle days and what brings it back. The audit reads
+ *            it and never applies it; before the launch the source is not read at all (not counted unread either)
  *
  * The block is stored with the frozen copy (AuditReceipt.decaying), so a frozen week keeps the decay it was frozen
  * with. A source that could not be read is left out and counted in `unread`, never guessed. Copy stays neutral (harm
@@ -23,7 +26,8 @@
  *   Sizes      DECAY_PER_KIND · DECAY_SHOWN · DECAY_TOP
  *   Windows    TRAIT_LOOKBACK_DAYS · traitSinceOf(now) · snapshotThenOf(rows, since) · streakWeekOf(monday, today)
  *   Facts      TraitField · traitScoresOf(fields, life) · LevelDropFact · HabitStrengthFact · StreakFact · DecayFacts
- *   Lines      traitLinesOf · dropLinesOf · ideaLinesOf · habitLinesOf · streakLinesOf · mpLinesOf · decayingOf(facts)
+ *   Lines      traitLinesOf · dropLinesOf · ideaLinesOf · habitLinesOf · streakLinesOf · mpLinesOf · conditionLinesOf ·
+ *              decayingOf(facts)
  *   The copy   decayHeading(d) · decayMoreOf(d) · parseDecaying(json)
  */
 import { ATTRIBUTES, ATTRIBUTE_META, computeAttributeScores, type AttributeScores, type Composition, type FieldContribution } from "./attributes";
@@ -35,17 +39,19 @@ import { addDays, type DayKey } from "./life-day";
 import { WEEK_JUDGE_LAG_DAYS } from "./life-economy";
 import { shortDate } from "./today-board";
 import type { Track } from "./life-types";
+import { conditionPercent, conditionRestoreOf, idleDaysText, type ConditionItem } from "./skill-decay";
 
 // ── Shapes ────────────────────────────────────────────────────────────────
 
 /** What a line is about, in the block's order (the most telling first). */
-export type DecayKind = "streak" | "field" | "domain" | "habit" | "ideas" | "trait" | "mp";
-export const DECAY_KINDS: readonly DecayKind[] = ["streak", "field", "domain", "habit", "ideas", "trait", "mp"];
+export type DecayKind = "streak" | "field" | "domain" | "habit" | "ideas" | "condition" | "trait" | "mp";
+/** Blueprint P28 adds "condition" before "trait": an idle attribute is what lowers the traits under it. */
+export const DECAY_KINDS: readonly DecayKind[] = ["streak", "field", "domain", "habit", "ideas", "condition", "trait", "mp"];
 
 /** One thing that fell, and where its fix starts. */
 export interface DecayLine {
   kind: DecayKind;
-  /** Unique within the block: 'trait:LOGIC', 'domain:<id>', 'habit:<templateId>', 'streak:BODY', 'ideas', 'mp'. */
+  /** Unique within the block: 'trait:LOGIC', 'domain:<id>', 'habit:<templateId>', 'streak:BODY', 'ideas', 'mp', 'condition:VITALITY', 'condition:skill:<id>'. */
   key: string;
   title: string;
   detail: string;
@@ -181,6 +187,8 @@ export interface DecayFacts {
   streaks?: { before: readonly StreakFact[]; after: readonly StreakFact[]; sunday: DayKey } | null;
   /** This week's idle-decay rows (MasteryLedgerEntry reason DECAY): each delta is negative. */
   mp?: readonly { delta: number }[] | null;
+  /** P28: every attribute's and skill's condition at the read (skill-decay.ts conditionItemsOf); null while decay is off. */
+  conditions?: readonly ConditionItem[] | null;
   /** Sources that failed to read. */
   unread?: number;
 }
@@ -300,6 +308,26 @@ export function mpLinesOf(rows: readonly { delta: number }[]): DecayLine[] {
   ];
 }
 
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * P28: each attribute and skill below 100%, the lowest first: "Body condition 82%", its idle days and what brings it back
+ * (the levels, XP and hours never moved; an attribute's traits come back with it). It links to where its row is.
+ */
+export function conditionLinesOf(items: readonly ConditionItem[]): DecayLine[] {
+  return items
+    .filter((i) => Number.isFinite(i.condition) && i.condition < 1)
+    .sort((a, b) => a.condition - b.condition || b.idleDays - a.idleDays || a.name.localeCompare(b.name))
+    .map((i) => ({
+      kind: "condition" as const,
+      key: i.kind === "skill" ? `condition:skill:${i.key}` : `condition:${i.key}`,
+      title: `${i.name} condition ${conditionPercent(i.condition)}%`,
+      detail: `${capital(idleDaysText(i.idleDays))}. ${capital(conditionRestoreOf(i))} brings it back to ${conditionPercent(1)}%${i.kind === "attribute" ? ", and the traits it feeds with it" : ""}; nothing it built is lost.`,
+      href: i.kind === "skill" ? "/you/skills" : "/you",
+      action: "Open",
+    }));
+}
+
 /** The block: every source read, its lines in DECAY_KINDS order, capped per kind and in all; count is uncapped. */
 export function decayingOf(f: DecayFacts): AuditDecaying {
   const all: DecayLine[] = [
@@ -307,6 +335,7 @@ export function decayingOf(f: DecayFacts): AuditDecaying {
     ...(f.drops ? dropLinesOf(f.drops) : []),
     ...(f.habits ? habitLinesOf(f.habits) : []),
     ...(f.ideas ? ideaLinesOf(f.ideas) : []),
+    ...(f.conditions ? conditionLinesOf(f.conditions) : []),
     ...(f.traits ? traitLinesOf(f.traits) : []),
     ...(f.mp ? mpLinesOf(f.mp) : []),
   ];

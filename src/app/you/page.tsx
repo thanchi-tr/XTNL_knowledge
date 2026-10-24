@@ -20,6 +20,8 @@ import { capitalPanelOf, statusPanelOf } from "@/lib/status-panel";
 import { loadCapitalDeals } from "@/lib/status-panel-server";
 import { loadAvatar } from "@/lib/avatar-server";
 import { loadSkills } from "@/lib/competency-server";
+import { loadConditionBasis } from "@/lib/skill-decay-server";
+import { attributeConditionsOf, traitsConditionLineOf } from "@/lib/skill-decay";
 import { addAvatarTarget, archiveAvatarTarget, editAvatarTarget, logAvatarReading } from "@/app/actions/avatar";
 import { DayCards } from "@/components/home/DayCards";
 import { dayCardsOf, type DayCardsView } from "@/components/home/day-cards";
@@ -110,6 +112,9 @@ export default async function YouSheetPage() {
   const avatarRead = capitalRead.then((deals) => loadAvatar(userId, now, { deals })).catch(() => null);
   // The skills (blueprint P5), counted on the Status rows: a failed read counts none.
   const skillsRead = loadSkills(userId, { fields: false }).catch(() => null);
+  // Each attribute's condition (blueprint P28) on the Status rows: null at once, with no read, while DECAY_LAUNCH_DAY is
+  // not in force, and a failed read shows none.
+  const conditionRead = loadConditionBasis(userId, now).catch(() => null);
   // The credits wallet (blueprint P16), the purse's Credits line: {live: false} with no read while CREDITS_LAUNCH_DAY is
   // not in force (no line), and a failed read shows none.
   const walletRead = loadWallet(userId, now).catch(() => null);
@@ -119,10 +124,13 @@ export default async function YouSheetPage() {
   const avatar = await avatarRead;
   const skills = await skillsRead;
   const wallet = await walletRead;
+  const basis = await conditionRead;
   const day = dayCardsOrNull(board, streak);
   // The five attributes from the sheet's own life view and Knowledge row: the levels the hero counts; each with its
-  // targets and its skills counted.
-  const status = statusPanelOf(s.life, s.knowledge, avatar, skills ? skills.skills : null);
+  // targets, its skills counted and (P28) its condition.
+  const status = statusPanelOf(s.life, s.knowledge, avatar, skills ? skills.skills : null, basis ? attributeConditionsOf(basis) : null);
+  // The Traits card's quiet line (P28, D24b): the radar reads the traits at condition; null while off and at 100%.
+  const traitsLine = traitsConditionLineOf(basis ? attributeConditionsOf(basis) : null);
   const capital = deals ? capitalPanelOf(deals, today) : null;
   const launched = s.life.launched;
 
@@ -152,7 +160,7 @@ export default async function YouSheetPage() {
         </div>
         <div className="you-stack">
           <StatusPanel panel={status} capital={capital} avatar={avatar ? { view: avatar, today, actions: AVATAR_ACTIONS } : null} />
-          <AttributeRadar radar={s.radar} hasGhost={s.hasGhost} top={s.top} life={{ launched, contributes: s.life.contributions.length > 0 }} />
+          <AttributeRadar radar={s.radar} hasGhost={s.hasGhost} top={s.top} life={{ launched, contributes: s.life.contributions.length > 0 }} {...(traitsLine ? { conditionLine: traitsLine } : {})} />
           {day && <DayCards view={day} />}
           {s.ready && <ReadyCallout ready={s.ready} balance={s.balance} />}
           {s.lifeNote && <LifeNote />}

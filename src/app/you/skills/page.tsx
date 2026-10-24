@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { getCurrentUserId } from "@/lib/user";
 import { loadSkillsPage, type SkillsPageField } from "@/lib/competency-server";
+import { loadConditionBasis } from "@/lib/skill-decay-server";
+import { skillConditionOf, type Condition } from "@/lib/skill-decay";
 import { addSkill, addSuggestedSkill, archiveSkill, editSkill, linkRoadmapSkill } from "@/app/actions/competency";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { SectionHeader } from "@/components/ui/Tabs";
@@ -43,17 +45,23 @@ function FieldsCard({ rows }: { rows: readonly SkillsPageField[] }) {
  * skills, the named competencies, by hours, each with its tier (0–100, 100–500, 500–2,000, 2,000–10,000 h) and what
  * feeds it, then a new skill, the suggestions from the task families ticked often, the roadmaps each feeding a skill,
  * and the Fields by level and Field tier (Intellect's measure). Every figure is read on each load from the ledger
- * (competency-server loadSkillsPage); nothing here pays, and a tier-up is a Seal a tick plays.
+ * (competency-server loadSkillsPage); nothing here pays, and a tier-up is a Seal a tick plays. P28: once
+ * DECAY_LAUNCH_DAY is in force, each skill's condition beside it (loadConditionBasis: null at once with no read while it
+ * is off; a failed read shows none).
  */
 export default async function SkillsPage() {
-  const page = await loadSkillsPage(getCurrentUserId());
+  const userId = getCurrentUserId();
+  const basisRead = loadConditionBasis(userId).catch(() => null);
+  const page = await loadSkillsPage(userId);
+  const basis = await basisRead;
+  const conditions: Record<string, Condition> | null = basis ? Object.fromEntries(page.skills.map((s) => [s.id, skillConditionOf(s, basis)])) : null;
   return (
     <>
       <ShellTitle eyebrow="You" title="Skills" />
       <div className="you-grid sk-grid">
         <div className="you-stack">
           <CompetencyBoard
-            data={{ skills: page.skills, fields: page.fields, suggestions: page.suggestions, roadmaps: page.roadmaps, writesOn: page.writesOn, ready: page.ready }}
+            data={{ skills: page.skills, fields: page.fields, suggestions: page.suggestions, roadmaps: page.roadmaps, writesOn: page.writesOn, ready: page.ready, conditions }}
             actions={SKILL_ACTIONS}
           />
         </div>

@@ -1,6 +1,8 @@
 import { prisma } from "./prisma";
 import { invalidate } from "./cache";
 import { DEBUFF_META, DEBUFF_KINDS, type DebuffKind, type ActiveDebuffRow } from "./debuff-meta";
+import { todayKey } from "./life-day";
+import { FATIGUE_ID_PREFIX, fatigueDaySuffixOf } from "./review-fatigue";
 
 /**
  * Debuffs — the mirror image of an unlocked skill. This module owns the
@@ -68,9 +70,16 @@ export async function loadActiveDebuffs(userId: string, now: Date = new Date()):
   return rows.filter((r): r is ActiveDebuffRow => (DEBUFF_KINDS as string[]).includes(r.kind));
 }
 
-/** Housekeeping for the daily Cron — expired rows are inert either way, this just stops the table growing forever. */
+/**
+ * Housekeeping for the daily Cron — expired rows are inert either way, this just stops the table growing forever.
+ *
+ * Except today's review-fatigue row (blueprint P30), kept until its day is over: its id is the day's once-a-day key
+ * (review-fatigue fatigueIdOf), so deleting it while the day lasts would let the next answer apply Fatigued a second
+ * time. It goes with the first purge after its day. No such row exists while FATIGUE_LAUNCH_DAY is null.
+ */
 export async function purgeExpiredDebuffs(now: Date = new Date()): Promise<number> {
-  const { count } = await prisma.activeDebuff.deleteMany({ where: { expiresAt: { lte: now } } });
+  const today = { startsWith: FATIGUE_ID_PREFIX, endsWith: fatigueDaySuffixOf(todayKey(now)) };
+  const { count } = await prisma.activeDebuff.deleteMany({ where: { expiresAt: { lte: now }, NOT: { id: today } } });
   if (count > 0) invalidate("progress");
   return count;
 }

@@ -175,10 +175,12 @@ const many = decayingOf({
   streaks: { before: [{ track: "BODY", keptStreak: 2 }], after: [{ track: "BODY", keptStreak: 0 }], sunday: "2026-10-18" },
   unread: 1,
 });
+// Re-pinned for blueprint P28: an idle attribute's condition is its own kind, before the traits it lowers (read only while
+// DECAY_LAUNCH_DAY is in force; this fixture has none, so its lines are as before).
 eq(
-  "order (a run ended, a level lost, a habit, the ideas, the traits, MP), at most 3 of a kind and 8 in all; the count is everything found",
+  "order (a run ended, a level lost, a habit, the ideas, a condition (P28), the traits, MP), at most 3 of a kind and 8 in all; the count is everything found",
   [DECAY_KINDS, DECAY_PER_KIND, DECAY_SHOWN, many.lines.map((l) => l.kind), many.count, many.unread],
-  [["streak", "field", "domain", "habit", "ideas", "trait", "mp"], 3, 8, ["streak", "domain", "domain", "domain", "ideas", "trait", "trait", "trait"], 1 + 4 + 1 + 13 + 1, 1]
+  [["streak", "field", "domain", "habit", "ideas", "condition", "trait", "mp"], 3, 8, ["streak", "domain", "domain", "domain", "ideas", "trait", "trait", "trait"], 1 + 4 + 1 + 13 + 1, 1]
 );
 eq("the block's lines are unique", new Set(many.lines.map((l) => l.key)).size, many.lines.length);
 eq("nothing read: an empty block (count 0), and the parts that failed are counted", [decayingOf({}), decayingOf({ unread: 2 }).unread], [{ count: 0, lines: [], unread: 0 }, 2]);
@@ -289,8 +291,10 @@ check(
   !/prisma\.\w+\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw|\$queryRaw|\$transaction/.test(server) && !/decayStaleMastery|degrade|\bsettle\w*\(|mintLife|activityData|invalidate/.test(server)
 );
 check(
+  // Re-pinned for blueprint P28: a sixth part, the conditions (skill-decay-server loadConditionItems: null with no read
+  // while DECAY_LAUNCH_DAY is off, so nothing is counted unread then).
   "each part soft on its own: a failed read is counted (unread) and left out, never guessed",
-  (server.match(/\.catch\(soft</g) ?? []).length === 5 && /unread \+= 1;/.test(server) && /decayingOf\(\{ traits, drops: knowledge\?\.drops \?\? null, ideas: knowledge\?\.ideas \?\? null, habits, streaks, mp, unread \}\)/.test(server)
+  (server.match(/\.catch\(soft</g) ?? []).length === 6 && /unread \+= 1;/.test(server) && /decayingOf\(\{ traits, drops: knowledge\?\.drops \?\? null, ideas: knowledge\?\.ideas \?\? null, habits, streaks, mp, conditions, unread \}\)/.test(server)
 );
 check(
   "the reads: snapshots from LEVEL_RULE_SINCE's floor, drops still below droppedFrom since the week's Monday 04:00, idle decay rows of the week, the habits at the Sunday before",

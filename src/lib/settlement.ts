@@ -134,6 +134,7 @@ import { recordAvatarReadings, type AvatarReadingsRun } from "./avatar-server";
 import { auditLaunchDay, isAuditLaunched, type AuditEnv } from "./week-audit";
 import { momentumLaunchDay, type MomentumEnv } from "./momentum";
 import { readRestTokens } from "./rest-tokens-server";
+import { streakFromOf, streakLaunchDay, streakLive } from "./streak-mult";
 import { freezeWeekAudit, type AuditFreezeRun } from "./week-audit-server";
 import { finalizeQuestWeeks, freezeWeekQuests } from "./roadmap-quests-server";
 import { roadmapStepErrorsOf, type QuestFinalizeRun, type QuestFreezeRun, type ReadingsRun, type RoadmapStepReport, type RoadmapWriteOpts, type WeekQuestSource } from "./roadmap-types";
@@ -1223,6 +1224,40 @@ async function maybeSettle(userId: string, now: Date, opts: MaintainOptions): Pr
   if (!s || s.cursor == null) return;
   if (!settleRange({ today, dutyLaunchDay: launchDay, epochDay: s.epochDay, cursor: s.cursor })) return;
   await settleLifeDays(userId, now, { env, client });
+}
+
+/** In-flight settles a board read awaits (settleForStreak), one per user: two renders at once share one. */
+const settlingForStreak = new Map<string, Promise<void>>();
+
+/**
+ * Blueprint P29 (D25): Duty's lazy settle alone, awaited by Today and by the phone's /check before their board read
+ * while the streak multiplier is in force, as they already await momentum's lazy writes. The multiplier's d is counted
+ * back from the settlement cursor, so the first render after the 04:00 turn (before the life cron, or after a missed
+ * run) would otherwise project a d that the settle in its own after() then moves, and the tick would pay another. At
+ * once, with no read, while the multiplier is not in force today (streakFromOf: STREAK_LAUNCH_DAY and Duty both), so
+ * nothing changes before the user's go; then maybeSettle's own gates (writes on, Duty live, the cursor behind), so it
+ * costs nothing once the day is settled. Single flight per user; never throws (a failure is logged and the board reads
+ * on, as it would after a missed cron). The after() chain's own settle then finds nothing behind.
+ */
+export function settleForStreak(userId: string, now: Date = new Date(), opts: MaintainOptions & { streakLaunch?: DayKey | null } = {}): Promise<void> {
+  try {
+    const launch = opts.streakLaunch === undefined ? streakLaunchDay() : opts.streakLaunch;
+    if (!streakLive(todayKey(now), streakFromOf(launch, dutyLaunchDay(opts.env ?? processEnv())))) return Promise.resolve();
+    const running = settlingForStreak.get(userId);
+    if (running) return running;
+    const run = maybeSettle(userId, now, opts)
+      .catch((err: unknown) => {
+        console.error("[settlement] the settle before the streak's board read failed", err);
+      })
+      .finally(() => {
+        settlingForStreak.delete(userId);
+      });
+    settlingForStreak.set(userId, run);
+    return run;
+  } catch (err) {
+    console.error("settleForStreak failed:", err);
+    return Promise.resolve();
+  }
 }
 
 /**

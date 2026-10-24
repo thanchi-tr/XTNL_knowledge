@@ -36,7 +36,8 @@ import { pushToast } from "@/components/ui/toast-store";
 import { ackShown } from "@/components/celebrate/stage";
 import { BossPanel } from "./BossPanel";
 import { BossResult, BoonChoice } from "./BossResult";
-import { EffectsCard, RecentIdeas, type RecentIdea, type ReviewEffects } from "./ReviewHub";
+import { EffectsCard, FatigueNote, RecentIdeas, type RecentIdea, type ReviewEffects } from "./ReviewHub";
+import type { FatigueSummary } from "@/lib/review-fatigue";
 import { ReviewRunner, type BossRun, type RunPhase } from "./ReviewRunner";
 import { SessionComplete } from "./SessionComplete";
 import { ALL_FIELDS, SessionSummary } from "./SessionSummary";
@@ -72,6 +73,8 @@ interface Props {
   loadoutStrip: ReactNode;
   /** What changes a review right now: the folded modifiers, boons and penalties. */
   effects: ReviewEffects;
+  /** The fatigue breaker (blueprint P30): today's answers and the fatigue in effect; passed only once FATIGUE_LAUNCH_DAY is in force. */
+  fatigue?: FatigueSummary;
   recent: RecentIdea[];
   /** The accepted roadmap's open layer and its one topic now (ruling N14); null without one. */
   focus?: StudyFocus | null;
@@ -126,7 +129,7 @@ function newRun(fields: WorkspaceField[], scope: string, today: DayKey, quest: {
 }
 
 export function WorkspaceView(props: Props) {
-  const { fields, totalDue, bosses: allBosses, upcoming, scheduledCount, quest, comboCap, today, dayKept, dayStreak, loadoutStrip, effects, recent, focus = null, lead = null } = props;
+  const { fields, totalDue, bosses: allBosses, upcoming, scheduledCount, quest, comboCap, today, dayKept, dayStreak, loadoutStrip, effects, fatigue, recent, focus = null, lead = null } = props;
   // Ruling N14: the roadmap's Field leads (its chip selected while it has cards due, its encounter first).
   const focusField = focus?.fieldName && fields.some((f) => f.name === focus.fieldName && f.cards.length > 0) ? focus.fieldName : null;
   const bosses = focus?.fieldId ? [...allBosses].sort((a, b) => Number(b.fieldId === focus.fieldId) - Number(a.fieldId === focus.fieldId)) : allBosses;
@@ -503,6 +506,7 @@ export function WorkspaceView(props: Props) {
           />
           {loadoutStrip}
           <EffectsCard effects={effects} />
+          {fatigue && <FatigueNote fatigue={fatigue} />}
         </div>
         <div className="rv-col">
           <BossPanel bosses={bosses} onChallenge={challenge} onChooseBoon={setBoonFor} pendingFieldId={pendingBoss} error={bossError} />

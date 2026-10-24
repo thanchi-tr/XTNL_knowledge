@@ -1,13 +1,15 @@
 /**
  * What is acting on the engine right now, stated plainly: boons (held, with
  * a glyph and a word) and penalties (owed, with the reason and when they
- * lift). A penalty is announced where it applies, never as a red wall.
+ * lift; a breaker such as Fatigued is held, with the rest glyph, since it
+ * lifts by itself: debuff-meta BREAKER_DEBUFFS). A penalty is announced where
+ * it applies, never as a red wall.
  *
  *   <EffectsNotice debuffs boons/>      the compact list on /skills (renders nothing when empty)
  *   <LoadoutEffects lines debuffs boons/>  You › Loadout: every modifier the loadout folds in
  */
 import { BOON_META, type ActiveBoonRow } from "@/lib/boon-meta";
-import { DEBUFF_META, type ActiveDebuffRow } from "@/lib/debuff-meta";
+import { BREAKER_DEBUFFS, DEBUFF_META, type ActiveDebuffRow } from "@/lib/debuff-meta";
 import { formatExpiry } from "@/lib/format-date";
 import type { ModifierLine } from "@/lib/modifier-display";
 import { Chip } from "@/components/ui/Chip";
@@ -19,7 +21,14 @@ function EffectRows({ debuffs, boons }: { debuffs: ActiveDebuffRow[]; boons: Act
         const meta = DEBUFF_META[d.kind];
         return (
           <li key={`d-${d.kind}-${i}`}>
-            <Chip tone="owed">{meta.label}</Chip>
+            {/* P30 (H8): a breaker (Fatigued) lifts by itself and is held, never owed's colour. */}
+            {BREAKER_DEBUFFS.has(d.kind) ? (
+              <Chip tone="held" held="rest">
+                {meta.label}
+              </Chip>
+            ) : (
+              <Chip tone="owed">{meta.label}</Chip>
+            )}
             <span className="fx-body">
               <b>{meta.effectText(d.magnitude)}</b>
               <span className="t-meta" style={{ display: "block" }}>

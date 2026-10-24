@@ -61,6 +61,13 @@ export const FORMULA_VERSION_MOMENTUM = "life-2";
  * at exactly the price it had before (the pages are recorded, never priced).
  */
 export const FORMULA_VERSION_PROOF = "life-3";
+/**
+ * The streak multiplier (blueprint P29, D25): a full personal tick priced while STREAK_LAUNCH_DAY is in force
+ * (streak-mult.ts) is 'life-4', with C = m(d) and `streak` {days, mult} on the receipt. It is built on top of 'life-3':
+ * a proof tick in force keeps its `proof` fields, momentum's S, M and X are listed as before. Every other receipt stays
+ * 'life-1', 'life-2' or 'life-3', byte for byte; nothing is 'life-4' before the launch.
+ */
+export const FORMULA_VERSION_STREAK = "life-4";
 /** The momentum factors in the order a receipt lists them, after K: raw = round1(B·E·T·C·D·V·K · S · M · X). */
 export const MOMENTUM_FACTOR_KEYS: readonly MomentumFactorKey[] = ["S", "M", "X"];
 
@@ -134,6 +141,29 @@ export const CONSISTENCY_CAP_DAYS: number = (() => {
   return d;
 })();
 
+/**
+ * The streak multiplier (blueprint P29, D25; harm H3's safer variant), C once STREAK_LAUNCH_DAY is in force:
+ * m(d) = min(1.2, 1.05^d) over d, the judged Full days in a row (streak-mult.ts fullDayRunOf), on every full personal
+ * tick, one-offs included; never on the minimum version, #play, a study task, a walk's SESSION, a make-up, a review or
+ * an MP mint. It replaces the per-habit C above in the price only (per-habit streaks stay for display and habit
+ * strength), and its cap is the same 1.2, so no single price can rise past RAW_WORST_CASE.
+ */
+export const STREAK_MULT_BASE = 1.05;
+export const STREAK_MULT_CAP = 1.2;
+
+/** m(d) = min(STREAK_MULT_CAP, STREAK_MULT_BASE^d): 1.00 at day 0, 1.16 at day 3, the cap from day 4. */
+export function streakMult(days: number): number {
+  const d = Number.isFinite(days) ? Math.max(0, Math.floor(days)) : 0;
+  return Math.min(STREAK_MULT_CAP, STREAK_MULT_BASE ** d);
+}
+
+/** The streak length, in Full days, at which m(d) reaches its cap (4). Found from the curve itself. */
+export const STREAK_MULT_CAP_DAYS: number = (() => {
+  let d = 0;
+  while (d < 1_000 && streakMult(d) < STREAK_MULT_CAP) d += 1;
+  return d;
+})();
+
 // ── D: repeat decay ───────────────────────────────────────────────────────
 
 /** D = e^(−0.15 (n − 1)) for the nth completion today in one decay group — yieldXp's curve (xp.ts). */
@@ -188,8 +218,11 @@ export const KNEE_CAP_AT_RAW = KNEE_FULL_RATE + KNEE_SCALE * (Math.exp((KNEE_CAP
 /** Settlement appends an ADJUST when the day's paid total drifts from g(ΣR) by more than this. */
 export const KNEE_RECONCILE_TOLERANCE = 0.05;
 
-/** The most one completion can be priced at: SEVERE × the effort cap × the consistency cap (58.8). */
-export const RAW_WORST_CASE = roundTo(BAND_BASE.SEVERE * EFFORT_CAP * CONSISTENCY_CAP, 1);
+/**
+ * The most one completion can be priced at: SEVERE × the effort cap × the highest C (58.8). Re-derived for the streak
+ * multiplier (P29): one-offs now take C too, at most STREAK_MULT_CAP, which is the consistency cap, so it stays 58.8.
+ */
+export const RAW_WORST_CASE = roundTo(BAND_BASE.SEVERE * EFFORT_CAP * Math.max(CONSISTENCY_CAP, STREAK_MULT_CAP), 1);
 
 // ── Sizing (grading section A) ────────────────────────────────────────────
 
@@ -457,6 +490,16 @@ export interface PriceProof {
 }
 
 /**
+ * The streak multiplier's part of one price (blueprint P29; today-board planCompletion decides it: a full personal tick
+ * from the launch day): d, the judged Full days in a row before the tick. Present on a FULL price: C is streakMult(d)
+ * (one-offs included) and the receipt is 'life-4' with `streak` {days, mult}. Absent, null or on any other mode: exactly
+ * as before.
+ */
+export interface PriceStreak {
+  days: number;
+}
+
+/**
  * Prices one completion and returns its receipt — the one function both
  * the Today board (projection) and the server (payment) call.
  *
@@ -466,9 +509,17 @@ export interface PriceProof {
  * identical receipt, key order included.
  *
  * `momentum` (PriceMomentum) adds momentum's S, M and X after K; without it
- * the receipt is exactly what it always was.
+ * the receipt is exactly what it always was. `streak` (PriceStreak, P29) is C on
+ * a full price; without it C is the per-habit consistency, as it always was.
  */
-export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, momentum?: PriceMomentum | null, proof?: PriceProof | null): Receipt {
+export function priceTask(
+  input: PriceInput,
+  ctx: PricingContext,
+  track: Track,
+  momentum?: PriceMomentum | null,
+  proof?: PriceProof | null,
+  streak?: PriceStreak | null
+): Receipt {
   const machineBand = toBand(input.band);
   const override = clampBandOverride(machineBand, input.bandOverride);
   const band = bandAt(bandIndex(machineBand) + override);
@@ -485,7 +536,10 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, 
   const B = BAND_BASE[band];
   const E = effortFactor(minutes);
   const T = TIMING_FACTOR[timing];
-  const C = input.recurring && mode !== "MVV" ? consistencyFactor(input.streakDays) : 1;
+  // The streak multiplier (P29): C = m(d) on a full price, one-offs included; otherwise the per-habit consistency.
+  const stDays = streak && mode === "FULL" ? Math.max(0, Math.floor(Number.isFinite(streak.days) ? streak.days : 0)) : null;
+  const St = stDays != null ? { days: stDays, mult: streakMult(stDays) } : null;
+  const C = St ? St.mult : input.recurring && mode !== "MVV" ? consistencyFactor(input.streakDays) : 1;
   const n = Number.isFinite(input.repeatN) ? Math.max(1, Math.round(input.repeatN)) : 1;
   const D = repeatFactor(n);
   const introBefore = Number.isFinite(input.introBefore) ? Math.max(0, Math.round(input.introBefore)) : 0;
@@ -511,13 +565,15 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, 
     { key: "T", label: TIMING_LABEL[timing], value: T },
     {
       key: "C",
-      label: !input.recurring
-        ? "one-off"
-        : mode === "MVV"
-          ? "no streak bonus"
-          : streakDays > 0
-            ? `${Math.round(streakDays)}-day streak`
-            : "new streak",
+      label: St
+        ? streakFactorLabel(St.days)
+        : !input.recurring
+          ? "one-off"
+          : mode === "MVV"
+            ? "no streak bonus"
+            : streakDays > 0
+              ? `${Math.round(streakDays)}-day streak`
+              : "new streak",
       value: roundTo(C, 3),
     },
     { key: "D", label: `${ordinal(n)} today`, value: roundTo(D, 3) },
@@ -535,12 +591,18 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, 
   const hasMomentum = !!(S || M || X);
 
   const base = B * E * T * C * D * V * K;
-  const raw = roundTo(hasMomentum ? base * (S ? S.mult : 1) * (M ? M.mult : 1) * (X && X.crit ? X.mult : 1) : base, 1);
+  const momentumMult = (S ? S.mult : 1) * (M ? M.mult : 1) * (X && X.crit ? X.mult : 1);
+  const raw = roundTo(hasMomentum ? base * momentumMult : base, 1);
+  // The streak multiplier (P29): the same tick's raw had C been the per-habit consistency it replaced (exactly the price
+  // with no `streak`), stored so the week judge counts it toward the kept floor and MP never moves with the streak.
+  const plainC = input.recurring && mode !== "MVV" ? consistencyFactor(input.streakDays) : 1;
+  const plainBase = B * E * T * plainC * D * V * K;
+  const plainRaw = St ? roundTo(hasMomentum ? plainBase * momentumMult : plainBase, 1) : null;
   const kneeBefore = roundTo(Math.max(0, Number.isFinite(ctx.rawBefore) ? ctx.rawBefore : 0), 3);
   const xp = roundTo(kneePay(kneeBefore, raw), 3);
 
   return {
-    v: proof ? FORMULA_VERSION_PROOF : hasMomentum ? FORMULA_VERSION_MOMENTUM : FORMULA_VERSION,
+    v: St ? FORMULA_VERSION_STREAK : proof ? FORMULA_VERSION_PROOF : hasMomentum ? FORMULA_VERSION_MOMENTUM : FORMULA_VERSION,
     factors,
     minutes,
     raw,
@@ -561,7 +623,16 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, 
           },
         }
       : {}),
+    // The streak multiplier (P29): the d it read, the C it paid and the raw without it, stored so the receipt is never
+    // re-derived (life-weeks keptRawOf reads `plainRaw`: the kept floor, and so MP, never moves with the streak).
+    ...(St ? { streak: { days: St.days, mult: roundTo(St.mult, 4), plainRaw: plainRaw ?? raw } } : {}),
   };
+}
+
+/** C's label on a 'life-4' receipt: 'streak day 3', or 'new streak' before the first judged Full day. */
+export function streakFactorLabel(days: number): string {
+  const d = Number.isFinite(days) ? Math.max(0, Math.floor(days)) : 0;
+  return d > 0 ? `streak day ${d}` : "new streak";
 }
 
 /** A step share priceTask can use: whole counts, 1 ≤ total ≤ 50, 0 ≤ done ≤ total; anything else is no share. */

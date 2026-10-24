@@ -23,6 +23,11 @@
  *      Seal implementation, L3's SealCard), one "Today kept" per run, the dock
  *      guard, one loadout strip (L4's), ink errors, titled truncation, and no
  *      class name in the lane that Tailwind also emits as a utility.
+ *   9. Review fatigue (blueprint P30, D26; scripts/review-fatigue-check.ts holds
+ *      the rule): the day's check runs after every landed answer's row, ahead of
+ *      the study tasks and never in the answer's read wave; the hub's Fatigue
+ *      breaker card follows the effects card, only with the page's prop, adds no
+ *      penalty tone, and the fixtures show it at rest and in effect.
  *
  * Importing bosses.ts constructs a PrismaClient but never queries it.
  */
@@ -580,6 +585,33 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
     "buttons: <Button block> renders .btn-block, never Tailwind's .block",
     blockProp.length >= 5 && /block && "btn-block"/.test(button) && !/block && "block"/.test(button),
     blockProp.join(", ")
+  );
+}
+
+// ── 9. Review fatigue (P30) ─────────────────────────────────────────────────
+{
+  const srs = code(read("src/lib/srs.ts"));
+  const apply = srs.slice(srs.indexOf("export async function applyReviewResult"), srs.indexOf("export async function degradeOverdueIdeas"));
+  const late = apply.slice(apply.indexOf("after(async () => {\n    if (lateOutcome)"));
+  check(
+    "fatigue (P30): the day's check runs in the after() that writes a miss's row, after it and before the study tasks, for every landed answer",
+    late.indexOf("await recordActivity(") < late.indexOf("await applyReviewFatigue(prisma, userId, now)") &&
+      late.indexOf("await applyReviewFatigue(prisma, userId, now)") < late.indexOf("autoCompleteStudyTasks(userId, now)") &&
+      /if \(landed\) \{\s*await applyReviewFatigue\(prisma, userId, now\)\.catch\(/.test(late)
+  );
+  const hub = code(read("src/components/workspace/ReviewHub.tsx"));
+  const view = code(read("src/components/workspace/WorkspaceView.tsx"));
+  const fixtures = code(read("src/app/dev/style/review/ReviewFixtures.tsx"));
+  const fx = reviewFixtures();
+  check(
+    "fatigue (P30): the hub's Fatigue breaker card follows the effects card, only with the page's prop, and adds no penalty tone (one tone=\"owed\")",
+    /export function FatigueNote\(\{ fatigue \}: \{ fatigue: FatigueSummary \}\)/.test(hub) &&
+      /<EffectsCard effects=\{effects\} \/>\s*\{fatigue && <FatigueNote fatigue=\{fatigue\} \/>\}/.test(view) &&
+      (hub.match(/tone="owed"/g) ?? []).length === 1
+  );
+  check(
+    "fatigue (P30): /dev/style/review shows the card at rest (142 answers) and in effect (its FATIGUED row among the penalties)",
+    /<FatigueNote fatigue=\{data\.fatigue\} \/>/.test(fixtures) && /<FatigueNote fatigue=\{data\.fatigued\.fatigue\} \/>/.test(fixtures) && fx.fatigue.answers === 142 && fx.fatigue.until === null && fx.fatigued.fatigue.until !== null && fx.fatigued.penalty.kind === "FATIGUED"
   );
 }
 

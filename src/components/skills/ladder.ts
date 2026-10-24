@@ -28,6 +28,12 @@ export interface LadderContext {
   /** Mastery points (MP) on hand. */
   balance: number;
   modifiers: Pick<ActiveModifiers, "resonancePercent" | "attributePenaltyPercent">;
+  /**
+   * Blueprint P28 (D24b): the owned emblems that are frozen, code → "Frozen · Body 12 days idle · a Body tick thaws it
+   * (Physical 120)" (skill-effects' ProgressionState.frozen). Absent while condition decay is off. A frozen emblem is still
+   * owned here, never locked.
+   */
+  frozen?: Readonly<Record<string, string>>;
 }
 
 export type NodeState = "owned" | "ready" | "locked";

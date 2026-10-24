@@ -44,6 +44,20 @@
  * re-pin the plan's figures: the logged tick prices as the basket row, the BODY kept rate stays about 61% and the
  * BODY quest rate about 55.8% (the run itself, unchanged), the rule's drop on the shadow habit is measured and stays
  * small, and C11 holds as before.
+ *
+ * The streak multiplier (blueprint P29, D25): while STREAK_LAUNCH_DAY is null and XTNL_STREAK_LAUNCH_DAY is unset nothing
+ * here changes, byte for byte. With the override set (`XTNL_STREAK_LAUNCH_DAY=2026-10-26 npx tsx scripts/momentum-sim.ts`)
+ * every simulated day is after it and the basket's full ticks (one-offs and the plan practice included) are priced with
+ * C = m(d) (life-grade priceTask with its PriceStreak, 'life-4'), d the user's judged Full days in a row: a day is Full
+ * when it is not blank and its task quest (the frog, the day's biggest due task: the model's must) was done, a day the
+ * momentum fold held with a freeze bridges it, and settlement's lag means a day counts two days on. No draw is added (the
+ * Full days ride on draws the run already made), so only what XP moves moves (a perk bought a day sooner or later); the
+ * frog is still picked without the multiplier, as momentum-server ranks it. Pins P29a-c: the basket's mean C (in [1.05, the cap]), its raw against the
+ * per-habit C it replaces (in [−5%, +12%]: about −1.4% for this player, who misses a must on a third of days; the
+ * committed player of balance-horizon 4s gains about 9%), and the kept weeks, so the MP the judge mints, never moving
+ * with it: the judge counts a 'life-4' tick's raw without the multiplier (its receipt's plainRaw, life-weeks keptRawOf),
+ * so the kept track-weeks are exactly the ones a separately priced plain run keeps (no mint reads C); every C pin above
+ * holds as before.
  */
 import "./_no-model";
 import { createHmac } from "node:crypto";
@@ -59,6 +73,9 @@ import { addDays, weekKeyOf, type DayKey } from "../src/lib/life-day";
 import { CREDITS_V1 } from "../src/lib/credits";
 import { GOAL_SLOTS_MAX } from "../src/lib/roadmap-types";
 import { proofLaunchDay } from "../src/lib/proof";
+import { STREAK_MULT_CAP, streakMult, type PriceStreak } from "../src/lib/life-grade";
+import { streakLaunchDay } from "../src/lib/streak-mult";
+import { SETTLE_LAG_DAYS } from "../src/lib/duty-economy";
 
 /** The track curve the levels read (blueprint P3): POWER once a launch day is set, since every simulated day is after it. */
 const TRACK_CURVE: TrackCurve = trackCurveLaunchDay() == null ? "SQUARE" : "POWER";
@@ -74,6 +91,8 @@ const PROOF_ROWS: ReadonlySet<string> = new Set(["deep work"]);
 const SHADOW_EXERCISE = { band: "STANDARD" as Band, minutes: 20, perWeek: 3, oneTapShare: 0.5 } as const;
 /** The Move quest's minutes a tick needs (momentum.ts QUEST.MOVE_MINUTES; 10 once the week's 150 is met). */
 const SHADOW_MOVE_MINUTES = 20;
+/** The streak multiplier (P29): in force once a launch day is set, since every simulated day is after it. */
+const STREAK_ON = streakLaunchDay() != null;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Momentum maths (the reference implementation; momentum.md §A, §B)
@@ -546,6 +565,13 @@ interface UserResult {
   firstPerkDay: Record<Branch, number | null>;
   fullBranchDay: Record<Branch, number | null>;
   streak: ReturnType<typeof foldMomentum>;
+  /**
+   * The streak multiplier (P29; only with the override): Σ C over the full ticks and their count, the most d reached,
+   * Σ raw with it and as it would be without it, the kept track-weeks as the judge keeps them (each tick's receipt
+   * plainRaw), on a separately priced plain raw and on the raw with the multiplier counted, and Σ |plainRaw − the plain
+   * price| (0: the receipt's plain raw is the price with no streak, tick for tick).
+   */
+  fullStreak: { cSum: number; ticks: number; maxDays: number; raw: number; rawPlain: number; kept: number; keptPlain: number; keptWith: number; fullDays: number; drift: number };
   bodyKeptShare: number;
   keptShare: Record<Track, number>;
   questsDone: { task: number; plan: number; body: number };
@@ -600,6 +626,13 @@ function simulateUser(seed: number): UserResult {
   const questsDone = { task: 0, plan: 0, body: 0 };
   const lifeXpPerDay: number[] = [];
   let proofTicks = 0;
+  // The streak multiplier (P29, the override only): each day's Full and held flags, and what the run priced.
+  const fullOn: boolean[] = [];
+  const heldOn: boolean[] = [];
+  let lastUsed = 0;
+  const fullStreak = { cSum: 0, ticks: 0, maxDays: 0, raw: 0, rawPlain: 0, kept: 0, keptPlain: 0, keptWith: 0, fullDays: 0, drift: 0 };
+  let weekStreakExtra = ZERO_TRACKS();
+  let weekPlainDrift = ZERO_TRACKS();
   let proofRawDrift = 0;
   // The shadow EXERCISE habit (P23, the override only): its own stream, so the run's own draws are the plain run's.
   const shadowRng = PROOF_ON ? mulberry32(seed * 2246822519 + 13) : null;
@@ -777,16 +810,42 @@ function simulateUser(seed: number): UserResult {
     if (!taskQuestDone && frogIdx >= 0) todays.splice(frogIdx, 1); // the frog stays undone
     const frogRow = taskQuestDone && frogIdx >= 0 ? todays[frogIdx] : null;
 
+    // The streak multiplier (P29, the override only): d is the judged Full days in a row (settlement judges a day
+    // SETTLE_LAG_DAYS on), a freeze day bridging it; null while it is off, so every price below is the plain run's.
+    let streakArg: PriceStreak | null = null;
+    if (STREAK_ON) {
+      let d = 0;
+      for (let j = i - SETTLE_LAG_DAYS; j >= 0; j--) {
+        if (heldOn[j]) continue;
+        if (!fullOn[j]) break;
+        d += 1;
+      }
+      streakArg = { days: d };
+      fullStreak.maxDays = Math.max(fullStreak.maxDays, d);
+    }
+
     for (const r of todays) {
       const n = (repeat.get(r.title) ?? 0) + 1;
       repeat.set(r.title, n);
       const input = { band: r.band, bandOverride: 0, machineMinutes: r.minutes, estMinutes: r.minutes, minutes: null, timing: "ON_TIME", recurring: r.recurring, streakDays: r.recurring ? STREAK_DAYS : 0, repeatN: n, introBefore, mode: "FULL" } as const;
       // Proof of work (P23, the override only): a deep-work tick is logged at its minutes, priced through the proof rule.
       const proofRow = PROOF_ON && PROOF_ROWS.has(r.title);
-      const rec = proofRow ? priceTask({ ...input, minutes: r.minutes }, { rawBefore }, r.track, null, { gated: true, wall: null }) : priceTask(input, { rawBefore }, r.track);
+      const rec = streakArg
+        ? priceTask(proofRow ? { ...input, minutes: r.minutes } : input, { rawBefore }, r.track, null, proofRow ? { gated: true, wall: null } : null, streakArg)
+        : proofRow
+          ? priceTask({ ...input, minutes: r.minutes }, { rawBefore }, r.track, null, { gated: true, wall: null })
+          : priceTask(input, { rawBefore }, r.track);
+      // The streak multiplier (P29, the override only): the same tick's raw without it, for the uplift and the kept weeks.
+      const plainRaw = streakArg ? (proofRow ? priceTask({ ...input, minutes: r.minutes }, { rawBefore }, r.track, null, { gated: true, wall: null }) : priceTask(input, { rawBefore }, r.track)).raw : rec.raw;
+      if (streakArg) {
+        fullStreak.cSum += rec.streak?.mult ?? 1;
+        fullStreak.ticks += 1;
+        fullStreak.raw += rec.raw;
+        fullStreak.rawPlain += plainRaw;
+      }
       if (proofRow) {
         proofTicks += 1;
-        proofRawDrift += Math.abs(rec.raw - priceTask(input, { rawBefore }, r.track).raw);
+        proofRawDrift += Math.abs(rec.raw - (streakArg ? priceTask(input, { rawBefore }, r.track, null, null, streakArg) : priceTask(input, { rawBefore }, r.track)).raw);
       }
       if (r.band === "INTRO") introBefore += 1;
       tasks += 1;
@@ -812,6 +871,14 @@ function simulateUser(seed: number): UserResult {
         critsToday += 1;
       }
       const raw = roundTo(rec.raw * S * M * X, 1);
+      // The streak multiplier (P29, the override only): the judge counts a 'life-4' tick's raw without it (its receipt's
+      // plainRaw, life-weeks keptRawOf); without the override `judged` is `raw`, so the run is the plain one byte for byte.
+      const judged = rec.streak ? roundTo(rec.streak.plainRaw * S * M * X, 1) : raw;
+      if (streakArg) {
+        weekStreakExtra[r.track] += raw - judged;
+        weekPlainDrift[r.track] += judged - roundTo(plainRaw * S * M * X, 1);
+        fullStreak.drift += Math.abs((rec.streak?.plainRaw ?? rec.raw) - plainRaw);
+      }
       const rawNoCrit = roundTo(rec.raw * S * M, 1);
       chainExtraRaw += rec.raw * S * (M - 1);
       const xp = kneePay(rawBefore, raw);
@@ -821,7 +888,7 @@ function simulateUser(seed: number): UserResult {
       dayXp += xp;
       addBranch(r === PLAN_PRACTICE ? "PATHFINDER" : "DISCIPLINE", xp);
       week.days[r.track].add(i);
-      week.raw[r.track] += raw;
+      week.raw[r.track] += judged;
     }
     if (!morningWalk) payExercise();
 
@@ -921,6 +988,12 @@ function simulateUser(seed: number): UserResult {
       nextMilestoneDay = dayIdx + Math.round(PERSONA.milestoneEveryDays[0] + rng() * (PERSONA.milestoneEveryDays[1] - PERSONA.milestoneEveryDays[0]));
     }
 
+    // The streak multiplier (P29, the override only): the day's Full flag (not blank, its must, the frog, done).
+    if (STREAK_ON) {
+      fullOn.push(!blank && taskQuestDone);
+      heldOn.push(false);
+      if (!blank && taskQuestDone) fullStreak.fullDays += 1;
+    }
     const rec: DayRecord = { day, active: anyAction, chestOpened: allThree, chestFreeze, recoverFreeze: 0 };
     records.push(rec);
     byDay.set(day, rec);
@@ -932,6 +1005,18 @@ function simulateUser(seed: number): UserResult {
       for (const t of TRACKS) {
         kept[t] = week.days[t].size >= KEPT_MIN_DAYS && week.raw[t] >= KEPT_MIN_RAW && (t !== "BODY" || week.effort >= BODY_EFFORT_MINUTES);
         if (kept[t]) keptWeeks[t] += 1;
+      }
+      // The streak multiplier (P29, the override only): the same week judged on a separately priced plain raw, and on
+      // the raw with the multiplier counted (what the judge would keep were it to read rawXp alone).
+      if (STREAK_ON) {
+        for (const t of TRACKS) {
+          const floorsBut = (r: number) => week.days[t].size >= KEPT_MIN_DAYS && r >= KEPT_MIN_RAW && (t !== "BODY" || week.effort >= BODY_EFFORT_MINUTES);
+          if (kept[t]) fullStreak.kept += 1;
+          if (floorsBut(week.raw[t] - weekPlainDrift[t])) fullStreak.keptPlain += 1;
+          if (floorsBut(week.raw[t] + weekStreakExtra[t])) fullStreak.keptWith += 1;
+        }
+        weekStreakExtra = ZERO_TRACKS();
+        weekPlainDrift = ZERO_TRACKS();
       }
       // The shadow EXERCISE habit (P23, the override only): BODY with it, by the rule and as before the launch.
       if (shadowRng) {
@@ -983,6 +1068,11 @@ function simulateUser(seed: number): UserResult {
       return r.chestFreeze + r.recoverFreeze;
     }, () => mods.freezeMax);
     freezeBankForChest = fold.bank;
+    // The streak multiplier (P29, the override only): a freeze the fold spent (on yesterday, the day before today) holds it.
+    if (STREAK_ON) {
+      if (fold.used > lastUsed && i >= 1) heldOn[i - 1] = true;
+      lastUsed = fold.used;
+    }
 
     buyPerks(dayIdx);
     if (SNAP_DAYS.includes(dayIdx)) {
@@ -1006,7 +1096,7 @@ function simulateUser(seed: number): UserResult {
     chests, chestRare, chestPity, chestXp, chestMp, crits, qualifyingTasks, critExtraXp, chainExtraRaw, taskRawNoMomentum, tasks,
     sessions, sessionRaw: sessionRawSum, sessionXp: sessionXpSum, prs, milestones, checkpoints, planWeeks: planWeeksPaid,
     lspAt, perksAt, firstPerkDay, fullBranchDay, streak, bodyKeptShare: keptShare.BODY, keptShare, questsDone, lifeXpPerDay,
-    proofTicks, proofRawDrift, shadow,
+    proofTicks, proofRawDrift, shadow, fullStreak,
     creditsCoreByWeek, creditsRoadmapByWeek, creditsBySource,
   };
 }
@@ -1268,6 +1358,31 @@ function main() {
     // collapse: BODY never falls below what its walks keep alone.
     check("P23d with the shadow EXERCISE habit (half its ticks one tap), the reported-minutes rule takes BODY's kept rate down by at most 12 points, never below the walks' own", keptRule <= keptBefore && keptBefore - keptRule <= 0.12 && keptRule >= bodyKept, `${f(100 * keptBefore)}% → ${f(100 * keptRule)}% (walks alone ${f(100 * bodyKept)}%)`);
     check("P23e with it, the BODY quest rate drops by at most 10 points, never below the walks' own", questRule <= questBefore && questBefore - questRule <= 0.1 && questRule >= bodyQuest, `${f(100 * questBefore)}% → ${f(100 * questRule)}% (walks alone ${f(100 * bodyQuest)}%)`);
+  }
+  if (STREAK_ON) {
+    // The streak multiplier (P29; the override only): the plan's re-pin of the basket, and the MP it never multiplies.
+    const fs = users.map((u) => u.fullStreak);
+    const meanC = fs.reduce((a, x) => a + x.cSum, 0) / Math.max(1, fs.reduce((a, x) => a + x.ticks, 0));
+    const uplift = fs.reduce((a, x) => a + x.raw, 0) / Math.max(1e-9, fs.reduce((a, x) => a + x.rawPlain, 0)) - 1;
+    const fullShare = mean(fs.map((x) => x.fullDays / DAYS));
+    const kept = fs.reduce((a, x) => a + x.kept, 0);
+    const keptPlain = fs.reduce((a, x) => a + x.keptPlain, 0);
+    const keptWith = fs.reduce((a, x) => a + x.keptWith, 0);
+    const drift = fs.reduce((a, x) => a + x.drift, 0);
+    const weeks = users.reduce((a, u) => a + u.lifeMpByWeek.length * TRACKS.length, 0);
+    console.log(
+      `  streak multiplier: P29 (XTNL_STREAK_LAUNCH_DAY is set): ${f(100 * fullShare)}% of days Full (not blank, the frog done), the run up to ${Math.max(...fs.map((x) => x.maxDays))} days; the basket's full ticks pay mean C ${f(meanC, 3)}, raw ${uplift >= 0 ? "+" : ""}${f(100 * uplift)}% on the per-habit C; kept track-weeks ${kept.toLocaleString("en-GB")} of ${weeks.toLocaleString("en-GB")}, judged on each tick's raw without it (${keptWith.toLocaleString("en-GB")} had it been counted)`
+    );
+    check("P29a the basket's full ticks pay C = m(d) between ×1.00 and the cap, a mean C in [1.05, 1.20]", fs.every((x) => x.ticks > 0) && meanC >= 1.05 && meanC <= STREAK_MULT_CAP + 1e-9 && streakMult(1e6) === STREAK_MULT_CAP, `mean C ${f(meanC, 3)}`);
+    // Measured at the build (2026-10-25, 120 seeds): 65.5% of days Full, mean C 1.086, raw −1.4% on the per-habit C (whose
+    // recurring rows sat at 1.137): the realistic player misses a must on about a third of days, so one miss resetting
+    // the run costs about what the one-offs gain. balance-horizon 4s holds the committed player (every day Full) at +9%.
+    check("P29b the raw change on the per-habit C stays modest either way (H3: never the blueprint's ×2): in [−5%, +12%]", uplift >= -0.05 && uplift <= 0.12, `${uplift >= 0 ? "+" : ""}${f(100 * uplift, 2)}%`);
+    check(
+      "P29c MP is unaffected: no mint reads C, and the kept track-weeks (what the judge mints for) are judged on each tick's raw without the multiplier (its receipt's plainRaw, the plain price exactly), so they are the plain run's: 0 difference",
+      kept === keptPlain && drift === 0,
+      `${kept.toLocaleString("en-GB")} vs ${keptPlain.toLocaleString("en-GB")} of ${weeks.toLocaleString("en-GB")}; Σ |plainRaw − plain price| ${f(drift, 3)}`
+    );
   }
   console.log(fails.length ? `  ${fails.length} pin(s) failed: ${fails.join("; ")}` : "  all pins hold");
   if (JSON_OUT) console.log(JSON.stringify(out, null, 2));

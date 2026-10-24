@@ -103,3 +103,30 @@ Recorded as the user decides each conflict with the existing app. Decision ids (
 - **Phone.** POST /tasks/makeup carries make up, minimum and accept the loss through `action`. Undoing a make-up stays on the web card (10 minutes). While Duty is off, the phone lists any debt without its actions.
 - **The worst first week (spiral-check).** If every must is missed for 7 days after the launch, the caps hold the debt to at most 96.7. That is under the 100 total cap, because the cap refuses the miss that would cross it, and no credits are ever debited.
 
+
+**2026-10-25: decisions for Stage 8 (decay, streak and fatigue).**
+- **D24 Decay.** Condition only. A derived condition is max(0.5, e^(−λ·max(0, idleDays − 3))), with λ 0.02 for body, 0.01 for knowledge and craft, and 0.005 for the rest. Idle days count only from DECAY_LAUNCH_DAY, and rest, sick, vacation and freeze days are never idle. Levels, XP, hours, titles and the character level never drop. The switch is flipped only on the user's go.
+- **D24b Traits and emblems (the user's own variant, replacing the plan's 'never feed the traits').** A skill's condition also lowers the traits it feeds. An owned emblem whose requirement the lowered trait no longer meets is **temporarily frozen**, not re-locked: it stays owned, and its effect (and its loadout slot's effect) is paused while frozen. It thaws by itself, with no unlock ceremony again, as soon as the trait is back at the requirement. Ownership, unlock history and celebrations are never removed.
+- **D25 Streak multiplier.** m(d) = min(1.2, 1.05^d) from consecutive judged Full days, as C on every full personal tick (one-offs included), not on reviews or MP. A miss resets it to ×1.0. Rest tokens and held days bridge it without adding a day. Receipts are life-4. It sits behind STREAK_LAUNCH_DAY, flipped only on the user's go.
+- **D26 Fatigue.** FATIGUED (combo ceiling ×0.5 for 18 h) applies once per day when the day's review answers pass 200, and never because of a miss. There is no sleep rule. The life-XP knee stays. It is built behind FATIGUE_LAUNCH_DAY, like every other change to pay, so nothing changes until the user's go.
+
+**2026-10-25: decisions for Stages 9 and 2 (the user delegated them: "after stage 8, complete stage 9 and stage 2, do whatever remaining without asking me"). The coordinator took the plan's recommended option each time. Launch switches still need the user's direct go.**
+- **D35 Side quests.** Sources are the life detectors plus a `#side` tag:
+  - Body under 75 of 150 minutes by Thursday;
+  - a must missed twice this week;
+  - a habit about to lose a rung;
+  - a deadline more than 3 days overdue.
+
+  Side quests pay the normal price, at most 2 are open, and there are no CRM triggers. A side quest is never a must and never carries debt, its expiry costs nothing, and it stays out of the audit rate. The automatic detectors are built behind a new inert switch, SIDE_QUESTS_LAUNCH_DAY, because they write templates onto the board by themselves. A `#side` capture is the user's own act and works without it.
+- **D36 Calibration.** Changes are automatic only for Today's three sizes and the capacity suggestion. Habit and must changes are one-tap suggestions (through pendingChange, so the akrasia horizon applies). It never changes prices, bands or kept-week floors. It needs at least 2 frozen audits, so it stays dormant until AUDIT_LAUNCH_DAY is live and two weeks are frozen.
+- **D33 Done-now line.** `x <title>` ticks the matching open row (a personal task or habit due today, not on a work tab, not auto-metric, not deferred). The sheet shows a chip, and one tap turns the line back into a new task. This fixes the silent duplicate and is live on deploy: it is a correction, not a change to pay.
+- **D34 Phone scope and order.** Token first, then minutes and Yesterday, then the widget, then the offline queue. Phone minutes use the drawer's clamp, which Stage 7 already built. The queue carries each item's own life-day key, review answers are never queued, and a replay with the same clientId writes once.
+
+**2026-10-25: Stage 8 build decisions (taken by the coordinator under the user's delegation; the user may revisit them).**
+- **Protective emblems never freeze.** An emblem whose effect guards a card's level (a ward, extra grace days, longer intervals, extra strikes) is always read at full condition. Idle time must never cost a knowledge level, as D24 requires. Every other emblem freezes and pauses as D24b says.
+- **Decay and the streak wait for Duty.** Each is in force from the later of its own switch and DUTY_LAUNCH_DAY, so Duty is flipped first or with them.
+- **Knowledge in the traits.** Intellect's condition also scales the Field rows of the traits, the literal D24b. Per-card forgetting is unchanged.
+- **Kept weeks ignore the streak.** A life-4 receipt stores plainRaw, the price without the multiplier, and the kept-week floor reads that. Mastery points are unaffected by the streak.
+- **Held days never add to the streak.** A rest, sick, vacation or rest-token day bridges the run without adding a day, the literal reading.
+- **Fatigue counts answers.** The 200th answer of the day applies Fatigued whether it was right or wrong. A miss, a quiet day or a forgotten card never triggers it. Mastery points never move.
+- **Capital and frozen emblems.** A frozen emblem's capital rate pauses with it. The planned order retires capital at CREDITS_LAUNCH_DAY before decay flips, so this should never apply in practice.

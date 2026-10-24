@@ -45,6 +45,7 @@ import { PROOF_ROW_NOTE, pagesRowNoteOf, type TickProofInput } from "../../lib/p
 import { mustCountOf, type DeferredItem } from "../../lib/task-decisions";
 import type { DailyQuests } from "../../lib/daily-quests";
 import { restTokensText } from "../../lib/rest-tokens";
+import { STREAK_RULES_HREF, streakDescribe, type StreakView } from "../../lib/streak-mult";
 import { RECORD_YESTERDAY_EVENT, RECORD_YESTERDAY_HREF, RECORD_YESTERDAY_PARAM } from "../../lib/shortcuts";
 import { OWED_NOTICE_ID, WEEK_AUDIT_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID } from "../shell/shell-types";
 import {
@@ -980,6 +981,12 @@ export interface LaneChip {
   text: string;
   held?: "rest" | "sick" | "away" | "freeze";
   icon?: "clock";
+  /**
+   * Blueprint P29: a chip that is a link (the streak multiplier's, to its rules card), drawn as a 44 px target; `label`
+   * is what a screen reader hears and the hover title ('3 Full days in a row: every full tick pays ×1.16.').
+   */
+  href?: string;
+  label?: string;
 }
 
 export interface MustLaneView {
@@ -991,6 +998,12 @@ export interface MustLaneView {
   chips: LaneChip[];
   /** The debts after today's musts: one card, or one collapsed summary. */
   owed: OwedView;
+  /**
+   * Blueprint P29: the streak multiplier's chip on its own when the lane is hidden (no musts, no debts), since the
+   * multiplier still prices every full tick that day. Absent while the lane shows (the chip is among `chips`) and while
+   * the multiplier is not in force.
+   */
+  solo?: LaneChip;
 }
 
 export function mustLaneOf(p: {
@@ -1016,12 +1029,19 @@ export function mustLaneOf(p: {
    * the freeze glyph and the words. Null or absent: no chip (momentum not live, or a work tab).
    */
   restTokens?: number | null;
+  /**
+   * Blueprint P29 (D25): the streak multiplier (Board.streak), a quiet chip 'Streak ×1.16 · day 3' before the Rest tokens
+   * one, a link to the rules' Streak card that tells a screen reader what it pays (streakDescribe). With the lane hidden
+   * it is `solo`. Null or absent: no chip (the multiplier not in force, or a work tab).
+   */
+  streak?: Pick<StreakView, "text" | "days" | "floor"> | null;
 }): MustLaneView {
   const hidden = (p.deferred ?? []).filter((i) => i.must);
   if (hidden.length > 0) {
     const lane = mustLaneOf({ ...p, deferred: undefined });
     const counted = mustCountOf(laneTally(p.must), hidden);
-    return { ...lane, show: true, count: counted.total > 0 ? counted.text : lane.count };
+    // The lane shows here, so the streak chip is among its chips, never `solo`.
+    return { show: true, count: counted.total > 0 ? counted.text : lane.count, chips: lane.chips, owed: lane.owed };
   }
   const tally = laneTally(p.must);
   const chips: LaneChip[] = [];
@@ -1036,14 +1056,19 @@ export function mustLaneOf(p: {
   if (!p.live && p.launchDay && p.launchDay > p.today) chips.push({ tone: "held", icon: "clock", text: `Musts carry stakes from ${dayLabel(p.launchDay)}` });
   if (p.daily && p.daily.minimum > 0) chips.push({ tone: "quiet", text: `${p.daily.minimum} at minimum` });
   if (p.daily && p.daily.over > 0) chips.push({ tone: "quiet", text: `${p.daily.over} over the cap` });
+  const streakChip: LaneChip | null = p.streak ? { tone: "quiet", text: p.streak.text, href: STREAK_RULES_HREF, label: streakDescribe(p.streak) } : null;
+  if (streakChip) chips.push(streakChip);
   if (p.restTokens != null) chips.push({ tone: "held", held: "freeze", text: restTokensText(p.restTokens) });
   // Held musts are not asked today: with only those left, no '0 of 0' under the held chip.
   const allHeld = tally.total === 0 && p.must.some((r) => r.heldToday);
+  const show = p.must.length + p.owed.length > 0;
   return {
-    show: p.must.length + p.owed.length > 0,
+    show,
     count: p.must.length > 0 && !allHeld ? `${tally.kept} of ${tally.total} kept` : null,
     chips,
     owed: owedViewOf(p.owed),
+    // P29: with no musts and no debts the lane hides, but the multiplier still prices every full tick: its chip alone.
+    ...(!show && streakChip ? { solo: streakChip } : {}),
   };
 }
 

@@ -166,6 +166,8 @@ import { KeptWeeks, endLabelTops, keptCellLabel, trackLinesGeometry } from "../s
 import { StatusPanel, statusSeenKey } from "../src/components/home/StatusPanel";
 import { STATUS_ASIDE, STATUS_KEYS, STATUS_TITLE, capitalPanelOf, statusPanelOf, type CapitalDeal } from "../src/lib/status-panel";
 import { AttributeRadar, TRAITS_TITLE } from "../src/components/home/SheetSections";
+// Blueprint P28 (D24b): the Traits card's line while an attribute is below 100% condition.
+import { traitsConditionLineOf } from "../src/lib/skill-decay";
 import { CharacterHero } from "../src/components/home/CharacterHero";
 import { LegacyCapitalLine, legacyCapitalLineOf } from "../src/components/home/LegacyCapital";
 import { fixtures as celebrateFixtures, fixtureMoments } from "../src/app/dev/style/celebrate/fixtures";
@@ -475,6 +477,22 @@ function scoresOf(v: (a: string, i: number) => number): AttributeScores {
     "traits (P2): the plot is named 'Trait radar'; with nothing yet, 'Traits grow from every Domain you work…'",
     /aria-label="Trait radar\. Top three: /.test(traitsOn) && traitsOff.includes("Traits grow from every Domain you work. Review an idea and the first one appears.") && radarHtml({ launched: true, contributes: false }, []).includes("Traits grow from every Domain you work and from life tracks.")
   );
+  // Blueprint P28 (D24b): the radar reads the traits at condition, so while an attribute is below 100% one quiet line
+  // says so inside the card; while condition decay is off (no conditions, so no line) the card is exactly as before.
+  const at100 = { condition: 1, idleDays: 0 };
+  const condLine = traitsConditionLineOf({ VITALITY: { condition: 0.7, idleDays: 21 }, INTELLECT: at100, CRAFT: at100, DUTY: at100, CARE: at100 });
+  const traitsCond = renderToStaticMarkup(createElement(AttributeRadar, { radar: layout, hasGhost: false, top, life: { launched: true, contributes: true }, conditionLine: condLine }));
+  check(
+    "traits (P28): while an attribute is below 100% the card says the radar reads at condition ('Read at condition: Body 70% · a Body tick restores it'); absent while off, and at 100%",
+    condLine === "Read at condition: Body 70% · a Body tick restores it" &&
+      traitsCond.includes(`<p class="t-meta status-cond radar-cond">${condLine}</p>`) &&
+      traitsCond.replace(/<p class="t-meta status-cond radar-cond">[^<]*<\/p>/, "") === traitsOn &&
+      !traitsOn.includes("radar-cond") &&
+      traitsConditionLineOf(null) === null &&
+      traitsConditionLineOf({ VITALITY: at100, INTELLECT: at100, CRAFT: at100, DUTY: at100, CARE: at100 }) === null &&
+      /\{\.\.\.\(traitsLine \? \{ conditionLine: traitsLine \} : \{\}\)\}/.test(read("src/app/you/page.tsx")),
+    traitsCond.slice(0, 200)
+  );
 }
 
 // ── 4b. Track-chart end labels never print on top of each other ───────────
@@ -593,6 +611,15 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   const htmlOn = renderToStaticMarkup(createElement(StatusPanel, { panel: statusPanelOf({ launched: true, rows }, k), capital: null }));
   const htmlOff = renderToStaticMarkup(createElement(StatusPanel, { panel: statusPanelOf({ launched: false, rows: [] }, k), capital: null }));
   check("status: renders 5 rows when launched and 1 when not", count(htmlOn) === 5 && count(htmlOff) === 1, `${count(htmlOn)} / ${count(htmlOff)}`);
+  // Blueprint P28 (D24): with the conditions (only while DECAY_LAUNCH_DAY is in force) an idle row says so under its line;
+  // without them (every read while the switch is off) the card is exactly as before.
+  const idle = { VITALITY: { condition: Math.exp(-0.18), idleDays: 12 }, INTELLECT: { condition: 1, idleDays: 1 }, CRAFT: { condition: 1, idleDays: 0 }, DUTY: { condition: 1, idleDays: 0 }, CARE: { condition: 1, idleDays: 0 } };
+  const htmlIdle = renderToStaticMarkup(createElement(StatusPanel, { panel: statusPanelOf({ launched: true, rows }, k, null, null, idle), capital: null }));
+  check(
+    "status (P28): an idle row's condition under its line ('Body 83% · 12 days idle · a Body tick restores it'), nothing at 100%; with no conditions the card is the card before P28",
+    htmlIdle.includes("Body 83% · 12 days idle · a Body tick restores it") && (htmlIdle.match(/status-cond/g) ?? []).length === 1 && !htmlOn.includes("status-cond") &&
+      htmlIdle.replace(/<div class="t-meta status-cond">[^<]*<\/div>/, "") === htmlOn && statusPanelOf({ launched: true, rows }, k).rows.every((r) => r.condition === null)
+  );
   // Re-pinned for blueprint P2 (D6): the five axes are Attributes, so the card is titled Attributes (the radar's 13 are Traits).
   check(
     "status (P2): titled Attributes, never Status, named 'Five attributes' with the tracks and 'Attributes' with Intellect alone",
@@ -1083,6 +1110,14 @@ function sourceChecks(isUtility: UtilityTest, via: string) {
   // Loadout: square .lo-slot boxes, and a skeleton at the same geometry.
   const grid = read("src/components/skills/LoadoutGrid.tsx");
   check("loadout: the grid uses .lo-slots / .lo-slot, never the legacy .slot", /className="lo-slots"/.test(grid) && /cx\("lo-slot"/.test(grid) && /"lo-slot empty"/.test(grid) && !/className="slots?[\s"]|cx\("slots?"/.test(grid));
+  // Blueprint P28 (D24b): a frozen slot is owned and dimmed with the freeze glyph in the held hue (tokens only), never the
+  // dormant slot alone; a frozen bench emblem says its line before it is equipped.
+  check(
+    "loadout (P28): a frozen slot draws the freeze glyph in the held hue, its bench note too; tokens only",
+    /\.lo-slot > \.lo-freeze \{ position: absolute; top: 4px; right: 4px; width: 14px; height: 14px; color: var\(--held\); \}/.test(read("src/components/home/you.css")) &&
+      /\.lo-frozen-note \{[^}]*color: var\(--held\);/.test(read("src/components/home/you.css")) &&
+      /s\.frozen && "frozen"/.test(grid) && /<HeldGlyph kind="freeze" className="lo-freeze" \/>/.test(grid) && /lo-frozen-note/.test(grid)
+  );
   const skel = read("src/app/you/loadout/loading.tsx");
   check("loadout: the skeleton draws the slot's own square (no fixed 56 px block)", /lo-slot-skel/.test(skel) && /className="lo-slots"/.test(skel) && !/h=\{56\}/.test(skel));
 
@@ -1373,8 +1408,12 @@ function literalText(body: string): string {
   );
   check(
     // Re-pinned for blueprint P5: the skills are the panel's fourth input, read beside the wave (a failed read counts none).
-    "status (P1, P4, P5): its rows come from the sheet's own life view and Knowledge row with the avatar's targets and the skills (statusPanelOf(s.life, s.knowledge, avatar, skills)), Capital from the won Deals read beside the one wave, and the avatar on those deals (a failed read: no Capital row, no targets, no skill counted, never an error page)",
-    /const status = statusPanelOf\(s\.life, s\.knowledge, avatar, skills \? skills\.skills : null\);/.test(youCode) &&
+    // Re-pinned for P28: the conditions are its fifth, read beside the wave too (null at once while DECAY_LAUNCH_DAY is
+    // off, and on a failed read: then no row carries a condition).
+    "status (P1, P4, P5, P28): its rows come from the sheet's own life view and Knowledge row with the avatar's targets, the skills and the conditions (statusPanelOf(s.life, s.knowledge, avatar, skills, conditions)), Capital from the won Deals read beside the one wave, and the avatar on those deals (a failed read: no Capital row, no targets, no skill counted, no condition, never an error page)",
+    /const status = statusPanelOf\(s\.life, s\.knowledge, avatar, skills \? skills\.skills : null, basis \? attributeConditionsOf\(basis\) : null\);/.test(youCode) &&
+      /const conditionRead = loadConditionBasis\(userId, now\)\.catch\(\(\) => null\);/.test(youCode) &&
+      youCode.indexOf("const conditionRead = ") < youCode.indexOf("await Promise.all([") &&
       /const skillsRead = loadSkills\(userId, \{ fields: false \}\)\.catch\(\(\) => null\);/.test(youCode) &&
       youCode.indexOf("const skillsRead = ") < youCode.indexOf("await Promise.all([") &&
       /const avatarRead = capitalRead\.then\(\(deals\) => loadAvatar\(userId, now, \{ deals \}\)\)\.catch\(\(\) => null\);/.test(youCode) &&

@@ -287,10 +287,19 @@ for (const tz of [SYD, BNE]) {
   // Blueprint P22 (2026-10-24): spiral-check (the worst week: every must missed for seven days after Duty's launch owes
   // at most 100, 20 a miss, 3 open a task, nothing before the launch and 0 credits; a make-up within 2 days pays ×0.85;
   // the weekly review's Owed and rest steps) runs right after duty-check, before duty-actions-check.
+  // Blueprint P28 (2026-10-25): skill-decay-check (condition decay for skills and attributes: the inert switch, the
+  // curve and its floor, idle days from the launch only and never on a held day, the traits it lowers and the emblems
+  // it freezes, never history) runs right after audit-decay-check, before the rituals.
+  // Blueprint P29 (2026-10-25): streak-mult-check (the global daily-quest streak multiplier: the inert switch, m(d) and
+  // its cap, the run over judged Full days, 'life-4' receipts, the projection that is the payment, never MP) runs right
+  // after skill-decay-check, before the rituals.
+  // Blueprint P30 (2026-10-25): review-fatigue-check (the cognitive breaker: the inert switch, FATIGUED once a day at
+  // the day's 200th answer, right or wrong, keyed by the day, never for a miss, no sleep rule) runs right after
+  // streak-mult-check, before the rituals.
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
   const ROADMAP_LIFE_CHECKS = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests", "roadmap-invite", "roadmap-hostile"];
   const STRICT_LIFE_CHECKS = new Set(["today-ui", "roadmap-contract"]);
-  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "rest-tokens", "balance-horizon", "momentum-sim", "momentum-sim:credits", "status", "credits", "proof", "proof-pages", "health-ingest", "settle", "duty", "spiral", "duty-actions", "daily-quests", "week-audit", "audit-decay", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
+  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "rest-tokens", "balance-horizon", "momentum-sim", "momentum-sim:credits", "status", "credits", "proof", "proof-pages", "health-ingest", "settle", "duty", "spiral", "duty-actions", "daily-quests", "week-audit", "audit-decay", "skill-decay", "streak-mult", "review-fatigue", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
   const PLAIN_LIFE_SCRIPTS = new Set(["balance-horizon", "momentum-sim"]);
   /** A name's arguments past its file: 'momentum-sim:credits' is the sim with --credits (P16). */
   const ARGS_OF: Readonly<Record<string, string>> = { "momentum-sim:credits": " --credits" };

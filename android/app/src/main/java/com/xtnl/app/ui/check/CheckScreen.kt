@@ -102,6 +102,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.xtnl.app.core.ConditionLine
 import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.FadingLine
 import com.xtnl.app.core.Fmt
@@ -109,17 +110,20 @@ import com.xtnl.app.core.OwedLine
 import com.xtnl.app.core.ProofLine
 import com.xtnl.app.core.QuestLine
 import com.xtnl.app.core.RestTokenLine
+import com.xtnl.app.core.StreakLine
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.core.WalletLine
 import com.xtnl.app.core.WeekLine
 import com.xtnl.app.data.CheckData
+import com.xtnl.app.data.CheckSkill
 import com.xtnl.app.data.DailyQuests
 import com.xtnl.app.data.Fading
 import com.xtnl.app.data.LevelInfo
 import com.xtnl.app.data.OwedItem
 import com.xtnl.app.data.QuestsData
 import com.xtnl.app.data.ReviewSummary
+import com.xtnl.app.data.StreakMultiplier
 import com.xtnl.app.data.TaskItem
 import com.xtnl.app.data.Wallet
 import com.xtnl.app.data.WeekAudit
@@ -593,6 +597,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                 owed(ui, vm)
                 review(data.review, data.fading, data.now, onStartReview)
                 week(data.week)
+                condition(data.skills)
                 quests(ui, rows)
                 work(ui, data.now, vm, spots, motion)
             }
@@ -619,6 +624,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                     ) {
                         review(data.review, data.fading, data.now, onStartReview)
                         week(data.week)
+                        condition(data.skills)
                         quests(ui, rows)
                         work(ui, data.now, vm, spots, motion)
                     }
@@ -779,6 +785,17 @@ private fun LazyListScope.week(w: WeekAudit?) {
 }
 
 /**
+ * The Condition card (P28), on both displays: on the cover screen in the one column after the Week card, on the main
+ * screen in the second pane under it. Only while the server lists something under 90% (none while decay is off).
+ */
+private fun LazyListScope.condition(list: List<CheckSkill>) {
+    if (!ConditionLine.shows(list)) return
+    item(key = "condition", contentType = "condition") {
+        ConditionTile(list, Modifier.padding(top = 4.dp))
+    }
+}
+
+/**
  * The Quest card (P15), on both displays: on the cover screen in the one column after the Week card, on the main
  * screen in the second pane. Only while the server sent something to show (QuestLine.shows).
  */
@@ -840,6 +857,12 @@ private fun Header(data: CheckData, ui: CheckViewModel.Ui, vm: CheckViewModel, s
             RestTokenLine.tokens(data.streak)?.let { n ->
                 Spacer(Modifier.height(6.dp))
                 RestTokensChip(n)
+            }
+            // The streak multiplier (blueprint P29): only while the server sends it, under the Rest tokens chip as on the
+            // web's Daily quests; the header is the first item on the cover screen and the main screen's first pane.
+            StreakLine.of(data.streak)?.let { m ->
+                Spacer(Modifier.height(6.dp))
+                StreakMultChip(m)
             }
             // The credits wallet (blueprint P16): only while the server sends one (credits switched on, read).
             ui.wallet?.let { w ->
@@ -1006,6 +1029,27 @@ private fun RestTokensChip(n: Int) {
         Icon(Glyphs.Freeze, null, tint = c.held, modifier = Modifier.size(14.dp))
         Spacer(Modifier.width(6.dp))
         Text(RestTokenLine.chip(n), color = c.ink0, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+    }
+}
+
+/**
+ * The streak multiplier (blueprint P29, decision D25): "Streak ×1.16 · day 3", the flame and the words, never colour
+ * alone. It wraps rather than clips at the cover screen's width.
+ */
+@Composable
+private fun StreakMultChip(m: StreakMultiplier) {
+    val c = X.c
+    Row(
+        Modifier
+            .clip(PillShape)
+            .border(BorderStroke(1.dp, c.line2), PillShape)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .semantics(mergeDescendants = true) { contentDescription = StreakLine.describe(m) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Glyphs.Flame, null, tint = c.ink2, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(StreakLine.chip(m), color = c.ink0, style = MaterialTheme.typography.labelLarge)
     }
 }
 
@@ -1449,6 +1493,36 @@ private fun WeekTile(w: WeekAudit, modifier: Modifier = Modifier) {
                 }
                 WeekLine.decayNote(w)?.let { Text(it, style = meta, color = c.ink2, modifier = Modifier.padding(top = 4.dp)) }
             }
+        }
+    }
+}
+
+/**
+ * The Condition card (docs/mobile-api.md `skills`; blueprint 3.1b, P28, decisions D24 and D24b): each idle attribute or
+ * skill the server lists, the lowest first, in the web's words ("Body 81% · 13 days idle"), and what never drops. A
+ * reading, not a control (one node for TalkBack): the practice that restores it is a tick on Check, a review or a walk.
+ * Every line may wrap, so it reads the same on the cover screen and in the main display's second pane.
+ */
+@Composable
+private fun ConditionTile(list: List<CheckSkill>, modifier: Modifier = Modifier) {
+    val c = X.c
+    val meta = MaterialTheme.typography.labelMedium
+    XCard(modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = ConditionLine.description(list) }) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Eyebrow(ConditionLine.TITLE)
+                Spacer(Modifier.width(8.dp))
+                Text(ConditionLine.header(list), color = c.ink2, style = meta, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            for (s in list) {
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(ConditionLine.line(s), style = MaterialTheme.typography.bodyMedium, color = c.ink0, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
+                    Text(ConditionLine.kindWord(s), style = meta, color = c.ink2, maxLines = 1)
+                }
+            }
+            Text(ConditionLine.NOTE, style = meta, color = c.ink2, modifier = Modifier.padding(top = 6.dp))
         }
     }
 }

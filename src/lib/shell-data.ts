@@ -49,9 +49,10 @@ async function build(userId: string): Promise<ShellData> {
   );
   // Owned, not equipped: a title is earned once (titles.ts), so the crest and
   // the sidebar agree with /you, /you/stats and the title detectors even
-  // while the Ultimate sits on the bench.
+  // while the Ultimate sits on the bench. Its epithet reads the traits at full condition (blueprint P28: a title never
+  // drops while an attribute is idle; the same scores as before while condition decay is off).
   const ultimateCount = progression.ownedCodes.filter((c) => getSkill(c)?.rank === "ULTIMATE").length;
-  const title = computeTitle(level, progression.scores, ultimateCount);
+  const title = computeTitle(level, progression.fullScores, ultimateCount);
   const transcendent = ultimateCount > 0;
   const nextBand = transcendent ? null : TITLE_BANDS.find((b) => b.min > level) ?? null;
   const today = feed?.counts.today ?? null;

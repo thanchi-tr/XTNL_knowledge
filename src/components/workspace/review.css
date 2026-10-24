@@ -21,6 +21,9 @@
   .rv-fx-head { display: grid; gap: 2px; padding: 12px 14px 10px; }
   .rv-fx-head p { margin: 0; overflow-wrap: anywhere; }
   .rv-effect { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-top: 1px solid var(--line-1); }
+  /* the fatigue breaker (blueprint P30): the rule and today's answers, only once it is in force */
+  .rv-fatigue { display: grid; gap: 4px; padding: 12px 14px; min-width: 0; }
+  .rv-fatigue p { margin: 0; overflow-wrap: anywhere; }
   .rv-empty { padding: 28px 16px; display: grid; gap: 8px; justify-items: center; text-align: center; }
 
   /* the roadmap focus (roadmap ruling N14): the open layer and one topic now; the rest folded */

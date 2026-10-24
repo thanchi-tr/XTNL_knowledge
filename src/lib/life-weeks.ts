@@ -428,6 +428,18 @@ function paidByWalk(receipt: Receipt | null): boolean {
   return k?.label === MODE_LABEL.SESSION && k.value === 0;
 }
 
+/**
+ * What one row adds to its week's raw toward the kept floor: its rawXp, or for a 'life-4' receipt (the streak
+ * multiplier, blueprint P29) the raw it would have had without the multiplier (receipt.streak.plainRaw). The streak
+ * multiplies life XP and never MP (D25), and the kept weeks are what the judge mints MP for, so they are judged as if
+ * it were off. Every receipt before STREAK_LAUNCH_DAY carries no `streak`, so no week before it is re-judged.
+ */
+export function keptRawOf(r: Pick<WeekTaskRow, "rawXp" | "receipt">): number {
+  const plain = r.receipt?.streak?.plainRaw;
+  if (typeof plain === "number" && Number.isFinite(plain)) return plain;
+  return Number.isFinite(r.rawXp) ? r.rawXp : 0;
+}
+
 /** Live TASK (and, from momentum, WORKOUT) rows per track and day, for a week's [from, to]: the judge's only view of activity. */
 function trackWeekOf(rows: readonly WeekTaskRow[], track: Track, from: DayKey, to: DayKey): TrackWeek {
   const days = new Set<DayKey>();
@@ -438,7 +450,8 @@ function trackWeekOf(rows: readonly WeekTaskRow[], track: Track, from: DayKey, t
     if (r.track !== track || r.day < from || r.day > to) continue;
     days.add(r.day);
     completions += 1;
-    if (Number.isFinite(r.rawXp)) raw += r.rawXp;
+    // The streak multiplier (P29): a 'life-4' tick counts its raw without it (keptRawOf); every other row its rawXp.
+    raw += keptRawOf(r);
     if (track === "BODY" && r.category === EFFORT_CATEGORY && r.receipt) {
       if (r.source === "WORKOUT") {
         // A walk: its counted effort (a topped-up tick's own minutes already taken off), else minutes × weight of B.

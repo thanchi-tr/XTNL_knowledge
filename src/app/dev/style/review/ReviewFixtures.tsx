@@ -11,7 +11,7 @@ import type { BoonKind } from "@/lib/boon-meta";
 import { TabLinks } from "@/components/ui/Tabs";
 import { BossPanel } from "@/components/workspace/BossPanel";
 import { BossResult } from "@/components/workspace/BossResult";
-import { EffectsCard, RecentIdeas } from "@/components/workspace/ReviewHub";
+import { EffectsCard, FatigueNote, RecentIdeas } from "@/components/workspace/ReviewHub";
 import { ReviewRunner, type RunPhase } from "@/components/workspace/ReviewRunner";
 import { SessionComplete } from "@/components/workspace/SessionComplete";
 import { ALL_FIELDS, SessionSummary } from "@/components/workspace/SessionSummary";
@@ -123,6 +123,10 @@ export function ReviewFixtures({ state, data, loadoutStrip }: { state: FixtureSt
               />
               {loadoutStrip}
               <EffectsCard effects={data.effects} />
+              {/* Blueprint P30: the fatigue breaker as the hub shows it once FATIGUE_LAUNCH_DAY is in force; then in effect. */}
+              <FatigueNote fatigue={data.fatigue} />
+              <EffectsCard effects={{ lines: [], boons: [], penalties: [data.fatigued.penalty] }} />
+              <FatigueNote fatigue={data.fatigued.fatigue} />
             </div>
             <div className="rv-col">
               <BossPanel bosses={data.bosses} onChallenge={() => undefined} onChooseBoon={() => undefined} pendingFieldId={null} error={null} />

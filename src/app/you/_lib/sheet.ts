@@ -175,7 +175,9 @@ export async function loadSheet(userId: string, now: Date = new Date()): Promise
   const { level, progress } = characterLevelFromRaw(raw);
   // Titles are earned once: counted from the Ultimates you own, not the ones equipped.
   const ultimates = progression.ownedCodes.filter((c) => getSkill(c)?.rank === "ULTIMATE").length;
-  const title = computeTitle(level, progression.scores, ultimates);
+  // Blueprint P28: the title and its epithet read the traits at full condition (titles never drop); the radar, the
+  // ready callout and the top traits read the traits now. The same scores while condition decay is off.
+  const title = computeTitle(level, progression.fullScores, ultimates);
   const transcendent = ultimates > 0;
 
   // The radar's sources: every Field, then the life rows at the levels the attributes read.
@@ -206,7 +208,7 @@ export async function loadSheet(userId: string, now: Date = new Date()): Promise
     title: title.rank,
     epithet: title.epithet,
     transcendent,
-    dominant: dominantAttribute(progression.scores),
+    dominant: dominantAttribute(progression.fullScores),
     distance: titleDistance(raw, transcendent),
     balance,
     mastered,

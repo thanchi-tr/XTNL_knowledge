@@ -124,6 +124,13 @@ export interface PendingDividend {
   perHour: number;
 }
 
+/**
+ * What has accrued since the last claim, priced at the rate of `activeSkills` now. The whole window (at most
+ * ACCRUAL_CAP_HOURS) takes the claim's rate, as it always has for an emblem gone dormant. Blueprint P28 (D24b): a frozen
+ * emblem is not active, so its rate pauses with its effect, and hours before the freeze are paid at the rate on the
+ * day of the claim (a thaw before the claim pays them in full again). The dividend retires at CREDITS_LAUNCH_DAY, which
+ * is expected to flip before DECAY_LAUNCH_DAY, so in the planned order no capital is ever priced under a freeze.
+ */
 export async function pendingDividend(
   userId: string,
   activeSkills: Skill[],

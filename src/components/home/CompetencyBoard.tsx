@@ -14,6 +14,10 @@
  * A roadmap's pick is useSettledPick's (the select stays enabled while it is written, and arrowing through the options
  * writes once). A button whose words change says its visible words first in its accessible name ("Close Writing",
  * "Archive it? Writing"), so a voice user can say what they see (WCAG 2.5.3).
+ *
+ * Condition (blueprint P28, D24): once DECAY_LAUNCH_DAY is in force the page passes each skill's condition, and a skill
+ * idle past the grace says so under its hours ("Guitar 82% · 12 days idle · a tick of a task linked to it restores
+ * it"). Its hours and its tier never move: a condition is a reading. Nothing shows at 100% or while the switch is off.
  */
 import { useId, useState, useTransition, type FormEvent } from "react";
 import { announce } from "@/lib/celebrate";
@@ -35,6 +39,7 @@ import {
   type SkillView,
 } from "@/lib/competency";
 import { STATUS_NAME } from "@/lib/status-panel";
+import { conditionNoteOf, conditionShows, type Condition } from "@/lib/skill-decay";
 import { Button } from "@/components/ui/Button";
 import { Meter } from "@/components/ui/Meter";
 import { Sigil, type TrackSigil } from "@/components/ui/Icon";
@@ -58,6 +63,8 @@ export interface CompetencyBoardData {
   roadmaps: { id: string; name: string; status: string; competencyId: string | null }[];
   writesOn: boolean;
   ready: boolean;
+  /** P28: each skill's condition by id, only while condition decay is in force; absent or null otherwise. */
+  conditions?: Readonly<Record<string, Pick<Condition, "condition" | "idleDays">>> | null;
 }
 
 const REFRESH = { refresh: true };
@@ -114,6 +121,7 @@ function SkillRowView({ skill: s, data, actions }: { skill: SkillView; data: Com
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const pct = Math.floor(Math.max(0, Math.min(0.999, s.progress)) * 100);
+  const condition = data.conditions?.[s.id] ?? null;
 
   function archive() {
     if (!armed) {
@@ -145,6 +153,9 @@ function SkillRowView({ skill: s, data, actions }: { skill: SkillView; data: Com
         </div>
         <Meter value={s.progress} label={`${s.name}, tier ${s.tier}, ${pct}% through it`} valueText={`${pct}% through tier ${s.tier}`} />
         <div className="t-meta">{s.line}</div>
+        {condition && conditionShows(condition) && (
+          <div className="t-meta status-cond">{conditionNoteOf({ kind: "skill", key: s.id, attribute: s.attribute, skillKind: s.kind, name: s.name, condition: condition.condition, idleDays: condition.idleDays })}</div>
+        )}
         <div className="t-meta">{s.tierLine}</div>
         <div className="t-meta">{feedsLine(s)}</div>
         {data.writesOn && (

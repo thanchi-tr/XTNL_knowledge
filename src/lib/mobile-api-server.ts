@@ -5,7 +5,7 @@
  * file never reaches Prisma or a model by itself. A route file only hands its request here with the real deps (a
  * route file may export only its methods and segment config).
  *
- *   GET  /check            handleCheck          the Today board and its daily quests, the Review hub's counts and the ideas fading, the due work, level, streak, the week audit, the credits wallet (P16), the owed cards (P22)
+ *   GET  /check            handleCheck          the Today board and its daily quests, the Review hub's counts (and its fatigue: P30) and the ideas fading, the due work, level, streak, the week audit, the credits wallet (P16), the owed cards (P22), the idle skills and attributes (P28)
  *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick, with its minutes and timer: P7, P23; a reading task's pages: P24), and the skill it fed (P5), its credits (P16)
  *   POST /tasks/undo       handleTaskUndo       actions/tasks undoCompletion
  *   POST /tasks/start      handleTaskStart      actions/tasks startTaskTimer (a proof task's timer; P23)
@@ -13,7 +13,7 @@
  *   POST /tasks/makeup     handleTaskMakeUp     actions/duty makeUp, doMinimum, acceptLoss, undoMakeUp (an owed card's actions; refused while Duty is not live; P22)
  *   POST /work/done        handleWorkDone       actions/scheduled-tasks doneScheduledTask (no history log)
  *   POST /work/reopen      handleWorkReopen     actions/scheduled-tasks reopenScheduledTask
- *   GET  /review/queue     handleReviewQueue    the review hub's due cards in the runner's order
+ *   GET  /review/queue     handleReviewQueue    the review hub's due cards in the runner's order, and the fatigue in effect (P30)
  *   POST /review/answer    handleReviewAnswer   actions/review submitReview, its credits (P16)
  *   POST /log              handleLog            actions/capture createFromCapture (the capture sheet's save), its credits (P16)
  *   POST /log/undo         handleLogUndo        actions/tasks undoCapture, actions/capture undoWeightCapture
@@ -62,6 +62,8 @@ import {
   checkFadingOf,
   checkCreditsOf,
   checkOwedOf,
+  checkSkillsOf,
+  fatiguedKeyOf,
   checkTasksOf,
   checkWeekOf,
   MAKEUP_KEYS,
@@ -154,6 +156,8 @@ import type { MomentumView } from "./momentum-server";
 import { capitalPanelOf, statusPanelOf, type CapitalDeal } from "./status-panel";
 import type { AvatarView } from "./avatar";
 import type { SkillView } from "./competency";
+import type { ConditionItem } from "./skill-decay";
+import type { FatigueRead } from "./review-fatigue";
 import type { LifeTracksView } from "./life-tracks";
 import type { KnowledgeRow } from "../components/home/sheet-math";
 import type { CreditsWallet } from "./credits";
@@ -196,6 +200,17 @@ export interface MobileDeps {
    */
   loadWallet: (userId: string, now: Date) => Promise<CreditsWallet>;
   /**
+   * Condition decay (blueprint P28; skill-decay-server loadConditionItems): every attribute's and live skill's condition,
+   * or null at once, with no read, while DECAY_LAUNCH_DAY is not in force. /check's `skills` (those under 0.9).
+   */
+  loadConditions: (userId: string, now: Date) => Promise<readonly ConditionItem[] | null>;
+  /**
+   * Review fatigue (blueprint P30; review-fatigue-server loadFatigue): the FATIGUED row in effect ({until} or null), or
+   * undefined at once, with no read, while FATIGUE_LAUNCH_DAY is not in force. /check's `review.fatigued` and
+   * /review/queue's `fatigued`, both absent while it is undefined.
+   */
+  loadFatigue: (userId: string, now: Date) => Promise<FatigueRead>;
+  /**
    * The same wallet read fresh (credits-server readWallet, uncached): the read after a tick, an answer and a log, so
    * their `credits.balance` and `credits.today` are the server's own after this write, never a cached load that left
    * before it (or one another write's read joined). {live: false} with no read while credits are off.
@@ -209,6 +224,12 @@ export interface MobileDeps {
   autoCompleteStudyTasks: (userId: string, now: Date) => Promise<unknown>;
   maybeMaintainLife: (userId: string) => Promise<void>;
   settleMomentum: (userId: string, day: DayKey, now: Date) => Promise<unknown>;
+  /**
+   * Blueprint P29: Duty's lazy settle (settlement settleForStreak), awaited after momentum's and before the board's
+   * read while the streak multiplier is in force, as the Today page does, so each row's xpHint reads the d its tick
+   * pays. At once, with no read, while the multiplier is off; it never throws.
+   */
+  settleForStreak: (userId: string, now: Date) => Promise<unknown>;
 
   // Tasks
   completeTask: (
@@ -423,6 +444,12 @@ function owe(deps: MobileDeps, what: string, task: () => Promise<unknown>): void
  * opening Today and the Review hub owe (the day's first open fixes the quest target; study tasks met by the day's
  * reviews are recorded; life maintenance). P22: `dutyOn` is Duty's switch alone (isDutyLaunched on DUTY_LAUNCH_DAY, no
  * read), and `owed` the board's open debts (Board.owed, re-priced against today's ledger) in the web MakeUpCard's words.
+ * P28: `skills`, every attribute and live skill under 0.9 condition (checkSkillsOf), present only while condition decay
+ * is in force (the read answers null at once while it is off, so the key is left out and the reply reads as before;
+ * [] when the read fails). P29: `streak.multiplier`, the streak multiplier the board priced its rows with
+ * (Board.streak), present only while STREAK_LAUNCH_DAY is in force; while it is, Duty's lazy settle is awaited before the
+ * board's read (settleForStreak). P30: `review.fatigued`, the fatigue in effect (fatiguedKeyOf), present only while
+ * FATIGUE_LAUNCH_DAY is in force (null when the read fails).
  */
 export async function handleCheck(request: Request, deps: MobileDeps): Promise<Response> {
   return read("check", request, deps, [], async () => {
@@ -433,7 +460,10 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
     // a tick made from this check price today's frog. Single flight, at once when nothing is owed; it never throws
     // (were it to, the check would log it and read on).
     await deps.settleMomentum(userId, day, now).catch(soft("momentum's lazy writes", null));
-    const [data, fields, reviewDay, streak, shell, work, graceExtra, audit, wallet] = await Promise.all([
+    // P29: with the streak multiplier in force, Duty's lazy settle too (as on Today), so the rows' xpHint read the d
+    // (counted back from the settlement cursor) their ticks pay. At once while it is off; a failure reads on.
+    await deps.settleForStreak(userId, now).catch(soft("the settle before the streak", null));
+    const [data, fields, reviewDay, streak, shell, work, graceExtra, audit, wallet, conditions, fatigue] = await Promise.all([
       deps.loadBoard(userId, day, now),
       deps.loadFieldTree(),
       deps.loadReviewDay(userId, day),
@@ -443,9 +473,14 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       deps.loadGraceExtra(userId).catch(soft("the grace extension", 0)),
       deps.loadWeekAudit(userId, now).catch(soft("the week audit", null)),
       deps.loadWallet(userId, now).catch(soft<CreditsWallet | null>("the credits wallet", null)),
+      // Off, it answers null without a read; so a failure means it was on: [] (none listed), never absent.
+      deps.loadConditions(userId, now).catch(soft<readonly ConditionItem[] | null>("the conditions", [])),
+      // Off, it answers undefined without a read; so a failure means it was on: null (none known), never absent.
+      deps.loadFatigue(userId, now).catch(soft<FatigueRead>("the review fatigue", null)),
     ]);
     const board = buildBoard(data, [], now.getTime());
-    const review = reviewHubOf(fields, now, reviewDay);
+    // P30: the fatigue in effect rides on the Review hub's figures (absent while FATIGUE_LAUNCH_DAY is not in force).
+    const review = { ...reviewHubOf(fields, now, reviewDay), ...fatiguedKeyOf(fatigue) };
 
     if (reviewDay.dayOpenQty === null) owe(deps, "the day's first open", () => deps.recordDayOpen(userId, review.due, now));
     if (unrecordedStudyTasks(data) > 0) owe(deps, "the study tasks", () => deps.autoCompleteStudyTasks(userId, now));
@@ -465,9 +500,12 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       // Duty (P22): the switch alone (as auditOn), and the board's open debts in its MakeUpCards' words.
       dutyOn: isDutyLaunched(day, deps.dutyLaunchDay()),
       owed: checkOwedOf(board),
+      // Condition decay (P28): what is under 0.9, lowest first; absent while the switch is off (the reply is as before).
+      ...(conditions === null ? {} : { skills: checkSkillsOf(conditions) }),
       work: workItemsOf(work, now),
       level: levelOf(shell),
-      streak: streakOf(streak),
+      // P29: the streak multiplier rides on the board it priced the rows with (absent while it is not in force).
+      streak: streakOf(streak, board.streak),
     });
   });
 }
@@ -841,18 +879,19 @@ export function limitOf(url: URL): number {
  * runner's seeded order for the life day and "All fields" (WorkspaceView newRun), then the first `limit` of them, each
  * shown in its original wording or one of its variants (idea-variants pickCardWording, as the hub picks). A DIAGRAM
  * card (seeded only; the form can't make one) keeps its place in the order and counts in dueTotal, but is left out of
- * `cards`: the app can't draw it.
+ * `cards`: the app can't draw it. P30: `fatigued`, the fatigue in effect (fatiguedKeyOf), read beside the tree and present
+ * only while FATIGUE_LAUNCH_DAY is in force (null when the read fails), so the app's runner can say it.
  */
 export async function handleReviewQueue(request: Request, deps: MobileDeps): Promise<Response> {
   return read("review/queue", request, deps, ["limit"], async (url) => {
     const limit = limitOf(url);
     const now = deps.now();
-    const fields = await deps.loadFieldTree();
+    const [fields, fatigue] = await Promise.all([deps.loadFieldTree(), deps.loadFatigue(deps.userId(), now).catch(soft<FatigueRead>("the review fatigue", null, "review/queue"))]);
     const due = dueCardsOf(fields, now);
     const shown = runOrderOf(due, todayKey(now)).filter(isAppCard).slice(0, limit);
     const variants = await deps.loadVariants(shown.map((c) => c.id));
     const cards = shown.map((c) => mobileCardOf(pickCardWording(c, variants.get(c.id), displayQuestion, deps.random)));
-    return okReply({ now: now.toISOString(), dueTotal: due.length, cards });
+    return okReply({ now: now.toISOString(), dueTotal: due.length, ...fatiguedKeyOf(fatigue), cards });
   });
 }
 

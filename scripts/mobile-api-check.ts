@@ -35,6 +35,12 @@
  *      switch alone, and owed, the board's open debts in the web MakeUpCard's words at ×0.85; /tasks/makeup through
  *      actions/duty makeUp, doMinimum and acceptLoss, refused while Duty is not live, its clientId required, once per
  *      debt, the board read again after it, no credit ever taken; the Android app's models, routes, demo and cards);
+ *      condition decay (P28: /check's `skills`, every attribute and live skill under 0.9 condition, lowest first, to 3
+ *      decimals rounded down (the phone's whole percent is the web's), absent while DECAY_LAUNCH_DAY is off (the reply
+ *      is HEAD's), [] on a failed read; the audit's own read bound; the phone's model and card); the streak multiplier
+ *      (P29: Duty's lazy settle awaited after momentum's and before the board's read, as Today does; bound);
+ *      review fatigue (P30: `fatigued` on /check's review and on /review/queue, absent while FATIGUE_LAUNCH_DAY is off,
+ *      {until} or null once it is in force, null on a failed read; the read bound; the phone's models and review screen);
  *   3. the wiring: each route file hands its request to its handler with the real deps and exports only its method
  *      and dynamic; mobile-api-cores binds each dep to the web's own core (no refresh), and mall-mobile-cores the
  *      Mall's two (the Mall's routes never hold a paying core); the pure modules import no core; the web pages' formulas the app mirrors (pinned in their source); the failure lines the codes key on;
@@ -93,6 +99,12 @@ import { loadSkills, type SkillStore } from "../src/lib/competency-server";
 import { BUY_CREDITS_OFF, FREE_PLAY_LINE, FREE_REST_LINE, MALL_BUYING, MALL_CATEGORIES, PRICE_RANGE_LINE, PURCHASE_GONE, REWARD_GONE, UNDO_TOO_LATE, buyRowKey, goodDayLine, type MallRewardRow, type PurchaseRow, type RewardInput } from "../src/lib/mall";
 import { addRewardCore, buyRewardCore, loadMall, undoBuyCore, type MallStore, type MallView, type PurchaseStore } from "../src/lib/mall-server";
 import { BUY_NEEDS_CLIENT_ID, TICK_MINUTES_MAX, TICK_MINUTES_MIN, TIMER_STARTED_LINE } from "../src/lib/mobile-api";
+// Blueprint P28: condition decay's /check `skills`.
+import { checkSkillsOf } from "../src/lib/mobile-api";
+import { CHECK_CONDITION_BELOW, DECAY_LAUNCH_DAY, DECAY_LAUNCH_DAY_ENV, conditionOf, conditionPercent, type ConditionItem } from "../src/lib/skill-decay";
+// Blueprint P30: review fatigue's `fatigued` on /check's review and on /review/queue.
+import { fatiguedKeyOf } from "../src/lib/mobile-api";
+import { FATIGUE_ANSWERS, FATIGUE_LAUNCH_DAY, FATIGUE_LAUNCH_DAY_ENV, fatigueUntilOf } from "../src/lib/review-fatigue";
 import { PAGES_QTY_MAX, PAGES_REFUSAL_PREFIX, PROOF_MINUTES_REFUSAL, TIMER_CLIENT_ID, TIMER_GONE, TIMER_OFF, TIMER_OTHER_DAY, pagesRefusalOf } from "../src/lib/proof";
 import type { WalletDays } from "../src/lib/credits-server";
 // Blueprint P27: Health Connect's walks and weigh-ins, through the real core over a fake store.
@@ -755,10 +767,16 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
     // As credits-server loadWallet and readWallet answer while CREDITS_LAUNCH_DAY is null: {live: false}, no read.
     loadWallet: async (_userId, now) => ({ live: false, day: todayKey(now) }),
     readWallet: async (_userId, now) => ({ live: false, day: todayKey(now) }),
+    // As skill-decay-server loadConditionItems answers while DECAY_LAUNCH_DAY is null: null at once, no read.
+    loadConditions: async () => null,
+    // As review-fatigue-server loadFatigue answers while FATIGUE_LAUNCH_DAY is null: undefined at once, no read.
+    loadFatigue: async () => undefined,
     recordDayOpen: async () => {},
     autoCompleteStudyTasks: async () => 0,
     maybeMaintainLife: async () => {},
     settleMomentum: async () => ({}),
+    // As settlement settleForStreak answers while STREAK_LAUNCH_DAY is null: at once, no read, nothing settled.
+    settleForStreak: async () => {},
     completeTask: async () => ({ ok: true, value: completion() }),
     undoCompletion: async (instanceId) => ({ ok: true, value: { instanceId, xp: -4.26 } }),
     // Proof of work (P23): a timer started at NOW, and its stop 34 minutes later.
@@ -972,7 +990,8 @@ async function routes() {
     const d = data(g);
     collectKeys(d);
     check("200, ok, no-store", g.status === 200 && g.json.ok === true && g.noStore);
-    // Re-pinned for P22: Duty's switch (`dutyOn`) and the open debts (`owed`).
+    // Re-pinned for P22: Duty's switch (`dutyOn`) and the open debts (`owed`). P28's `skills` is absent while condition
+    // decay is off, so the keys are HEAD's (its own pin below, with the read in force).
     eq("the documented keys", keysOf(d), ["auditOn", "credits", "daily", "day", "dayLabel", "dutyOn", "fading", "level", "now", "owed", "review", "streak", "tasks", "tasksSummary", "week", "work"]);
     check("now is the server's clock; day the life day; dayLabel 'Wed 21 Oct'", d.now === NOW.toISOString() && d.day === TODAY && d.dayLabel === "Wed 21 Oct");
     check(
@@ -1041,6 +1060,81 @@ async function routes() {
       const pc = checkOwedOf(buildBoard({ ...DATA, duty: dutyBoard({ owed: [proofCard] }) }, [], NOW.getTime()))[0];
       collectKeys(pc);
       check("owed: once proof of work is in force, the card's proof as its tick asks (the minute chips; a reading must's page chips and day target)", same(pc.proof, { minutes: [5, 10, 15, 20], pages: { target: 30, chips: [10, 20, 30, 40] } }));
+    }
+
+    // Blueprint P28 (3.1b; D24, D24b): condition decay. Inert as shipped: the read answers null at once, nothing is listed.
+    check(
+      "skills (P28): absent as shipped (DECAY_LAUNCH_DAY null, no override): the conditions read once, answering null, so the key is left out and the reply is HEAD's",
+      !("skills" in d) && DECAY_LAUNCH_DAY === null && process.env[DECAY_LAUNCH_DAY_ENV] === undefined && same(calls.loadConditions, [["u1", NOW]])
+    );
+    {
+      const item = (over: Partial<ConditionItem> & Pick<ConditionItem, "key" | "name" | "condition" | "idleDays">): ConditionItem => ({ kind: "attribute", attribute: over.key, ...over });
+      const ITEMS: ConditionItem[] = [
+        item({ key: "VITALITY", name: "Body", condition: 0.8187307530779818, idleDays: 13 }),
+        item({ key: "INTELLECT", name: "Knowledge", condition: 1, idleDays: 2 }),
+        item({ key: "CRAFT", name: "Craft", condition: 0.9048374180359595, idleDays: 13 }),
+        item({ kind: "skill", key: "sk-walk", name: "Walking", attribute: "VITALITY", condition: 0.5, idleDays: 60 }),
+      ];
+      const on = data(await got(handleCheck(get("/check"), fakes({ loadConditions: async () => ITEMS }).deps)));
+      const sk = on.skills as Record<string, unknown>[];
+      collectKeys(sk);
+      check(
+        "skills (P28): present while condition decay is in force, between `owed` and `work` (an empty read is [] then, never absent)",
+        Object.keys(on).indexOf("skills") === Object.keys(on).indexOf("owed") + 1 &&
+          Object.keys(on).indexOf("work") === Object.keys(on).indexOf("skills") + 1 &&
+          same(data(await got(handleCheck(get("/check"), fakes({ loadConditions: async () => [] }).deps))).skills, [])
+      );
+      eq(
+        "skills (P28): every item under 0.9 (CHECK_CONDITION_BELOW), the lowest first, {kind, name, condition (3 decimals, rounded down), idleDays}; 0.905 and 100% are left out",
+        [CHECK_CONDITION_BELOW, sk.map((x) => keysOf(x)), sk],
+        [
+          0.9,
+          [["condition", "idleDays", "kind", "name"], ["condition", "idleDays", "kind", "name"]],
+          [
+            { kind: "skill", name: "Walking", condition: 0.5, idleDays: 60 },
+            { kind: "attribute", name: "Body", condition: 0.818, idleDays: 13 },
+          ],
+        ]
+      );
+      check("skills (P28): checkSkillsOf is the reply's own builder", same(sk, checkSkillsOf(ITEMS)) && same(checkSkillsOf(null), []));
+      // The phone floors the whole percent of what it is sent (ConditionLine.percent), as the web floors the raw one
+      // (conditionPercent): rounded to 3 decimals, Body 32 days idle (0.5599) would read 56% there and 55% on the web.
+      const odd = [32, 58, 61, 66].map((idle, i) => item({ key: `k${i}`, name: `Item ${i}`, condition: conditionOf(idle, [0.02, 0.005, 0.01, 0.005][i]), idleDays: idle }));
+      const phonePercent = (c: number) => Math.floor(Math.min(1, Math.max(0, c)) * 100 + 1e-9);
+      check(
+        "skills (P28): the condition is sent rounded down to 3 decimals, so the phone's whole percent is the web's (Body 32 days idle: 0.559, 55% on both)",
+        checkSkillsOf(odd).every((x) => phonePercent(x.condition) === conditionPercent(odd.find((o) => o.name === x.name)!.condition)) &&
+          checkSkillsOf([odd[0]])[0].condition === 0.559 &&
+          conditionPercent(odd[0].condition) === 55,
+        JSON.stringify(checkSkillsOf(odd).map((x) => [x.name, x.condition, phonePercent(x.condition)]))
+      );
+      const failed = await got(handleCheck(get("/check"), fakes({ loadConditions: async () => Promise.reject(new Error("conditions exploded")) }).deps));
+      check("skills (P28): a failed read (it was on: off answers null without one) reads as none, [] (the check still answers, no message)", failed.status === 200 && same(data(failed).skills, []) && !/exploded/.test(failed.raw));
+      check("skills (P28): a condition is a reading: no xp, MP, level or points field on an item", !/"(xp|mp|level|points)"/i.test(JSON.stringify(sk.flatMap((x) => Object.keys(x)))));
+    }
+
+    // Blueprint P30 (3.3b; D26): review fatigue. Inert as shipped: the read answers undefined at once, and `review` reads
+    // exactly as before (its own pin below); in force, `review.fatigued` is the FATIGUED row in effect, {until} or null.
+    {
+      check(
+        "fatigued (P30): absent as shipped (FATIGUE_LAUNCH_DAY null, no override): the fatigue read once, answering undefined; review has no `fatigued`",
+        FATIGUE_LAUNCH_DAY === null && process.env[FATIGUE_LAUNCH_DAY_ENV] === undefined && same(calls.loadFatigue, [["u1", NOW]]) && !("fatigued" in (d.review as Record<string, unknown>))
+      );
+      const until = fatigueUntilOf(new Date(NOW.getTime() - 3_600_000));
+      const tired = data(await got(handleCheck(get("/check"), fakes({ loadFatigue: async () => ({ until }) }).deps)));
+      const rv = tired.review as Record<string, unknown>;
+      collectKeys(rv);
+      collectKeys(rv.fatigued);
+      eq("fatigued (P30): in force and in effect, review.fatigued is {until} (when it lifts), after the hub's own figures", [keysOf(rv), rv.fatigued], [["doneToday", "due", "fatigued", "nextDueAt", "target"], { until: until.toISOString() }]);
+      const rested = data(await got(handleCheck(get("/check"), fakes({ loadFatigue: async () => null }).deps)));
+      check("fatigued (P30): in force with none in effect, review.fatigued is null (present: the switch is on)", (rested.review as Record<string, unknown>).fatigued === null);
+      const failedF = await got(handleCheck(get("/check"), fakes({ loadFatigue: async () => Promise.reject(new Error("fatigue exploded")) }).deps));
+      check("fatigued (P30): a failed read reads as null, none known (the read only runs while on), with no message", failedF.status === 200 && (data(failedF).review as Record<string, unknown>).fatigued === null && !/exploded/.test(failedF.raw));
+      check(
+        "fatigued (P30): fatiguedKeyOf is the replies' own builder: {} while off, {fatigued: null} with none, {fatigued: {until}} in effect",
+        same(fatiguedKeyOf(undefined), {}) && same(fatiguedKeyOf(null), { fatigued: null }) && same(fatiguedKeyOf({ until }), { fatigued: { until: until.toISOString() } })
+      );
+      check("fatigued (P30): a fatigue is a state, never a charge: no xp, MP, level or points field", !/"(xp|mp|level|points)"/i.test(JSON.stringify(rv.fatigued)));
     }
 
     // The board, as the web board builds and draws it.
@@ -1244,6 +1338,16 @@ async function routes() {
     // P21: the bank not live (momentum not launched, or its read failed): restTokens null and freezes 0, never a guess.
     const offBank = fakes({ loadStreak: async () => ({ current: 3, last7Days: [false, false, false, false, false, false, true], bankedFreezes: 0, restTokens: null }) });
     eq("P21: no bank: restTokens null, freezes 0", (data(await got(handleCheck(get("/check"), offBank.deps))).streak as Record<string, unknown>), { days: 3, keptToday: true, freezes: 0, restTokens: null });
+    // Blueprint P29 (D25): with the streak multiplier in force the board carries it (BoardData.streak), and /check's streak
+    // gains `multiplier` from the same board its rows' xpHint were priced on; off (above), the object is exactly as before.
+    const streakData: BoardData = { ...DATA, streak: { launchDay: TODAY, today: { days: 3, floor: false }, yesterday: { days: 3, floor: false } } };
+    const sd = data(await got(handleCheck(get("/check"), fakes({ loadBoard: async () => streakData }).deps)));
+    eq(
+      "P29: streak.multiplier {value, fullDays, floor, line} rides on the board's own run; `days` stays the daily streak",
+      sd.streak,
+      { days: 12, keptToday: true, freezes: 2, restTokens: 2, multiplier: { value: 1.16, fullDays: 3, floor: false, line: "Streak ×1.16 · day 3" } }
+    );
+    eq("P29: the multiplier's documented keys", keysOf((sd.streak as Record<string, unknown>).multiplier as Record<string, unknown>), ["floor", "fullDays", "line", "value"]);
     eq(
       "P21: streakOf reads the unified bank for both fields (freezes used to read M2's own balance, always 0); a streak read before P21 keeps bankedFreezes",
       [streakOf({ current: 5, last7Days: [true], bankedFreezes: 0, restTokens: 1 }), streakOf({ current: 5, last7Days: [true], bankedFreezes: 1 }), streakOf(null)],
@@ -1280,6 +1384,37 @@ async function routes() {
     const settleFails = fakes({ settleMomentum: async () => Promise.reject(new Error("momentum down")) });
     const sf = await got(handleCheck(get("/check"), settleFails.deps));
     check("a settle that fails (it never should) is logged and the check still answers", sf.status === 200 && settleFails.calls.loadBoard?.length === 1);
+
+    // P29: with the streak multiplier in force Today awaits Duty's lazy settle before its board read (settleForStreak:
+    // at once with no read while it is off), so the rows' xpHint read the d their ticks pay; /check does the same.
+    check("the streak's settle ran before the reply, once, with the user and the clock", same(calls.settleForStreak, [["u1", NOW]]));
+    const streakOrder: string[] = [];
+    let releaseDuty: () => void = () => {};
+    const dutyGate = new Promise<void>((r) => (releaseDuty = r));
+    const dutySettling = fakes({
+      settleMomentum: async () => {
+        streakOrder.push("momentum");
+        return {};
+      },
+      settleForStreak: async () => {
+        streakOrder.push("duty");
+        await dutyGate;
+        streakOrder.push("duty settled");
+      },
+      loadBoard: async () => {
+        streakOrder.push("board");
+        return DATA;
+      },
+    });
+    const dutyPending = got(handleCheck(get("/check"), dutySettling.deps));
+    await new Promise((r) => setTimeout(r, 5));
+    check("the board isn't read while Duty settles for the streak (after momentum's writes)", same(streakOrder, ["momentum", "duty"]));
+    releaseDuty();
+    const dutyReply = await dutyPending;
+    check("…then the board is read and the check answers", dutyReply.status === 200 && same(streakOrder, ["momentum", "duty", "duty settled", "board"]));
+    const dutyFails = fakes({ settleForStreak: async () => Promise.reject(new Error("duty down")) });
+    const df = await got(handleCheck(get("/check"), dutyFails.deps));
+    check("the streak's settle failing (it never should) is logged and the check still answers", df.status === 200 && dutyFails.calls.loadBoard?.length === 1 && !/duty down/.test(df.raw));
 
     const opened = fakes({ loadReviewDay: async () => ({ reviews: 4, dayOpenQty: 9 }) });
     await got(handleCheck(get("/check"), opened.deps));
@@ -1792,6 +1927,15 @@ async function routes() {
     eq("?limit takes the first n of the same order", (data(lim).cards as Record<string, unknown>[]).map((x) => x.ideaId), shownIds.slice(0, 3));
     const badLimits = await Promise.all(["0", "51", "abc", "2.5", "-1"].map(async (v) => got(handleReviewQueue(get(`/review/queue?limit=${v}`), fakes().deps))));
     check("?limit outside 1–50 (or not a whole number) is bad; so is another parameter", badLimits.every((b) => isFail(b, "bad")) && isFail(await got(handleReviewQueue(get("/review/queue?field=x"), fakes().deps)), "bad"));
+    // Blueprint P30 (D26): the fatigue in effect beside the queue; absent while FATIGUE_LAUNCH_DAY is off (the keys above).
+    check("fatigued (P30): the queue reads the fatigue once, beside the tree (undefined as shipped: no key)", same(calls.loadFatigue, [["u1", NOW]]) && !("fatigued" in d));
+    const until = fatigueUntilOf(new Date(NOW.getTime() - 3_600_000));
+    const tq = data(await got(handleReviewQueue(get("/review/queue"), fakes({ loadFatigue: async () => ({ until }) }).deps)));
+    collectKeys(tq);
+    eq("fatigued (P30): in force, the queue carries `fatigued` {until}, the same cards in the same order", [keysOf(tq), tq.fatigued, (tq.cards as Record<string, unknown>[]).map((x) => x.ideaId)], [["cards", "dueTotal", "fatigued", "now"], { until: until.toISOString() }, shownIds.slice(0, 20)]);
+    const nq = data(await got(handleReviewQueue(get("/review/queue"), fakes({ loadFatigue: async () => null }).deps)));
+    const fq = await got(handleReviewQueue(get("/review/queue"), fakes({ loadFatigue: async () => Promise.reject(new Error("fatigue exploded")) }).deps));
+    check("fatigued (P30): none in effect is null; a failed read is null too, and the queue still answers with no message", nq.fatigued === null && fq.status === 200 && data(fq).fatigued === null && !/exploded/.test(fq.raw));
   }
 
   section("POST /review/answer");
@@ -2777,12 +2921,24 @@ function wiring() {
     "the credits wallet (P16): credits-server loadWallet(userId, now), the purse's own read (cached; no read while off), and readWallet(userId, now) uncached for a write's read after it",
     /import \{ loadWallet, readWallet \} from "\.\/credits-server";[\s\S]*loadWallet: \(userId, now\) => loadWallet\(userId, now\),\s*readWallet: \(userId, now\) => readWallet\(userId, now\),/
   );
+  bind(
+    "condition decay (P28): skill-decay-server loadConditionItems(userId, now), the audit's own read of every condition (null with no read while DECAY_LAUNCH_DAY is off)",
+    /import \{ loadConditionItems \} from "\.\/skill-decay-server";[\s\S]*loadConditions: \(userId, now\) => loadConditionItems\(userId, now\),/
+  );
+  bind(
+    "review fatigue (P30): review-fatigue-server loadFatigue(prisma, userId, now), the FATIGUED row in effect (undefined with no read while FATIGUE_LAUNCH_DAY is off)",
+    /import \{ loadFatigue \} from "\.\/review-fatigue-server";[\s\S]*loadFatigue: \(userId, now\) => loadFatigue\(prisma, userId, now\),/
+  );
   check(
     "the credits wallet (P16): /you's purse reads the same loadWallet(userId, now), caught to none, and draws its line only from a live wallet",
     /const walletRead = loadWallet\(userId, now\)\.catch\(\(\) => null\);/.test(code("src/app/you/page.tsx")) &&
       /credits=\{wallet\?\.live \? \{ balance: wallet\.balance, today: wallet\.today \} : null\}/.test(code("src/app/you/page.tsx"))
   );
   bind("the owed writes: recordDayOpen, autoCompleteStudyTasks, maybeMaintainLife, settleMomentum", /recordDayOpen: \(userId, dueCount, now\) => recordDayOpen\(userId, dueCount, now\),\s*autoCompleteStudyTasks: \(userId, now\) => autoCompleteStudyTasks\(userId, now\),\s*maybeMaintainLife: \(userId\) => maybeMaintainLife\(userId\),\s*settleMomentum: \(userId, day, now\) => settleMomentum\(userId, day, \{ now \}\),/);
+  bind(
+    "the streak's settle (P29): settlement settleForStreak(userId, now), the one Today awaits before its board read (at once with no read while the multiplier is off)",
+    /import \{ maybeMaintainLife, settleForStreak \} from "\.\/settlement";[\s\S]*settleForStreak: \(userId, now\) => settleForStreak\(userId, now\),/
+  );
   bind("the tick and its Undo: actions/tasks completeTask, undoCompletion (no options: never refresh)", /completeTask: \(templateId, input\) => completeTask\(templateId, input\),\s*undoCompletion: \(instanceId\) => undoCompletion\(instanceId\),/);
   bind(
     "a proof task's timer (P23): actions/tasks startTaskTimer(templateId, clientId, { source: \"phone\" }) and stopTaskTimer(sessionId) (never refresh)",
@@ -2836,9 +2992,11 @@ function wiring() {
   );
   check(
     // Re-pinned for P4: the panel takes the avatar as its third input, read on the same won deals. Re-pinned for P5:
-    // the skills are its fourth (a failed read counts none).
-    "status (P1, P4, P5): /you draws the same panel from its sheet's own life view and Knowledge row, the avatar and the skills (statusPanelOf(s.life, s.knowledge, avatar, skills)), Capital from loadCapitalDeals(userId, today), and the avatar from loadAvatar on those deals",
-    /const status = statusPanelOf\(s\.life, s\.knowledge, avatar, skills \? skills\.skills : null\);/.test(code("src/app/you/page.tsx")) &&
+    // the skills are its fourth (a failed read counts none). Re-pinned for P28: the conditions are its fifth (null while
+    // condition decay is off, and on a failed read).
+    "status (P1, P4, P5, P28): /you draws the same panel from its sheet's own life view and Knowledge row, the avatar, the skills and the conditions (statusPanelOf(s.life, s.knowledge, avatar, skills, conditions)), Capital from loadCapitalDeals(userId, today), and the avatar from loadAvatar on those deals",
+    /const status = statusPanelOf\(s\.life, s\.knowledge, avatar, skills \? skills\.skills : null, basis \? attributeConditionsOf\(basis\) : null\);/.test(code("src/app/you/page.tsx")) &&
+      /const conditionRead = loadConditionBasis\(userId, now\)\.catch\(\(\) => null\);/.test(code("src/app/you/page.tsx")) &&
       /const skillsRead = loadSkills\(userId, \{ fields: false \}\)\.catch\(\(\) => null\);/.test(code("src/app/you/page.tsx")) &&
       /loadCapitalDeals\(userId, today\)/.test(code("src/app/you/page.tsx")) &&
       /const avatarRead = capitalRead\.then\(\(deals\) => loadAvatar\(userId, now, \{ deals \}\)\)\.catch\(\(\) => null\);/.test(code("src/app/you/page.tsx")) &&
@@ -2865,6 +3023,7 @@ function wiring() {
     ["loadMomentum, settleMomentum", "./momentum-server"],
     ["loadLifeTracks", "./life-tracks-server"],
     ["loadCapitalDeals, loadKnowledgeRow", "./status-panel-server"],
+    ["loadConditionItems", "./skill-decay-server"],
   ];
   const missing = imports.filter(([names, from]) => !cores.includes(`import { ${names} } from "${from}";`));
   check("mobile-api-cores imports each core from the web's own module", missing.length === 0, missing.map((m) => m[1]).join(", "));
@@ -3064,6 +3223,60 @@ function wiring() {
     (screen.match(/tasks\(ui, rows, motion\)\s*owed\(ui, vm\)/g) ?? []).length === 2 && /private fun OwedTile\(/.test(screen) && (screen.slice(screen.indexOf("private fun OwedRow(")).match(/height = 48\.dp/g) ?? []).length >= 5
   );
   check("Android: versionCode 23 (2.11) or later for the owed cards", Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 23);
+
+  section("the Android app (P28: the Condition card)");
+  const line = read("android/app/src/main/java/com/xtnl/app/core/ConditionLine.kt");
+  check(
+    "Models.kt: /check's skills (empty from an older server and while decay is off), each item's kind, name, condition and idleDays",
+    /val skills: List<CheckSkill> = emptyList\(\),/.test(models) && /data class CheckSkill\(val kind: String = "attribute", val name: String, val condition: Double = 1\.0, val idleDays: Int = 0\)/.test(models)
+  );
+  check(
+    "ConditionLine: the web's words ('Body 81% · 13 days idle', the percent rounded down), the card only while the server lists something, and what never drops",
+    /fun line\(s: CheckSkill\): String = "\$\{s\.name\} \$\{percent\(s\.condition\)\}% · \$\{idle\(s\.idleDays\)\}"/.test(line) &&
+      /floor\(condition\.coerceIn\(0\.0, 1\.0\) \* 100 \+ 1e-9\)/.test(line) &&
+      /fun shows\(list: List<CheckSkill>\?\): Boolean = !list\.isNullOrEmpty\(\)/.test(line) &&
+      /const val BELOW_PERCENT = 90/.test(line) && Math.round(CHECK_CONDITION_BELOW * 100) === 90 &&
+      /Levels, XP and hours never drop\./.test(line)
+  );
+  check("DemoApi: a server with condition decay on sends its idle list (the lowest first)", /skills = DEMO_CONDITION,/.test(demo) && /val DEMO_CONDITION = listOf\(\s*CheckSkill\("skill", "Spanish", 0\.5, 74\),\s*CheckSkill\("attribute", "Care", 0\.869, 31\),/.test(demo));
+  check(
+    "CheckScreen: the Condition card on both displays (the cover screen's one column and the main display's second pane, after the Week card), one TalkBack node",
+    (screen.match(/week\(data\.week\)\s*condition\(data\.skills\)/g) ?? []).length === 2 && /private fun ConditionTile\(/.test(screen) && /contentDescription = ConditionLine\.description\(list\)/.test(screen)
+  );
+  check("Android: versionCode 24 (2.12) or later for the Condition card", Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 24);
+
+  section("the Android app (P30: the fatigue line on the review screen)");
+  const fatigueLine = read("android/app/src/main/java/com/xtnl/app/core/FatigueLine.kt");
+  const reviewScreen = read("android/app/src/main/java/com/xtnl/app/ui/review/ReviewScreen.kt");
+  const reviewVm = read("android/app/src/main/java/com/xtnl/app/ui/review/ReviewViewModel.kt");
+  check(
+    "Models.kt: review.fatigued on /check and the queue's fatigued, each a Fatigue(until), null while off and from an older server",
+    /data class ReviewSummary\(val due: Int = 0, val doneToday: Int = 0, val target: Int\? = null, val nextDueAt: String\? = null, val fatigued: Fatigue\? = null\)/.test(models) &&
+      /data class ReviewQueue\(val now: String\? = null, val dueTotal: Int = 0, val cards: List<ReviewCard> = emptyList\(\), val fatigued: Fatigue\? = null\)/.test(models) &&
+      /data class Fatigue\(val until: String\? = null\)/.test(models)
+  );
+  check(
+    "FatigueLine: 'Fatigued until 4:00 pm' ('tomorrow' on a later day), no line once lifted by the server's clock, its note with no number",
+    /return "Fatigued until \$\{if \(later\) "tomorrow " else ""\}\$\{TimeLabels\.clock\(until, zone, h24\)\}"/.test(fatigueLine) &&
+      /if \(now != null && !at\.isAfter\(now\)\) return null/.test(fatigueLine) &&
+      !/\d/.test(/const val NOTE = "([^"]*)"/.exec(fatigueLine)?.[1] ?? "0")
+  );
+  check(
+    "DemoApi: as a server with fatigue on: the day's 200th answer (right or wrong) applies it once, for 18 h, and /check and the queue send it",
+    /internal const val DEMO_FATIGUE_ANSWERS = 200/.test(demo) && /internal const val DEMO_FATIGUE_HOURS = 18L/.test(demo) &&
+      /if \(reviewDone < DEMO_FATIGUE_ANSWERS \|\| fatigueDay == day\) return/.test(demo) &&
+      /fatigued = fatigueNow\(now\),/.test(demo) && /ReviewQueue\(now\.toString\(\), due\.size, due\.take\(limit\), fatigued = fatigueNow\(now\)\)/.test(demo) &&
+      FATIGUE_ANSWERS === 200
+  );
+  check(
+    "ReviewScreen: the Start panel says it from /check's review.fatigued, the runner's bar from its queue's (every layout draws the bar); one TalkBack node",
+    /StartPanel\(summary\?\.due, top, fatigued = summary\?\.fatigued, onStart = start\)/.test(reviewScreen) &&
+      /FatigueNote\(ui\.fatigued, TimeLabels\.parseInstant\(ui\.now\)/.test(reviewScreen) &&
+      (reviewScreen.match(/SessionBar\(ui, top, spots, onEnd = vm::finish\)/g) ?? []).length === 3 &&
+      /clearAndSetSemantics \{ contentDescription = FatigueLine\.describe\(until, at, h24 = h24\) \}/.test(reviewScreen) &&
+      /fatigued = r\.value\.fatigued,/.test(reviewVm)
+  );
+  check("Android: versionCode 26 (2.14) or later for the fatigue line", Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 26);
 }
 
 // ═══ 4. The doc and the package ══════════════════════════════════════════
@@ -3084,7 +3297,8 @@ function docs() {
     "the one Rest Token bank (P21; D19) is in the doc: streak.restTokens (null while not live), the momentum freezes under one name, at most one a day, a must missed excused once Duty is live, rest days spend none, and freezes the same number",
     (() => {
       const flat = doc.replace(/\s+/g, " ");
-      return /"streak": \{ "days": 12, "keptToday": true, "freezes": 2, "restTokens": 2 \| null \} \| null/.test(doc) &&
+      // Re-pinned by blueprint P29: the streak object's example also shows its optional `multiplier` (absent while off).
+      return /"streak": \{ "days": 12, "keptToday": true, "freezes": 2, "restTokens": 2 \| null,\s+"multiplier"\?: \{ "value": 1\.16, "fullDays": 3, "floor": false, "line": "Streak ×1\.16 · day 3" \} \} \| null/.test(doc) &&
         /`restTokens` \(blueprint 3\.2c, P21; decision D19\): the one Rest Token bank/.test(flat) &&
         /It is the momentum freezes, under one name/.test(flat) &&
         /A day spends at most one/.test(flat) &&
@@ -3144,6 +3358,18 @@ function docs() {
         /an import never replaces one typed on the phone or the web/.test(flat) &&
         flat.includes(HC_WRITES_OFF) &&
         ["since", "walks", "weights", "externalId", "start", "end", "distanceKm", "climbM", "origin", "at", "kg"].every((k) => doc.includes(`"${k}"`));
+    })()
+  );
+  check(
+    "review fatigue (P30; D26) is in the doc: `fatigued` on /check's review and on /review/queue, present only while FATIGUE_LAUNCH_DAY is in force, at 200 answers right or wrong, ×0.5 for 18 hours, never for a miss, no sleep rule",
+    (() => {
+      const flat = doc.replace(/\s+/g, " ");
+      return /"review": \{ "due": 12, "doneToday": 4, "target": 20, "nextDueAt": "…" \| null, "fatigued"\?: \{ "until": "…" \} \| null \},/.test(doc) &&
+        /\{ "ok": true, "data": \{ "now": "…", "dueTotal": 12, "fatigued"\?: \{ "until": "…" \} \| null, "cards": \[/.test(doc) &&
+        /`FATIGUE_LAUNCH_DAY`/.test(doc) &&
+        flat.includes(`Once a life day's answers reach ${FATIGUE_ANSWERS} (its review rows, one per answer, right or wrong)`) &&
+        /the combo ceiling × 0\.5 \(10 answers in a row become 5\) for 18 hours/.test(flat) &&
+        /It is never applied for a miss, a quiet day or a missed day, and there is no sleep rule\./.test(flat);
     })()
   );
   // The review fixes, as the doc states them.

@@ -20,6 +20,13 @@
  *      the window it still pays ×0.85 and clears the debt, the day stays missed; one restore per task in 7 days
  *   §6 the weekly review after the spiral: its Owed step and its rest days run (Duty is live), its owed cards are
  *      settlement's open debts (no more than 100), and the Owed notice says so; before the launch neither runs
+ *   §7 condition decay (blueprint P28, D24) launched with Duty: after the worst week no attribute is under 0.9 (the
+ *      phone lists nothing), the launch day's token holds its day, the debt is the same with decay on or off (the
+ *      settlement never reads a condition), and one tick brings an attribute back to 100%
+ *   §8 the streak multiplier (blueprint P29, D25) over settlement's own FULL_DAY and FREEZE_USE rows: three Full days
+ *      read ×1.16, one missed day resets it to ×1.00 (then ×1.05 after the next Full day), and a rest token on the missed
+ *      day bridges it without adding a day (×1.20 instead); the worst week reads ×1.00 throughout and costs no more
+ *      than it did (the multiplier never adds a penalty)
  */
 import "./_no-model";
 import { addDays, dayStartOf, weekdayOf, type DayKey } from "../src/lib/life-day";
@@ -33,6 +40,11 @@ import { planCompletion, type DayLedger, type PricedTemplate } from "../src/lib/
 import { dutyBoardOf, planMakeUp, type DutyBoardFacts, type OwedRow } from "../src/lib/duty-plan";
 import { nextWeekDays, owedNotice, reviewPlanOf, reviewedWeek } from "../src/lib/rituals";
 import type { ActivityInput } from "../src/lib/life-types";
+import { attributeConditionsOf, checkConditionsOf, conditionItemsOf, type ConditionBasis } from "../src/lib/skill-decay";
+import { fullDayRunOf, streakChipText, streakFromOf, type StreakFacts } from "../src/lib/streak-mult";
+import { streakMult } from "../src/lib/life-grade";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 let passed = 0;
 let failed = 0;
@@ -447,6 +459,105 @@ console.log("— §6 the weekly review: its Owed and rest steps —");
   );
   const notice = owedNotice({ count: board.owed.length, debt: total });
   check(`the Owed notice says it plainly, never a reproach: '${notice?.title}'`, notice != null && notice.title === `Owed: ${board.owed.length} · −${total.toFixed(1)} XP` && !/fail|lost|penalt|shame/i.test(`${notice.title} ${notice.detail}`), JSON.stringify(notice));
+}
+
+// ══ §7 condition decay (blueprint P28) ═════════════════════════════════════
+
+console.log("— §7 condition decay launched with Duty: the worst week's condition —");
+{
+  // The persona last practised everything the day before the launch; decay starts on the same Monday as Duty.
+  const today = addDays(WEEK_END, 1);
+  const last = { VITALITY: d(-1), INTELLECT: d(-1), CRAFT: d(-1), DUTY: d(-1), CARE: d(-1) };
+  const basis: ConditionBasis = { launch: L, today, held: [], last };
+  const c = attributeConditionsOf(basis);
+  check(
+    "after seven days with nothing done, every attribute is 7 idle days and still at 0.9 or more (Body e^(−0.08) = 0.923, the lowest): the phone lists nothing yet",
+    Object.values(c).every((x) => x.idleDays === 7 && x.condition >= 0.9) && checkConditionsOf(conditionItemsOf(basis)).length === 0,
+    JSON.stringify(Object.fromEntries(Object.entries(c).map(([k, v]) => [k, Math.round(v.condition * 1000) / 1000])))
+  );
+  const held = attributeConditionsOf({ ...basis, held: [L] });
+  check("the launch day's rest token (§4) holds its day: 6 idle days, never 7", Object.values(held).every((x) => x.idleDays === 6));
+  check("one tick brings an attribute back to 100% at once, whatever the week was", attributeConditionsOf({ ...basis, last: { ...last, VITALITY: WEEK_END } }).VITALITY.condition === 1);
+  const settlement = readFileSync(join(__dirname, "..", "src/lib/settlement-plan.ts"), "utf8") + readFileSync(join(__dirname, "..", "src/lib/settlement.ts"), "utf8");
+  check(
+    `the debt is the same with decay on or off: settlement never reads a condition (the same plans, the same −${owedTotal}), so no level, XP or credit moves with it`,
+    !/skill-decay|conditionOf|attributeConditionsOf/.test(settlement) && same(daily(SETTLED_ALL).plans, cron.plans)
+  );
+}
+
+// ══ §8 the streak multiplier (blueprint P29) ═══════════════════════════════
+
+console.log("— §8 the streak multiplier over settlement's own rows: a miss resets it, a token bridges it —");
+{
+  // The persona keeps every must on its Full days (DONE instances), meets the review quest (15) and ticks a life deed;
+  // on the missed day it does nothing at all. Settlement then judges each day two days on, as the cron does.
+  const FULL = [d(0), d(1), d(2), d(4), d(5)];
+  const MISS = d(3);
+  const doneInstances: SettlementInstance[] = FULL.flatMap((day) =>
+    PERSONA.map((t) => ({ id: `done:${t.id}:${day}`, templateId: t.id, day, slot: 0, status: "DONE" as const, source: "manual" as const, debtXp: 0, debtOpen: false, repaired: false }))
+  );
+  const deedRows: SettlementLedgerRow[] = FULL.map((day, i) => ({
+    id: `deed${i}`,
+    day,
+    source: "TASK",
+    sink: "TRACK",
+    track: "BODY",
+    templateId: "gym",
+    sourceId: `done:gym:${day}`,
+    xp: 8,
+    rawXp: 8,
+    qty: null,
+    countsForStreak: true,
+    dedupeKey: `task:gym:${day}:0:0`,
+    receipt: null,
+    joined: null,
+  }));
+  const dayFacts = FULL.map((day) => ({ day, streakUnits: 6, reviews: 15, ideas: 0, dayOpenQty: null }));
+  const start = state(d(2), { instances: doneInstances, rows: deedRows, days: dayFacts });
+  const runAt = (s: SettlementState): number => {
+    const facts: StreakFacts = {
+      firstJudged: firstDutyDay(EPOCH, L),
+      cursor: s.cursor,
+      fullDays: new Set(s.rows.filter((r) => r.source === "FULL_DAY").map((r) => r.day)),
+      heldDays: new Set(s.rows.filter((r) => r.source === "FREEZE_USE").map((r) => r.day)),
+    };
+    // A tick made today reads the run through the cursor (today − 2).
+    return fullDayRunOf(facts, addDays(s.cursor ?? L, 2)).days;
+  };
+  const through = (last: DayKey, tokens?: RestTokenInputs) => daily(last, start, tokens).s;
+  check("the streak reads settlement's judgements from the later of its launch and Duty's (here both L)", streakFromOf(L, L) === L);
+  const three = through(addDays(d(2), 2));
+  check(
+    `three Full days (settlement wrote FULL_DAY for each): day 3, ${streakChipText({ days: runAt(three), floor: false })}`,
+    three.rows.filter((r) => r.source === "FULL_DAY").length === 3 && runAt(three) === 3 && streakMult(runAt(three)) === streakMult(3)
+  );
+  const missed = through(addDays(MISS, 2));
+  check(
+    `one missed day resets it to ×1.00 (no FULL_DAY on ${MISS}, its musts owed within the caps): ${streakChipText({ days: runAt(missed), floor: false })}`,
+    !missed.rows.some((r) => r.source === "FULL_DAY" && r.day === MISS) && runAt(missed) === 0 && streakMult(runAt(missed)) === 1 && missed.rows.some((r) => r.source === "DEBT" && r.day === MISS)
+  );
+  const after = through(addDays(d(4), 2));
+  check(`…and the next Full day starts it again: day 1, ×1.05`, runAt(after) === 1 && streakChipText({ days: runAt(after), floor: false }) === "Streak ×1.05 · day 1");
+  // The one Rest Token bank (D19): active on the Full days, the start token free on the missed day.
+  const tokens: RestTokenInputs = { launch: L, active: new Set(FULL), extra: new Map(), max: new Map(), spent: new Set(), rest: new Set() };
+  const bridged = through(addDays(d(4), 2), tokens);
+  check(
+    `a rest token on the missed day bridges it without adding a day: FREEZE_USE on ${MISS}, its musts excused, day 4 (×1.20) instead of day 1`,
+    bridged.rows.some((r) => r.source === "FREEZE_USE" && r.day === MISS) &&
+      bridged.instances.filter((i) => i.day === MISS).every((i) => i.status === "EXCUSED") &&
+      runAt(bridged) === 4 &&
+      streakMult(runAt(bridged)) === 1.2,
+    `run ${runAt(bridged)}`
+  );
+  const worstRun = (() => {
+    const s = cron.s;
+    return fullDayRunOf({ firstJudged: firstDutyDay(EPOCH, L), cursor: s.cursor, fullDays: new Set(s.rows.filter((r) => r.source === "FULL_DAY").map((r) => r.day)), heldDays: new Set() }, addDays(WEEK_END, 2)).days;
+  })();
+  const settlementSrc = readFileSync(join(__dirname, "..", "src/lib/settlement-plan.ts"), "utf8");
+  check(
+    "the worst week (§1) reads ×1.00 and owes exactly what it owed: settlement never reads the multiplier, so it adds no penalty",
+    worstRun === 0 && !/streak-mult|streakMult/.test(settlementSrc) && same(daily(SETTLED_ALL).plans, cron.plans)
+  );
 }
 
 console.log(`\nspiral-check: ${passed} passed, ${failed} failed`);

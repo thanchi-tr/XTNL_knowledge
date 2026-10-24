@@ -268,8 +268,11 @@ import {
   withHeldExcused,
   yesterdayActiveOf,
   yesterdaySheetOf,
+  type MustLaneView,
   type StreakDutyFields,
 } from "../src/components/today/board-ui";
+// Blueprint P29: the streak chip's link and words.
+import { STREAK_RULES_HREF, streakDescribe, streakViewOf } from "../src/lib/streak-mult";
 import { declaredAheadOf, makeUpCopy, owedViewOf, restBannerOf, restStateOf, settledNoticeOf, type DutyBoard, type OwedCard, type SettledFact } from "../src/lib/duty-view";
 import { WRITTEN_OFF_SUB, WRITTEN_OFF_TEXT, makeUpWordsOf } from "../src/components/today/m2/makeup-words";
 // Type-only (erased): the server streak the board is typed with, so the Day ledger reads lane B's own field names.
@@ -2375,7 +2378,8 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
       /const daily = isWork \? null : dailyQuestsOf\(board\);/.test(tb) &&
         /title=\{daily \? DAILY_QUESTS_TITLE : "Must"\}/.test(tb) &&
         /strip=\{daily \? <DailyStrip daily=\{daily\} \/> : undefined\}/.test(tb) &&
-        /deferred: board\.deferred, \.\.\.\(daily \? \{ daily \} : \{\}\), restTokens \}\);/.test(tb)
+        // Re-pinned by blueprint P29: the lane also takes the streak multiplier's chip (absent while it is off).
+        /deferred: board\.deferred, \.\.\.\(daily \? \{ daily \} : \{\}\), restTokens, \.\.\.\(streakChip \? \{ streak: streakChip \} : \{\}\) \}\);/.test(tb)
     );
     // Blueprint P21 (D19): the one Rest Token bank as the Daily quests' held chip, the Momentum card's own number.
     const tokens = mustLaneOf({ must: [], owed: [stretch], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, restTokens: 2 });
@@ -2390,6 +2394,38 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
       !mustLaneOf({ must: [], owed: [stretch], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, restTokens: null }).chips.some((c) => /Rest tokens/.test(c.text)) &&
         !lane.chips.some((c) => /Rest tokens/.test(c.text)) &&
         /const restTokens = !isWork && momentum\?\.live \? momentum\.run\.bank : null;/.test(tb)
+    );
+    // Blueprint P29 (D25): the streak multiplier as the Daily quests' quiet chip, 'Streak ×1.16 · day 3', before the Rest
+    // tokens one; only while the server sends Board.streak (the multiplier in force), and on the personal Board only.
+    const streakLane = mustLaneOf({ must: [], owed: [stretch], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, restTokens: 2, streak: streakViewOf({ days: 3, floor: false }) });
+    check(
+      "P29 must lane: 'Streak ×1.16 · day 3' is a quiet chip just before 'Rest tokens 2' (words, never colour alone); none without Board.streak, and the board passes it on the personal Board only",
+      streakLane.chips.map((c) => `${c.tone}:${c.text}`).slice(-2).join("|") === "quiet:Streak ×1.16 · day 3|held:Rest tokens 2" &&
+        !tokens.chips.some((c) => /Streak/.test(c.text)) &&
+        /const streakChip = !isWork && board\.streak \? board\.streak : null;/.test(tb),
+      JSON.stringify(streakLane.chips)
+    );
+    // Review (P29): the chip says what it pays and links to the rules' Streak card (a 44 px link), and on a day with no
+    // musts and no debts (the lane hidden) it stands alone, since the multiplier still prices every full tick.
+    const streakChipOf = (v: MustLaneView) => [...v.chips, ...(v.solo ? [v.solo] : [])].find((c) => /^Streak/.test(c.text));
+    const noMusts = mustLaneOf({ must: [], owed: [], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, restTokens: 2, streak: streakViewOf({ days: 3, floor: false }) });
+    check(
+      "P29 must lane: the streak chip is a link to /today/rules#streak with its words for a screen reader ('3 Full days in a row: every full tick pays ×1.16.')",
+      streakChipOf(streakLane)?.href === STREAK_RULES_HREF && STREAK_RULES_HREF === "/today/rules#streak" && streakChipOf(streakLane)?.label === streakDescribe({ days: 3, floor: false }) && !streakLane.solo,
+      JSON.stringify(streakChipOf(streakLane))
+    );
+    check(
+      "P29 must lane: with no musts and no debts the lane hides and the chip is `solo` (Today draws it alone); never without Board.streak",
+      !noMusts.show && noMusts.solo?.text === "Streak ×1.16 · day 3" && noMusts.solo.href === STREAK_RULES_HREF &&
+        !mustLaneOf({ must: [], owed: [], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, restTokens: 2 }).solo &&
+        !("solo" in mustLaneOf({ must: [], owed: [], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, restTokens: 2 }))
+    );
+    check(
+      "P29 Today: the chips draw through LaneChipView (a link chip is a 44 px Link with its label; every other chip the plain Chip), and the solo chip renders only while the lane is hidden",
+      /mustView\.chips\.map\(\(c\) => <LaneChipView key=\{c\.text\} chip=\{c\} \/>\)/.test(tb) &&
+        /\{!mustView\.show && mustView\.solo && \(\s*<div className="lane-chips streak-solo o5">\s*<LaneChipView chip=\{mustView\.solo\} \/>/.test(tb) &&
+        /<Link href=\{chip\.href\} className="lane-chip-link" aria-label=\{chip\.label\} title=\{chip\.label\}>/.test(tb) &&
+        /\.lane-chip-link \{ display: inline-flex; align-items: center; min-height: 44px;/.test(read("src/components/today/today.css"))
     );
     const laneHtml = renderToStaticMarkup(createElement(Lane, { id: "must", title: "Daily quests", must: true, count: "1 of 2 kept", strip: createElement("ol", { className: "dq-strip" }), badge: createElement("span", null, "chip") }));
     check(

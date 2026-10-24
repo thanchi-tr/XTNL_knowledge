@@ -32,6 +32,8 @@ export async function loadSkillsContext() {
       resonancePercent: progression.modifiers.resonancePercent,
       attributePenaltyPercent: progression.modifiers.attributePenaltyPercent,
     },
+    // Blueprint P28 (D24b): the frozen emblems, only when there are any (never while condition decay is off).
+    ...(Object.keys(progression.frozen).length > 0 ? { frozen: progression.frozen } : {}),
   };
   const equippedByCode: Record<string, number> = {};
   for (const e of progression.loadout) if (e) equippedByCode[e.skill.code] = e.slot;

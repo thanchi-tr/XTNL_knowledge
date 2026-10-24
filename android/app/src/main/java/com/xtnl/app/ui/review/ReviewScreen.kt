@@ -1,5 +1,6 @@
 package com.xtnl.app.ui.review
 
+import android.text.format.DateFormat
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
@@ -89,6 +90,7 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -106,11 +108,13 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xtnl.app.core.AnswerDraft
 import com.xtnl.app.core.AnswerShape
+import com.xtnl.app.core.FatigueLine
 import com.xtnl.app.core.CardKind
 import com.xtnl.app.core.Fmt
 import com.xtnl.app.core.Panes
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.data.AnswerResult
+import com.xtnl.app.data.Fatigue
 import com.xtnl.app.data.Quest
 import com.xtnl.app.data.ReviewCard
 import com.xtnl.app.data.ReviewSummary
@@ -161,6 +165,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.Instant
 
 /**
  * Where Review's moments start and land (root coordinates and live layouts), the session bar's banked points
@@ -362,7 +367,7 @@ fun ReviewScreen(vm: ReviewViewModel, nav: Nav, summary: ReviewSummary?, spots: 
     }
 
     when (ui.phase) {
-        ReviewViewModel.Phase.IDLE -> StartPanel(summary?.due, top, onStart = start)
+        ReviewViewModel.Phase.IDLE -> StartPanel(summary?.due, top, fatigued = summary?.fatigued, onStart = start)
         ReviewViewModel.Phase.LOADING -> Centered(top) { Text("Gathering your cards…", style = MaterialTheme.typography.titleMedium, color = c.ink1) }
         ReviewViewModel.Phase.EMPTY -> Centered(top) {
             if (ui.webOnly > 0) {
@@ -403,8 +408,28 @@ private fun Centered(top: Dp, content: @Composable ColumnScope.() -> Unit) {
     )
 }
 
+/**
+ * Review fatigue (blueprint P30): "Fatigued until 4:00 pm" while the server says one is in effect, with its note under it
+ * when [note]; nothing otherwise. One TalkBack node. Read against [now] (the server's, when known), so a lifted one goes.
+ */
 @Composable
-private fun StartPanel(due: Int?, top: Dp, onStart: () -> Unit) {
+private fun FatigueNote(f: Fatigue?, now: Instant?, modifier: Modifier = Modifier, note: Boolean = true, center: Boolean = false) {
+    val c = X.c
+    val at = now ?: Instant.now()
+    val until = FatigueLine.until(f, at) ?: return
+    val h24 = DateFormat.is24HourFormat(LocalContext.current)
+    val align = if (center) TextAlign.Center else TextAlign.Start
+    Column(
+        modifier.clearAndSetSemantics { contentDescription = FatigueLine.describe(until, at, h24 = h24) },
+        horizontalAlignment = if (center) Alignment.CenterHorizontally else Alignment.Start,
+    ) {
+        Text(FatigueLine.line(until, at, h24 = h24), style = MaterialTheme.typography.labelLarge, color = c.ink1, textAlign = align)
+        if (note) Text(FatigueLine.NOTE, style = MaterialTheme.typography.bodySmall, color = c.ink2, textAlign = align)
+    }
+}
+
+@Composable
+private fun StartPanel(due: Int?, top: Dp, fatigued: Fatigue?, onStart: () -> Unit) {
     val c = X.c
     Column(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = top + 8.dp)) {
         Text("Review", style = MaterialTheme.typography.headlineMedium, color = c.ink0)
@@ -414,6 +439,8 @@ private fun StartPanel(due: Int?, top: Dp, onStart: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             Text(if (due != null && due > 0) "$due due" else "Ready when you are", style = MaterialTheme.typography.headlineSmall, color = c.ink0)
             Text("Answers are graded on the server, the same as the web.", style = MaterialTheme.typography.bodyMedium, color = c.ink2, textAlign = TextAlign.Center)
+            // P30: /check's review.fatigued (the phone's clock stands in for the server's here: /check's `now` is not passed in).
+            FatigueNote(fatigued, null, Modifier.padding(top = 16.dp), center = true)
         }
         Spacer(Modifier.weight(1f))
         XButton(
@@ -693,6 +720,8 @@ private fun SessionBar(ui: ReviewViewModel.Ui, top: Dp, spots: ReviewSpots, onEn
             // A card coming back, at the end of the line (where its retry node landed: the "queueEnd" anchor).
             if (waiting) drawCircle(c.held, sr * endPop.value, Offset(size.width - sr, size.height / 2), style = slotStroke)
         }
+        // P30: review fatigue as this run's queue said it, one line under the bar (its note is on the Start panel).
+        FatigueNote(ui.fatigued, TimeLabels.parseInstant(ui.now), Modifier.padding(top = 2.dp, end = 8.dp), note = false)
     }
 }
 

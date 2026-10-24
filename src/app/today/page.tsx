@@ -10,7 +10,7 @@ import { getDailyStreak } from "@/lib/streak";
 import { loadBossStates } from "@/lib/bosses";
 import { loadNotifications } from "@/lib/notifications";
 import { isLaunched } from "@/lib/life-economy";
-import { maybeMaintainLife } from "@/lib/settlement";
+import { maybeMaintainLife, settleForStreak } from "@/lib/settlement";
 import { loadWeightView } from "@/lib/weight-server";
 import { freezeWeekQuests, loadTodayNamedTitles, loadWeekQuests } from "@/lib/roadmap-quests-server";
 import { loadMainQuestCard, loadMainQuestWeek } from "@/lib/main-quest-server";
@@ -68,6 +68,10 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   // milestone or checkpoint reached), so the board's read below prices today's frog and the card reads them.
   // Before MOMENTUM_LAUNCH_DAY, or on a server that only reads, it returns at once and writes nothing; it never throws.
   const settled = await settleMomentum(userId, day, { now });
+  // The streak multiplier (blueprint P29): while it is in force, Duty's lazy settle too, before the board's read, so the
+  // rows project the d their ticks pay (it is counted back from the settlement cursor). Before the user's go, and once
+  // the day is settled, it returns at once; it never throws.
+  await settleForStreak(userId, now);
 
   // One wave: the board's own read (templates, recent instances, the day's
   // ledger, the queue size, and each open ROADMAP goal's stored series —

@@ -20,11 +20,13 @@
  * row, and a target whose attribute has no row shown yet (before life counts) is kept apart (`unplaced`), never lost.
  * They are readings too: no target moves a level. P5's skills (competency.ts, blueprint 1.5) are the optional fourth:
  * each row counts its attribute's live skills (`skills`, "2 skills" on the card, linking the Skills page), and a count
- * moves nothing either (a skill's hours and tier are its own, never a level's).
+ * moves nothing either (a skill's hours and tier are its own, never a level's). P28's conditions (skill-decay.ts,
+ * blueprint 3.1b) are the optional fifth, only while DECAY_LAUNCH_DAY is in force: each row carries its attribute's
+ * condition ("Body 82% · 12 days idle"), and a condition moves no level either (it lowers only what the traits read).
  *
- *   statusPanelOf(life, knowledge, avatar?, skills?)         { launched, rows, capitalTargets, unplaced }: Vitality,
- *                                                            Intellect, Craft, Duty, Care, each with its targets and
- *                                                            its skill count
+ *   statusPanelOf(life, knowledge, avatar?, skills?, conditions?)   { launched, rows, capitalTargets, unplaced }:
+ *                                                            Vitality, Intellect, Craft, Duty, Care, each with its
+ *                                                            targets, its skill count and (P28) its condition
  *   capitalReadingOf(deals, month)                           AUD won in one month: cents, the deals, its words
  *   capitalPanelOf(deals, today, months?)                    this month and the CAPITAL_MONTHS - 1 before it, newest
  *                                                            first; null when no deal was won in them
@@ -38,6 +40,7 @@ import { monthLabelOf, shiftMonth, type MonthKey } from "./task-style";
 import { knowledgeLine, type KnowledgeRow } from "../components/home/sheet-math";
 import type { AvatarTargetView, AvatarView } from "./avatar";
 import type { SkillView } from "./competency";
+import type { Condition } from "./skill-decay";
 
 // ── The five attributes ─────────────────────────────────────────────────────
 
@@ -97,6 +100,8 @@ export interface StatusRow {
   targets: AvatarTargetView[];
   /** Its live skills (P5), counted; 0 without the skills input. */
   skills: number;
+  /** Its condition (P28: skill-decay.ts), only while condition decay is in force; null otherwise. Never moves `level`. */
+  condition: Pick<Condition, "condition" | "idleDays"> | null;
 }
 
 export interface StatusPanel {
@@ -128,6 +133,7 @@ function trackRow(key: StatusKey, r: LifeTrackRow): StatusRow {
     unit: "xp",
     targets: [],
     skills: 0,
+    condition: null,
   };
 }
 
@@ -149,6 +155,7 @@ function intellectRow(k: KnowledgeRow): StatusRow {
     unit: "pts",
     targets: [],
     skills: 0,
+    condition: null,
   };
 }
 
@@ -158,13 +165,15 @@ function intellectRow(k: KnowledgeRow): StatusRow {
  * notLaunchedView): Intellect alone. `avatar` (P4, optional: null or omitted reads as no targets) hands each row its
  * attribute's targets, in the avatar's own order; Capital's go to capitalTargets, and one whose row isn't shown to
  * unplaced. Every figure of a row stays its source's: a target never moves a level. `skills` (P5, optional: null or
- * omitted reads as none) gives each shown row the count of its attribute's live skills.
+ * omitted reads as none) gives each shown row the count of its attribute's live skills. `conditions` (P28, optional:
+ * null or omitted while condition decay is off) gives each shown row its attribute's condition.
  */
 export function statusPanelOf(
   life: Pick<LifeTracksView, "launched" | "rows">,
   knowledge: KnowledgeRow,
   avatar?: Pick<AvatarView, "targets"> | null,
-  skills?: readonly Pick<SkillView, "attribute">[] | null
+  skills?: readonly Pick<SkillView, "attribute">[] | null,
+  conditions?: Readonly<Partial<Record<StatusKey, Pick<Condition, "condition" | "idleDays">>>> | null
 ): StatusPanel {
   const byTrack = new Map(life.rows.map((r) => [r.track, r]));
   const rows = STATUS_KEYS.flatMap((key): StatusRow[] => {
@@ -184,6 +193,7 @@ export function statusPanelOf(
     const row = shown.get(k.attribute);
     if (row) row.skills += 1;
   }
+  if (conditions) for (const r of rows) r.condition = conditions[r.key] ? { condition: conditions[r.key]!.condition, idleDays: conditions[r.key]!.idleDays } : null;
   return { launched: life.launched, rows, capitalTargets, unplaced };
 }
 

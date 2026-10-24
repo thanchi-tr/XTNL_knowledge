@@ -8,6 +8,7 @@ import com.xtnl.app.core.MallLine
 import com.xtnl.app.core.OwedLine
 import com.xtnl.app.core.ProofLine
 import com.xtnl.app.core.ReviewSession
+import com.xtnl.app.core.StreakLine
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.core.WalletLine
 import kotlinx.coroutines.delay
@@ -33,6 +34,12 @@ import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.min
 import kotlin.math.round
+
+/** Review fatigue (P30) in the demo: the day's answers that apply Fatigued (the server's review-fatigue FATIGUE_ANSWERS). */
+internal const val DEMO_FATIGUE_ANSWERS = 200
+
+/** How long it lasts (FATIGUED's own 18 hours). */
+internal const val DEMO_FATIGUE_HOURS = 18L
 
 /**
  * Demo data: a believable day with no server, for development and for trying
@@ -82,9 +89,16 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
 
     // Three ticks from the next level, so the demo shows a character level up (7 Adept → 8 Expert).
     private var level = LevelInfo(7, "Adept", 0.88)
-    private var streak = StreakInfo(12, keptToday = false, freezes = 2, restTokens = 2)
+    // P29: as a server with the streak multiplier switched on sends it (3 judged Full days in a row: ×1.16).
+    private var streak = StreakInfo(12, keptToday = false, freezes = 2, restTokens = 2, multiplier = DEMO_STREAK_MULT)
     private var reviewDone = 4
     private val reviewTarget = 20
+    /**
+     * P30: review fatigue, as a server with it switched on applies it: once the day's answers reach [DEMO_FATIGUE_ANSWERS]
+     * (right or wrong) it is applied once that day, for [DEMO_FATIGUE_HOURS] hours, and the combo ceiling is halved meanwhile.
+     */
+    private var fatigueDay: java.time.LocalDate? = null
+    private var fatigueUntil: Instant? = null
     /** P5: the skills' tier Seals already played (once ever a tier, as the server keys them 'competency:<id>:t<n>'). */
     private val skillSeals = mutableSetOf<String>()
     /** P16: the credits earned on the days before today (the demo's wallet, as a server with credits switched on sends it). */
@@ -320,6 +334,8 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                         doneToday = reviewDone,
                         target = reviewTarget,
                         nextDueAt = now.plus(Duration.ofMinutes(140)).toString(),
+                        // As a server with review fatigue switched on sends it (P30): null until the day's 200th answer.
+                        fatigued = fatigueNow(now),
                     ),
                     fading = fading(),
                     // As a server with the audit switched on sends it (the reminder never arms from demo data).
@@ -330,6 +346,8 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                     // As a server with Duty switched on sends it (P22): the make-up cards' actions run.
                     dutyOn = true,
                     owed = owed.map { owedNow(it, day) },
+                    // As a server with condition decay switched on sends it (P28): what is under 90%, the lowest first.
+                    skills = DEMO_CONDITION,
                     work = work.filter { !it.done }.map { it.item },
                     level = level,
                     streak = streak,
@@ -751,7 +769,10 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                     CompleteResult(
                         instanceId = instance, xp = xp,
                         line = "+$xp XP · $track" + (if (t.item.proof && !mvv && counted != null) " · $counted min" else "") +
-                            (read?.let { " · ${ProofLine.pagesLabel(it)}" } ?: "") + if (mvv) " · minimum" else "",
+                            (read?.let { " · ${ProofLine.pagesLabel(it)}" } ?: "") +
+                            // P29: a full tick says its C, as the server's tick line does ('· streak ×1.16'); never the minimum.
+                            (if (!mvv) streak.multiplier?.takeIf { it.value > 1.0 }?.let { " · streak ${StreakLine.mult(it.value)}" } ?: "" else "") +
+                            if (mvv) " · minimum" else "",
                         allDone = clear,
                         celebrations = listOfNotNull(
                             skill?.second,
@@ -909,7 +930,8 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         if (limit !in 1..50) return bad("limit must be 1 to 50.")
         return lock.withLock {
             val due = cards.filter { it.card.ideaId !in answeredToday }.map { c -> c.card.copy(level = cardLevels[c.card.ideaId] ?: c.card.level) }
-            Outcome.Ok(ReviewQueue(Instant.now().toString(), due.size, due.take(limit)))
+            val now = clock()
+            Outcome.Ok(ReviewQueue(now.toString(), due.size, due.take(limit), fatigued = fatigueNow(now)))
         }
     }
 
@@ -927,12 +949,16 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                 val retry = !correct && sessionMisses + 1 <= ReviewSession.MAX_RETURNS
                 val today = TimeLabels.lifeDay(Instant.now())
                 val lvl = cardLevels[ideaId] ?: c.card.level ?: 1
-                val multiplier = round((1.0 + 0.1 * combo.coerceAtMost(10)) * 10) / 10
+                // P30: while Fatigued the ceiling is halved (10 → 5), as the server's FATIGUED fold pays it.
+                val ceiling = if (fatigueNow(clock()) != null) 5 else 10
+                val multiplier = round((1.0 + 0.1 * combo.coerceAtMost(ceiling)) * 10) / 10
                 val points = if (correct) round(4.2 * multiplier * 10) / 10 else 0.0
                 val levelTo = if (correct) (lvl + 1).coerceAtMost(7) else (lvl - 1).coerceAtLeast(1)
                 cardLevels[ideaId] = levelTo
                 if (!retry) answeredToday += ideaId
                 reviewDone += 1
+                // P30: the answer that reaches the day's 200th applies Fatigued, once that day (after this answer is paid).
+                tireIfDue(clock())
                 if (reviewDone >= 7) tasks.indexOfFirst { it.item.templateId == "t-study" && it.item.locked }.takeIf { it >= 0 }?.let { i ->
                     tasks[i] = tasks[i].copy(item = tasks[i].item.copy(status = "DONE"), instanceId = "i-study")
                 }
@@ -962,6 +988,22 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                 )
             }
         }
+    }
+
+    /** P30: the fatigue in effect at [now], as the server sends it: its end, or null with none. */
+    private fun fatigueNow(now: Instant): Fatigue? = fatigueUntil?.takeIf { it.isAfter(now) }?.let { Fatigue(it.toString()) }
+
+    /** P30: the day's answers at [DEMO_FATIGUE_ANSWERS] or more apply Fatigued once that day; nothing else ever does. */
+    private fun tireIfDue(now: Instant) {
+        val day = TimeLabels.lifeDay(now)
+        if (reviewDone < DEMO_FATIGUE_ANSWERS || fatigueDay == day) return
+        fatigueDay = day
+        fatigueUntil = now.plus(Duration.ofHours(DEMO_FATIGUE_HOURS))
+    }
+
+    /** The screenshots' seam (ScreensTest, P30): today's answers so far, so the next answer can be the 200th. */
+    internal fun seedAnswersToday(n: Int) {
+        reviewDone = n.coerceAtLeast(0)
     }
 
     override suspend fun log(text: String, section: String, clientId: String): Outcome<LogResult> {
@@ -1101,6 +1143,18 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                 DecayItem("ideas", "5 ideas fading", "1 already losing levels. Past grace, an idea counts for less every day until it is reviewed."),
             ),
         )
+
+        /**
+         * Condition decay (P28), as a server with it switched on sends it: Care idle 31 days (λ 0.005: e^(−0.005 × 28)),
+         * and a skill at the floor. Only what is under 90%, the lowest first (skill-decay.ts checkConditionsOf).
+         */
+        val DEMO_CONDITION = listOf(
+            CheckSkill("skill", "Spanish", 0.5, 74),
+            CheckSkill("attribute", "Care", 0.869, 31),
+        )
+
+        /** The streak multiplier (P29), as the server sends it: 3 judged Full days in a row, min(1.2, 1.05^3) = ×1.16. */
+        val DEMO_STREAK_MULT = StreakMultiplier(1.16, 3, floor = false, line = "Streak ×1.16 · day 3")
 
         /** The weekly audit's target, a whole percent (week-audit AUDIT_TARGET). */
         const val WEEK_TARGET = 85

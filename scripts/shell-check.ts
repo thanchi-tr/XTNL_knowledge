@@ -663,7 +663,9 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
     /loadLifeTracks\(userId\)\.catch\(\(\) => null\)/.test(shellData) && /launched \? trackLevelsOf\(life\?\.levels\) : \[\]/.test(shellData)
   );
   check("shell: crest edges only once launched (null before)", /tracks: launched \? \(life\?\.edges \?\? null\) : null/.test(shellData));
-  check("shell: the title reads the new level and the progression scores (life included)", /computeTitle\(level, progression\.scores, ultimateCount\)/.test(shellData));
+  // Re-pinned for blueprint P28 (D24): the traits at full condition (the same scores as before while DECAY_LAUNCH_DAY is
+  // off), so an idle attribute never drops a title or its epithet.
+  check("shell: the title reads the new level and the progression scores at full condition (life included; titles never drop, P28)", /computeTitle\(level, progression\.fullScores, ultimateCount\)/.test(shellData));
 }
 
 // ── M2: Duty in the shell (m2-refit decision 27, F15) ───────────────────────

@@ -24,10 +24,11 @@ import { motionLevel } from "@/lib/motion";
 import { depthOf } from "@/lib/skill-form";
 import type { Skill } from "@/lib/skill-pool";
 import { RANK_META } from "@/lib/skill-visuals";
+import { FROZEN_NOTE } from "@/lib/skill-decay";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { EmblemCoin } from "@/components/ui/Crest";
-import { Icon } from "@/components/ui/Icon";
+import { HeldGlyph, Icon } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
 import { pushToast } from "@/components/ui/toast-store";
 import { cx } from "@/components/ui/cx";
@@ -40,16 +41,24 @@ export interface LoadoutSlotView {
   skill: Skill | null;
   /** Equipped but requirements no longer met: holds a slot, yields nothing. */
   active: boolean;
+  /**
+   * Blueprint P28 (D24b): inactive only because an idle attribute's condition lowered a trait: "Frozen · Body 12 days
+   * idle · a Body tick thaws it (Physical 120)". It stays owned and in its slot, and practice thaws it. Absent while
+   * condition decay is off.
+   */
+  frozen?: string | null;
 }
 
 interface Props {
   slots: LoadoutSlotView[];
   bench: Skill[];
+  /** P28: every owned emblem that is frozen (ProgressionState.frozen), for the bench's marks. Absent while decay is off. */
+  frozen?: Readonly<Record<string, string>>;
 }
 
 type Pick = { mode: "equip"; slot: number } | { mode: "manage"; slot: number } | { mode: "swap"; slot: number } | null;
 
-export function LoadoutGrid({ slots, bench }: Props) {
+export function LoadoutGrid({ slots, bench, frozen }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [local, setLocal] = useState(slots);
@@ -91,8 +100,10 @@ export function LoadoutGrid({ slots, bench }: Props) {
   function equip(slot: number, skill: Skill) {
     setError(null);
     const displaced = local.find((s) => s.slot === slot)?.skill ?? null;
+    // P28: a frozen emblem equipped stays frozen (paused) until the server's read; a slot's frozen line goes with its emblem.
+    const iced = frozen?.[skill.code] ?? null;
     const next = local.map((s) =>
-      s.slot === slot ? { ...s, skill, active: true } : s.skill?.code === skill.code ? { ...s, skill: null, active: false } : s
+      s.slot === slot ? { ...s, skill, active: !iced, frozen: iced } : s.skill?.code === skill.code ? { ...s, skill: null, active: false, frozen: null } : s
     );
     const before = resonance.sets;
     setLocal(next);
@@ -120,7 +131,7 @@ export function LoadoutGrid({ slots, bench }: Props) {
   function unequip(slot: number) {
     setError(null);
     const removed = local.find((s) => s.slot === slot)?.skill ?? null;
-    setLocal((prev) => prev.map((s) => (s.slot === slot ? { ...s, skill: null, active: false } : s)));
+    setLocal((prev) => prev.map((s) => (s.slot === slot ? { ...s, skill: null, active: false, frozen: null } : s)));
     if (removed) setLocalBench((b) => [...b, removed]);
     setPick(null);
     startTransition(async () => {
@@ -152,15 +163,17 @@ export function LoadoutGrid({ slots, bench }: Props) {
               {s.skill ? (
                 <button
                   type="button"
-                  className={cx("lo-slot", !s.active && "dormant", glint?.slot === s.slot && "glint")}
+                  className={cx("lo-slot", !s.active && "dormant", s.frozen && "frozen", glint?.slot === s.slot && "glint")}
                   key={glint?.slot === s.slot ? `g${glint.n}` : "s"}
                   onClick={() => setPick({ mode: "manage", slot: s.slot })}
-                  aria-label={`Slot ${s.slot + 1}: ${s.skill.name}${s.active ? "" : ", dormant"}. Swap or unequip`}
+                  aria-label={`Slot ${s.slot + 1}: ${s.skill.name}${s.active ? "" : s.frozen ? ", frozen" : ", dormant"}. Swap or unequip`}
                   disabled={isPending}
                 >
                   <EmblemCoin rank={s.skill.rank} depth={depthOf(s.skill)} size={48}>
                     <SkillLogo skill={s.skill} size={28} animated={false} />
                   </EmblemCoin>
+                  {/* P28: owned and dimmed, never locked; the held hue only with its freeze glyph (the word is in the label). */}
+                  {s.frozen && <HeldGlyph kind="freeze" className="lo-freeze" />}
                 </button>
               ) : (
                 <button
@@ -221,13 +234,19 @@ export function LoadoutGrid({ slots, bench }: Props) {
                 <Chip tone="kept" icon="check">
                   In effect
                 </Chip>
+              ) : current.frozen ? (
+                <Chip tone="held" held="freeze" className="frozen-chip">
+                  {current.frozen}
+                </Chip>
               ) : (
                 <Chip tone="owed">Dormant: its requirements lapsed</Chip>
               )}
               <p className="t-meta" style={{ marginTop: 6 }}>
                 {current.active
                   ? "Unequipping frees the slot; the emblem stays yours, on the bench."
-                  : "It holds a slot and yields nothing until its attribute recovers. Swap it for one that works now."}
+                  : current.frozen
+                    ? FROZEN_NOTE
+                    : "It holds a slot and yields nothing until its attribute recovers. Swap it for one that works now."}
               </p>
             </div>
           </div>
@@ -257,6 +276,12 @@ export function LoadoutGrid({ slots, bench }: Props) {
                       <span className="t-meta">
                         {RANK_META[skill.rank].label} · {skill.effectText}
                       </span>
+                      {/* P28: a frozen emblem on the bench says so before it is equipped (it would hold a slot, paused). */}
+                      {frozen?.[skill.code] && (
+                        <span className="t-meta lo-frozen-note">
+                          <HeldGlyph kind="freeze" /> {frozen[skill.code]}
+                        </span>
+                      )}
                     </span>
                   </button>
                 </li>

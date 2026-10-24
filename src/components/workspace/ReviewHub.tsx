@@ -3,7 +3,8 @@
 /**
  * The hub's supporting cards: what is in effect on a review right now (the
  * folded modifiers, active boons with when they end, active penalties with
- * how they clear), and Recent ideas (linking to /library/[id]).
+ * how they clear), the fatigue breaker once it is in force (blueprint P30),
+ * and Recent ideas (linking to /library/[id]).
  * Presentational; the numbers come from the page.
  *
  * The loadout strip itself is L4's one implementation
@@ -14,6 +15,8 @@ import Link from "next/link";
 // Revision 5, lane 9 (contracts ruling 67): pv.named after a Domain Gemini named
 import { DomainName } from "@/components/glyph/NamedMark";
 import { formatExpiry } from "@/lib/format-date";
+import { fatigueHubCount, fatigueHubRule, type FatigueSummary } from "@/lib/review-fatigue";
+import { BREAKER_DEBUFFS } from "@/lib/debuff-meta";
 import { Chip } from "@/components/ui/Chip";
 import { SectionHeader } from "@/components/ui/Tabs";
 
@@ -83,7 +86,14 @@ export function EffectsCard({ effects }: { effects: ReviewEffects }) {
       ))}
       {effects.penalties.map((p) => (
         <div key={`penalty:${p.kind}:${p.until.toISOString()}`} className="rv-effect">
-          <Chip tone="owed">{p.label}</Chip>
+          {/* P30 (H8): Fatigued is a breaker that lifts by itself, not a thing owed: held, with its glyph and word. */}
+          {BREAKER_DEBUFFS.has(p.kind) ? (
+            <Chip tone="held" held="rest">
+              {p.label}
+            </Chip>
+          ) : (
+            <Chip tone="owed">{p.label}</Chip>
+          )}
           <div style={{ minWidth: 0 }}>
             <b style={{ display: "block", fontWeight: 600 }}>{p.effect}</b>
             <span className="t-meta">
@@ -92,6 +102,25 @@ export function EffectsCard({ effects }: { effects: ReviewEffects }) {
           </div>
         </div>
       ))}
+    </section>
+  );
+}
+
+/**
+ * The fatigue breaker (blueprint 3.3b; P30, decision D26), published on the hub once FATIGUE_LAUNCH_DAY is in force (the
+ * page passes nothing before): the rule in review-fatigue.ts's words, then today's answers, or, while Fatigued is in
+ * effect, when it lifts (its own row is in the card above, with the other penalties). A count, never a target.
+ */
+export function FatigueNote({ fatigue }: { fatigue: FatigueSummary }) {
+  return (
+    <section className="card rv-fatigue" aria-labelledby="rv-fatigue-h">
+      <div id="rv-fatigue-h" className="t-eyebrow">
+        Fatigue breaker
+      </div>
+      <p className="t-meta ink-1">{fatigueHubRule()}</p>
+      <p className="t-meta">
+        {fatigue.until ? `Fatigued until ${formatExpiry(fatigue.until)}; answers still pay review points.` : fatigueHubCount(fatigue.answers)}
+      </p>
     </section>
   );
 }

@@ -36,6 +36,7 @@ import { daysOverdueOf, forgetDedupeKey, forgetKeyPrefix, levelLossPoints, level
 import { dateColumn, dayKeyOf, daysBetween, keyOfDateColumn, todayKey, type DayKey } from "./life-day";
 import type { ActivityInput, Receipt } from "./life-types";
 import { getCurrentUserId } from "./user";
+import { applyReviewFatigue } from "./review-fatigue-server";
 
 // MAX_LEVEL and the interval schedule now live in xp.ts (pure arithmetic,
 // no Prisma import) and are re-exported here so existing callers are
@@ -420,7 +421,8 @@ async function attemptDegradation(
   progression: ProgressionState,
   nextCombo: number
 ): Promise<ReviewOutcome> {
-  const anchor = await tryConsumeWardCharge(userId, progression.activeSkills, now);
+  // P28 (D24): the ward reads the emblems the full traits open, so an idle attribute's condition never costs a level.
+  const anchor = await tryConsumeWardCharge(userId, progression.fullActiveSkills, now);
   const ease = { before: clampEase(idea.ease), after: easeAfterLapse(idea.ease) };
 
   if (anchor) {
@@ -542,6 +544,14 @@ export async function applyReviewResult(
   after(async () => {
     if (lateOutcome) {
       await recordActivity(userId, { ...reviewEvent(ideaId, now, 0, lateOutcome), qty: brokenStreak, receipt: missReceipt as unknown as Receipt | null, ...keyed });
+    }
+    // Review fatigue (blueprint P30): once this answer's row is in, the day's answers reaching FATIGUE_ANSWERS apply
+    // FATIGUED, once a day (review-fatigue-server). A pass and a miss count alike; it returns at once, with no read,
+    // while FATIGUE_LAUNCH_DAY is null, and a failure is logged, never in the way of what follows.
+    if (landed) {
+      await applyReviewFatigue(prisma, userId, now).catch((err: unknown) => {
+        console.error("review fatigue: the day's check failed:", err instanceof Error ? err.message.slice(0, 200) : err);
+      });
     }
     // Study tasks ('review 20 daily') complete themselves from these rows,
     // so they are checked only once this review's row is in.
@@ -815,7 +825,8 @@ export async function degradeOverdueIdeas(now: Date = new Date()): Promise<{ ide
     const want = levelsForgotten(anchor, daysOverdueOf(idea.dueDate, now), graceExtra, idea.ease);
     if (want <= done) continue;
 
-    const anchorWard = await tryConsumeWardCharge(userId, progression.activeSkills, now);
+    // P28 (D24): as a manual degrade, the ward reads the full traits' emblems (and `graceExtra` is their fold).
+    const anchorWard = await tryConsumeWardCharge(userId, progression.fullActiveSkills, now);
     if (anchorWard) {
       results.push({ ideaId: idea.id, outcome: { outcome: "shielded", level: idea.level, skillName: anchorWard.name, nextCombo: 0, nextDue: idea.dueDate.toISOString() } });
       continue;

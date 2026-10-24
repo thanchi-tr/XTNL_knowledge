@@ -366,7 +366,8 @@ class DemoBoardTest {
         assertTrue("a chore ticks in one tap", api.completeTask("t-dentist", mvv = false, clientId = "c-2") is Outcome.Ok)
         val tick = (api.completeTask("t-thesis", mvv = false, clientId = "c-3", minutes = 90) as Outcome.Ok).value
         assertEquals("a 90-minute logged tick prices as its estimate's", 26.7, tick.xp, 0.0)
-        assertTrue(tick.line!!, tick.line!!.endsWith(" · 90 min"))
+        // Re-pinned by P29: the demo is a server with the streak multiplier on, so a full tick's line ends with its C.
+        assertTrue(tick.line!!, tick.line!!.endsWith(" · 90 min · streak ×1.16"))
         assertEquals(400, (api.completeTask("t-gym", mvv = false, clientId = "c-4", minutes = 481) as Outcome.Err).status)
     }
 
@@ -387,7 +388,7 @@ class DemoBoardTest {
         assertEquals(404, (api.stopTimer("s-gone", "s-4") as Outcome.Err).status)
         val tick = (api.completeTask("t-thesis", mvv = false, clientId = "c-1", sessionId = started.sessionId) as Outcome.Ok).value
         // Re-pinned (review): a timer counts what it ran (the plan's min(reported, clock)), not half the estimate.
-        assertTrue(tick.line!!, tick.line!!.endsWith(" · 10 min"))
+        assertTrue(tick.line!!, tick.line!!.endsWith(" · 10 min · streak ×1.16"))
         assertNull("counted once: the timer is gone from the row", (api.check() as Outcome.Ok).value.tasks.single { it.templateId == "t-thesis" }.timer)
     }
 
@@ -407,7 +408,7 @@ class DemoBoardTest {
         val row = (api.check() as Outcome.Ok).value.tasks.single { it.templateId == "t-thesis" }
         assertEquals(50, ProofLine.timerMinutes(row.timer!!, now))
         val tick = (api.completeTask("t-thesis", mvv = false, clientId = "c-1", sessionId = resumed.sessionId) as Outcome.Ok).value
-        assertTrue(tick.line!!, tick.line!!.endsWith(" · 50 min"))
+        assertTrue(tick.line!!, tick.line!!.endsWith(" · 50 min · streak ×1.16"))
     }
 
     /** Review: picked minutes count instead of an open timer's, and the timer is closed (nothing left running). */
@@ -417,7 +418,7 @@ class DemoBoardTest {
         api.startTimer("t-thesis", "s-1")
         now = now.plusSeconds(12 * 60)
         val tick = (api.completeTask("t-thesis", mvv = false, clientId = "c-1", minutes = 90) as Outcome.Ok).value
-        assertTrue("the sheet's 90 counts 90, not the timer's 12", tick.line!!.endsWith(" · 90 min"))
+        assertTrue("the sheet's 90 counts 90, not the timer's 12", tick.line!!.endsWith(" · 90 min · streak ×1.16"))
         assertNull((api.check() as Outcome.Ok).value.tasks.single { it.templateId == "t-thesis" }.timer)
     }
 
@@ -438,7 +439,20 @@ class DemoBoardTest {
         assertTrue("the pages on any other task change nothing", api.completeTask("t-dentist", mvv = false, clientId = "c-4", pages = 12) is Outcome.Ok)
         val tick = (api.completeTask("t-novel", mvv = false, clientId = "c-5", pages = 45) as Outcome.Ok).value
         assertEquals("the pages are recorded, never priced", 5.2, tick.xp, 0.0)
-        assertTrue(tick.line!!, tick.line!!.endsWith(" · 45 pages"))
+        assertTrue(tick.line!!, tick.line!!.endsWith(" · 45 pages · streak ×1.16"))
+    }
+
+    /** P29: /check's streak carries the multiplier (a separate count from the daily streak); a full tick's line says its C. */
+    @Test fun theStreakMultiplierRidesOnTheCheckAndTheTickLine() = runTest {
+        val api = DemoApi()
+        val streak = (api.check() as Outcome.Ok).value.streak!!
+        assertEquals(12, streak.days)
+        assertEquals(StreakMultiplier(1.16, 3, floor = false, line = "Streak ×1.16 · day 3"), streak.multiplier)
+        val tick = (api.completeTask("t-dentist", mvv = false, clientId = "c-1") as Outcome.Ok).value
+        assertTrue(tick.line!!, tick.line!!.endsWith(" · streak ×1.16"))
+        val min = (api.completeTask("t-stretch", mvv = true, clientId = "c-2") as Outcome.Ok).value
+        assertTrue(min.line!!, min.line!!.endsWith(" · minimum"))
+        assertFalse("the minimum keeps C at 1.00", min.line!!.contains("streak"))
     }
 
     /** P24: the minimum version of a reading task still ticks in one tap. */

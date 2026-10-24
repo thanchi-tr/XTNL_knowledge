@@ -27,6 +27,10 @@
  *   link, and unlinking takes them out again. No Seal plays for hours that were already there (as the curve flip plays
  *   none): a tier-up plays only when a tick or a walk moves the hours across a boundary.
  *
+ *   Its last practice (blueprint P28): the latest life day of a live tick that feeds it (a walk's own tick included),
+ *   and an exercise skill's latest walk (SkillHours.lastDay, SkillView.lastDay). A reading too: condition decay
+ *   (skill-decay.ts) reads it while DECAY_LAUNCH_DAY is in force, and nothing else does.
+ *
  *   hoursLineOf(h)          "≈ 42 h (task estimates, not timed)"; "12.5 h of walks"; "No hours yet"
  *   skillViewOf / skillsOf  a skill as the Skills page, the Status card and the phone show it, by hours
  *   suggestionsOf           normTitle families of unlinked personal tasks with ≥ SUGGEST_MIN_COMPLETIONS live ticks
@@ -199,7 +203,8 @@ export interface SkillTopUp {
 export interface SkillFacts {
   templates: readonly SkillTemplate[];
   ticks: readonly SkillTick[];
-  walks: { minutes: number; count: number } | null;
+  /** `lastDay` (P28): the latest walk's life day, 'YYYY-MM-DD'; absent or null with none (or a read that predates it). */
+  walks: { minutes: number; count: number; lastDay?: string | null } | null;
   topUps: readonly SkillTopUp[];
 }
 
@@ -253,9 +258,14 @@ export interface SkillHours {
   walkMinutes: number;
   /** Templates feeding it now. */
   templates: number;
+  /** P28: its last practice, 'YYYY-MM-DD' (the latest live tick feeding it, an exercise skill's latest walk); null with none. */
+  lastDay: string | null;
 }
 
-const EMPTY_HOURS: SkillHours = { minutes: 0, ticks: 0, estimated: 0, walks: 0, walkMinutes: 0, templates: 0 };
+const EMPTY_HOURS: SkillHours = { minutes: 0, ticks: 0, estimated: 0, walks: 0, walkMinutes: 0, templates: 0, lastDay: null };
+
+/** The later of two life days ('YYYY-MM-DD' compares as text); null only when both are. */
+const laterDay = (a: string | null, b: string | null | undefined): string | null => (b == null ? a : a == null || b > a ? b : a);
 
 /** A top-up's key: the template and the day. */
 const topUpKey = (templateId: string, day: string) => `${templateId}|${day}`;
@@ -283,6 +293,8 @@ export function skillHoursOf(skills: readonly SkillRow[], facts: SkillFacts): Ma
   for (const tick of facts.ticks) {
     const fed = feeds.get(tick.templateId);
     if (!fed || !isLiveTick(tick)) continue;
+    // P28: any live tick feeding it is practice that day, a walk's own included (its hours are the walk's below).
+    out.get(fed.skill)!.lastDay = laterDay(out.get(fed.skill)!.lastDay, tick.day);
     // A walk's own time: an EXERCISE skill counts the walk, not the tick it paid or topped up.
     if (kindOf.get(fed.skill) === "EXERCISE" && (tick.instanceSource === WALK_PAID_SOURCE || (tick.day != null && toppedUp.has(topUpKey(tick.templateId, tick.day))))) continue;
     const { minutes, basis } = tickMinutesOf(tick, fed.estMinutes);
@@ -299,6 +311,7 @@ export function skillHoursOf(skills: readonly SkillRow[], facts: SkillFacts): Ma
       h.walkMinutes += m;
       h.minutes += m;
       h.walks += Math.max(0, Math.round(facts.walks.count) || 0);
+      h.lastDay = laterDay(h.lastDay, facts.walks.lastDay);
     }
   }
   return out;
@@ -373,6 +386,8 @@ export interface SkillView {
   walks: number;
   /** Templates feeding it now (its own links and its roadmaps' practices). */
   templates: number;
+  /** P28: its last practice, 'YYYY-MM-DD' (SkillHours.lastDay); null with none. Read only by condition decay. */
+  lastDay: string | null;
   sortOrder: number;
   createdAt: string;
 }
@@ -406,6 +421,7 @@ export function skillViewOf(row: SkillRow, hours: SkillHours | undefined, fields
     estimated: h.estimated,
     walks: h.walks,
     templates: h.templates,
+    lastDay: h.lastDay,
     sortOrder: row.sortOrder,
     createdAt: row.createdAt,
   };

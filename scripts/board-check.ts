@@ -32,6 +32,7 @@ import "./_no-model";
 import { addDays, weekdayOf, type DayKey } from "../src/lib/life-day";
 import type { Receipt } from "../src/lib/life-types";
 import { KNEE_CAP, consistencyFactor, estEff, kneeG, payModeOf, priceTask, roundTo, timingFor } from "../src/lib/life-grade";
+import { effortFactor, streakMult } from "../src/lib/life-grade";
 import { normTitleOf, repeatNOf } from "../src/lib/life-lexicon";
 import { nextDue, occursOn, parseRule } from "../src/lib/recurrence";
 import { parseCapture } from "../src/lib/capture-parse";
@@ -86,6 +87,7 @@ import {
   paidIntroOf,
   planAutoCompletions,
   planCompletion,
+  planStreakOf,
   questOf,
   startDayFor,
   statsFor,
@@ -1115,6 +1117,39 @@ const completion = (templateId: string, groupKey: string, p: Partial<LedgerCompl
     paidIntroOf(introReceipt, { band: "INTRO", bandOverride: 1 }) === true && paidIntroOf(null, { band: "INTRO", bandOverride: 1 }) === false,
     `receipt band ${introReceipt.factors[0].label}`
   );
+}
+
+// ── The streak multiplier (blueprint P29): every row's '≈ N XP' is what its tick pays ──
+{
+  // BoardData.streak as tasks.ts sends it while the multiplier is in force: 3 judged Full days before today, 2 before
+  // yesterday. Without it (the switch off) every row below projects exactly as it did.
+  const gym = tpl({ id: "sGym", title: "Gym legs", band: "DEMANDING", estMinutes: 60, machineMinutes: 60, track: "BODY" });
+  const stretch = tpl({ id: "sStretch", title: "Stretch", recurrence: "DAILY", estMinutes: 15, machineMinutes: 15, startDay: ago(30) });
+  const history = Array.from({ length: 10 }, (_, i) => inst("sStretch", ago(i + 2)));
+  const plain = board([gym, stretch], { history });
+  const live: BoardData = { ...plain, streak: { launchDay: ago(20), today: { days: 3, floor: false }, yesterday: { days: 2, floor: false } } };
+  const off = buildBoard(plain);
+  const on = buildBoard(live);
+  const gymOn = rowOf(on, "sGym")!;
+  const stretchOn = rowOf(on, "sStretch")!;
+  check(
+    "streak ×1.16 (day 3): a one-off row '≈ 27.0' (20 × 1.17 × 1.157625; '≈ 23.3' without it), 'life-4'",
+    gymOn.projection.xp === 27 && rowOf(off, "sGym")!.projection.xp === 23.3 && gymOn.projection.v === "life-4" && gymOn.projection.streak?.days === 3,
+    `${gymOn.projection.xp} / ${rowOf(off, "sGym")!.projection.xp}`
+  );
+  check(
+    "…a habit row prices C = m(3), not its own per-habit streak (which stays on the row for display)",
+    stretchOn.projection.xp === roundTo(10 * effortFactor(15) * streakMult(3), 1) && stretchOn.projection.xp === 9.6 && stretchOn.streakDays === rowOf(off, "sStretch")!.streakDays &&
+      rowOf(off, "sStretch")!.projection.xp === roundTo(10 * effortFactor(15) * consistencyFactor(rowOf(off, "sStretch")!.streakDays), 1),
+    `${stretchOn.projection.xp} (per-habit ${rowOf(off, "sStretch")!.projection.xp} at ${stretchOn.streakDays} days)`
+  );
+  const server = (row: BoardRow) => planCompletion({ template: row.template, day: row.day, today: TODAY, slot: row.slot, ledger: live.ledger.today, streakDays: row.streakDays, streak: planStreakOf(live, row.day) }).receipt;
+  check("the server's price over the same run equals each row's projection, receipt for receipt", [gymOn, stretchOn].every((r) => JSON.stringify(server(r)) === JSON.stringify(r.projection)));
+  const ticked = buildBoard(live, [{ id: "o1", kind: "complete", templateId: "sGym", day: TODAY, slot: 0, at: `${TODAY}T01:00:00.000Z` }]);
+  check("the optimistic tick books the 27.0 the row showed, and the next row re-prices on the new knee base with the same C", ticked.lifeXpToday === 27 && rowOf(ticked, "sStretch")!.projection.streak?.days === 3);
+  const y = stretchOn.recordYesterday;
+  check("a record of yesterday prices yesterday's own run (day 2, ×1.10)", y != null && y.xp === roundTo(10 * effortFactor(15) * streakMult(2), 1), JSON.stringify(y));
+  check("without BoardData.streak the rows project exactly as before (no 'life-4', no streak field)", [...off.todayRows, ...off.anytime].every((r) => r.projection.v !== "life-4" && r.projection.streak === undefined) && off.streak === undefined);
 }
 
 // ── Capture: the habit's phase, and the toast priced like the row ─────────

@@ -114,8 +114,8 @@ export interface SkillReads {
   templates: (userId: string) => Promise<SkillTemplate[]>;
   /** Those templates' TASK rows, each with its instance's minutes and whether an 'undo:<id>' row took it back. */
   ticks: (userId: string, templateIds: readonly string[]) => Promise<SkillTick[]>;
-  /** Every logged walk's minutes, and how many. */
-  walks: (userId: string) => Promise<{ minutes: number; count: number }>;
+  /** Every logged walk's minutes, and how many; `lastDay` (P28) the latest walk's life day (null with none). */
+  walks: (userId: string) => Promise<{ minutes: number; count: number; lastDay?: string | null }>;
   /** The walks still logged that topped up a template already ticked on their day ("Counts as" after a tick). */
   topUps: (userId: string) => Promise<SkillTopUp[]>;
   /** Every Field's id, name and level now (queries.ts loadFieldLevels). */
@@ -249,10 +249,10 @@ export const prismaSkillReads: SkillReads = {
     return rows.map((r) => ({ ...r, receiptMinutes: num(r.receiptMinutes), instanceMinutes: num(r.instanceMinutes), day: r.day ? keyOfDateColumn(new Date(r.day)) : null, undone: r.undone === true }));
   },
   async walks(userId) {
-    const [row] = await prisma.$queryRaw<{ minutes: number | null; count: number | null }[]>`
-      SELECT COALESCE(SUM("durationMin"), 0)::float8 AS "minutes", COUNT(*)::int AS "count" FROM "ExerciseSession" WHERE "userId" = ${userId} AND "kind" = 'WALK'
+    const [row] = await prisma.$queryRaw<{ minutes: number | null; count: number | null; lastDay: Date | null }[]>`
+      SELECT COALESCE(SUM("durationMin"), 0)::float8 AS "minutes", COUNT(*)::int AS "count", MAX("day") AS "lastDay" FROM "ExerciseSession" WHERE "userId" = ${userId} AND "kind" = 'WALK'
     `;
-    return { minutes: num(row?.minutes) ?? 0, count: num(row?.count) ?? 0 };
+    return { minutes: num(row?.minutes) ?? 0, count: num(row?.count) ?? 0, lastDay: row?.lastDay ? keyOfDateColumn(new Date(row.lastDay)) : null };
   },
   async topUps(userId) {
     // A WORKOUT row whose receipt topped up a habit already ticked (exercise.ts walkReceiptOf's walk.topUp), while its

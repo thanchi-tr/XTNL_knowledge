@@ -55,6 +55,9 @@ import { geminiWordsOf } from "../components/roadmap/roadmap-copy";
 import type { CapitalPanel, CapitalReading, StatusPanel } from "./status-panel";
 import type { AvatarTargetView } from "./avatar";
 import { skillTickOf, type SkillView } from "./competency";
+import { checkConditionsOf, type ConditionItem } from "./skill-decay";
+import { streakMultText, streakTickText, type StreakView } from "./streak-mult";
+import type { FatigueRead } from "./review-fatigue";
 import type { CreditsWallet } from "./credits";
 import {
   COOLDOWN_MAX,
@@ -683,6 +686,29 @@ export function reviewHubOf(fields: readonly ReviewTreeField[], now: Date, day: 
 }
 
 /**
+ * Review fatigue (blueprint 3.3b; P30, decision D26), `fatigued` on /check's `review` and on /review/queue: absent while
+ * FATIGUE_LAUNCH_DAY is not in force (the read is undefined, nothing read), so both replies read exactly as before; null
+ * with none in effect (or when the read failed); else `{until}`, when the FATIGUED row in effect lifts. It is applied
+ * once a life day when the day's answers reach 200 (review-fatigue FATIGUE_ANSWERS): the combo ceiling × 0.5 for 18 h.
+ */
+export function fatiguedKeyOf(read: FatigueRead): { fatigued?: { until: string } | null } {
+  if (read === undefined) return {};
+  return { fatigued: read ? { until: read.until.toISOString() } : null };
+}
+
+/**
+ * Condition decay (blueprint 3.1b; P28, decisions D24 and D24b), /check's `skills`: every attribute and live skill whose
+ * condition is under CHECK_CONDITION_BELOW (0.9), the lowest first, each `{kind, name, condition, idleDays}`: kind
+ * 'attribute' (named as on the Status card: Body, Knowledge, Craft, Duty, Care) or 'skill' (its own name), condition
+ * 0.5..1 to 3 decimals, idleDays the idle life days behind it (rest, sick, vacation and rest-token days never count).
+ * Empty while DECAY_LAUNCH_DAY is not in force (nothing is read), when the read failed, and with nothing under 0.9. A
+ * condition never moves a level, XP or hours: it is a reading the phone shows ("Body 82% · 12 days idle").
+ */
+export function checkSkillsOf(items: readonly ConditionItem[] | null) {
+  return checkConditionsOf(items);
+}
+
+/**
  * The ideas past their grace (blueprint 3.1a, decision D23), as the bell's "12 ideas fading" line counts them: each
  * idea's forgetting.ts status (ideaStatusOf, at the GRACE_EXTENSION days in force) fading or forgetting. Nothing
  * fades within 3 days of falling due (xp.ts GRACE_FLOOR_DAYS, the 72 h floor). `ideas` counts both, `forgetting`
@@ -747,13 +773,33 @@ export function levelOf(shell: { character: { level: number | null; progress: nu
  * The daily streak (streak.ts getDailyStreak): its run, whether today already counts, and the one Rest Token bank
  * (blueprint P21; decision D19: the momentum freezes). `restTokens` is the bank, null while it is not live; `freezes`
  * is the same number (0 then), so an app built before P21 reads the bank too (it read M2's balance, always 0).
+ * Blueprint P29 (D25): `multiplier`, the streak multiplier (Board.streak: the judged Full days in a row and m(d)), only
+ * while it is in force; absent otherwise, so the object is exactly as before while STREAK_LAUNCH_DAY is off.
  */
 export function streakOf(
-  s: { current: number; last7Days: readonly boolean[]; bankedFreezes: number; restTokens?: number | null } | null
-): { days: number; keptToday: boolean; freezes: number; restTokens: number | null } | null {
+  s: { current: number; last7Days: readonly boolean[]; bankedFreezes: number; restTokens?: number | null } | null,
+  mult?: StreakView | null
+): { days: number; keptToday: boolean; freezes: number; restTokens: number | null; multiplier?: MobileStreakMultiplier } | null {
   if (!s) return null;
   const restTokens = s.restTokens ?? null;
-  return { days: s.current, keptToday: s.last7Days[s.last7Days.length - 1] === true, freezes: restTokens ?? s.bankedFreezes, restTokens };
+  const base = { days: s.current, keptToday: s.last7Days[s.last7Days.length - 1] === true, freezes: restTokens ?? s.bankedFreezes, restTokens };
+  return mult ? { ...base, multiplier: streakMultiplierOf(mult) } : base;
+}
+
+/**
+ * /check's `streak.multiplier` (blueprint P29; D25): `value` is m(d) to two places (what the tick line prints), `fullDays`
+ * the judged Full days in a row (d; `floor` true when the run reached the read's window, so it is at least that), and
+ * `line` Today's chip in its words ('Streak ×1.16 · day 3').
+ */
+export interface MobileStreakMultiplier {
+  value: number;
+  fullDays: number;
+  floor: boolean;
+  line: string;
+}
+
+export function streakMultiplierOf(v: StreakView): MobileStreakMultiplier {
+  return { value: Number(streakMultText(v.mult).slice(1)), fullDays: v.days, floor: v.floor, line: v.text };
 }
 
 /**
@@ -1373,7 +1419,8 @@ export function tickCompetencyOf(skill: SkillView | null, celebrations: readonly
 
 /**
  * The tick's line: what it paid and to which track ('+8.3 XP · Body'), with '· minimum' for the minimum version and
- * '· yesterday' for a forgotten tick; a repeat says it was already recorded (the web board's own notice).
+ * '· yesterday' for a forgotten tick; a repeat says it was already recorded (the web board's own notice). Once the
+ * streak multiplier is in force (P29) a full tick above ×1.00 adds its C: '+12.0 XP · Craft · streak ×1.16'.
  */
 export function tickLineOf(c: Pick<Completion, "duplicate" | "receipt" | "status" | "day">, today: DayKey): string {
   if (c.duplicate) return "Already recorded. Nothing is paid twice.";
@@ -1382,6 +1429,9 @@ export function tickLineOf(c: Pick<Completion, "duplicate" | "receipt" | "status
   if (c.receipt.proof?.gated && c.status !== "DONE_MVV") parts.push(`${Math.round(c.receipt.minutes)} min`);
   // Pages proof (P24): a reading task's tick says its pages ('· 30 pages').
   if (c.receipt.proof?.pages != null) parts.push(pagesLabelOf(c.receipt.proof.pages));
+  // The streak multiplier (P29): a 'life-4' tick above ×1.00 says its C ('· streak ×1.16'); no other tick changes.
+  const streak = streakTickText(c.receipt);
+  if (streak) parts.push(streak);
   if (c.status === "DONE_MVV") parts.push("minimum");
   if (c.day !== today) parts.push("yesterday");
   return parts.join(" · ");

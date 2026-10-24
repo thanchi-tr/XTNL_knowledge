@@ -99,3 +99,9 @@
   .tree-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
   @media (min-width: 1024px) { .tree-grid { grid-template-columns: minmax(0, 1fr) 360px; } }
 }
+
+/* Blueprint P28 (D24b): a frozen emblem's line ("Frozen · thaws at Critical Thinking 14.2") is a held chip that may wrap,
+   so it fits a 344 px sheet; the held hue always pairs with the freeze glyph and its words. */
+@layer components {
+  .chip.frozen-chip { white-space: normal; max-width: 100%; padding-block: 3px; }
+}

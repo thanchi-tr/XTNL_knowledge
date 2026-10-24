@@ -1306,8 +1306,9 @@ async function avatarChecks(): Promise<void> {
   const card = readCode("src/components/home/StatusPanel.tsx");
   check(
     "the card draws each row's targets under its line, Capital's under the Capital row (shown for them with no deal won), the unplaced in their own row, and the Edit avatar sheet",
-    // Re-pinned for P5: the skill count joins the targets under the line.
-    /extra=\{\s*<>\s*<TargetLines targets=\{r\.targets\} \/>\s*<SkillCount count=\{r\.skills\} \/>\s*<\/>\s*\}/.test(card) &&
+    // Re-pinned for P5: the skill count joins the targets under the line. Re-pinned for P28: the row's condition note
+    // (nothing at 100% or while DECAY_LAUNCH_DAY is off) comes first, straight under the line.
+    /extra=\{\s*<>\s*<ConditionNote row=\{r\} \/>\s*<TargetLines targets=\{r\.targets\} \/>\s*<SkillCount count=\{r\.skills\} \/>\s*<\/>\s*\}/.test(card) &&
       /\{\(capital \|\| panel\.capitalTargets\.length > 0\) && <CapitalRow capital=\{capital\} targets=\{panel\.capitalTargets\} \/>\}/.test(card) &&
       /\{panel\.unplaced\.length > 0 && <UnplacedRow targets=\{panel\.unplaced\} \/>\}/.test(card) &&
       /<AvatarEditor view=\{avatar\.view\} today=\{avatar\.today\} actions=\{avatar\.actions\} \/>/.test(card)
@@ -1833,13 +1834,15 @@ async function competencyChecks(): Promise<void> {
     /<TargetLines targets=\{r\.targets\} \/>\s*<SkillCount count=\{r\.skills\} \/>/.test(card) &&
       /<Link className="status-skills t-meta" href=\{SKILLS_PATH\}>/.test(card) &&
       /const skillsRead = loadSkills\(userId, \{ fields: false \}\)\.catch\(\(\) => null\);/.test(you) &&
-      /const status = statusPanelOf\(s\.life, s\.knowledge, avatar, skills \? skills\.skills : null\);/.test(you) &&
+      // Re-pinned for P28: the conditions are the panel's fifth input (null while condition decay is off).
+      /const status = statusPanelOf\(s\.life, s\.knowledge, avatar, skills \? skills\.skills : null, basis \? attributeConditionsOf\(basis\) : null\);/.test(you) &&
       skillCountLabel(1) === "1 skill" && skillCountLabel(2) === "2 skills"
   );
   check(
     "You › Skills is the profile menu's second row (/you/skills, titled You · Skills), its page reads loadSkillsPage, and the drawer's link control is CompetencyLink (never on a work tab)",
     PROFILE.subs[1]?.href === SKILLS_PATH && PROFILE.subs[1]?.label === "Skills" && activeSub(SKILLS_PATH) === SKILLS_PATH && JSON.stringify(titleFor(SKILLS_PATH)) === JSON.stringify({ eyebrow: "You", title: "Skills" }) &&
-      /loadSkillsPage\(getCurrentUserId\(\)\)/.test(readCode("src/app/you/skills/page.tsx")) &&
+      // Re-pinned for P28: the page reads the user once, for the skills and their conditions (none while decay is off).
+      /const userId = getCurrentUserId\(\);[\s\S]*?const page = await loadSkillsPage\(userId\);/.test(readCode("src/app/you/skills/page.tsx")) &&
       /\{!props\.work && !props\.noMonth && <CompetencyLink key=\{t\.id\} templateId=\{t\.id\} \/>\}/.test(readCode("src/components/today/TaskDrawer.tsx"))
   );
   // The P5 review: the feeds line names what its count counts.

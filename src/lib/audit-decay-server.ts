@@ -16,6 +16,9 @@
  *                  tasks that complete themselves are left out, as on the audit's habits line
  *         streaks  the life tracks' kept-week runs before and after the week judged inside this one (streakWeekOf)
  *         mp       this week's idle-decay rows (MasteryLedgerEntry reason DECAY)
+ *         condition  (blueprint P28) each attribute's and skill's condition at the read (skill-decay-server
+ *                  loadConditionItems): only while DECAY_LAUNCH_DAY is in force; before it nothing is read and nothing
+ *                  is counted unread
  */
 import { prisma } from "./prisma";
 import { addDays, dateColumn, dayStartOf, keyOfDateColumn, todayKey, type DayKey } from "./life-day";
@@ -30,6 +33,8 @@ import { heldDaysOf } from "./duty-rule";
 import { isLaunched, trackCurveOn } from "./life-economy";
 import { lifeContributionsAt, trackStateAt } from "./life-tracks";
 import { loadLifeLedger } from "./life-tracks-server";
+import { loadConditionItems } from "./skill-decay-server";
+import type { ConditionItem } from "./skill-decay";
 import {
   decayingOf,
   snapshotThenOf,
@@ -57,7 +62,7 @@ export async function readAuditDecay(userId: string, week: DecayWeek, now: Date)
     console.error(`Week audit: ${what} failed to read; it is left out of the decay.`, err);
     return null;
   };
-  const [traits, knowledge, habits, streaks, mp] = await Promise.all([
+  const [traits, knowledge, habits, streaks, mp, conditions] = await Promise.all([
     readTraits(userId, now, today).catch(soft<DecayFacts["traits"]>("the traits")),
     readKnowledge(userId, since, now).catch(soft<{ drops: LevelDropFact[]; ideas: { fading: number; forgetting: number } }>("the levels and ideas")),
     readHabitStrengths(userId, addDays(week.monday, -1), today).catch(soft<HabitStrengthFact[]>("the habits")),
@@ -65,8 +70,9 @@ export async function readAuditDecay(userId: string, week: DecayWeek, now: Date)
     prisma.masteryLedgerEntry
       .findMany({ where: { userId, reason: "DECAY", createdAt: { gte: since, lte: now } }, select: { delta: true } })
       .catch(soft<{ delta: number }[]>("idle decay")),
+    loadConditionItems(userId, now).catch(soft<ConditionItem[]>("the conditions")),
   ]);
-  return decayingOf({ traits, drops: knowledge?.drops ?? null, ideas: knowledge?.ideas ?? null, habits, streaks, mp, unread });
+  return decayingOf({ traits, drops: knowledge?.drops ?? null, ideas: knowledge?.ideas ?? null, habits, streaks, mp, conditions, unread });
 }
 
 /** The traits then (the snapshot TRAIT_LOOKBACK_DAYS back) and now; null when no Field has a snapshot to compare. */

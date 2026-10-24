@@ -142,18 +142,26 @@ export function AttributeRadar({
   hasGhost,
   top,
   life = { launched: false, contributes: false },
+  conditionLine = null,
 }: {
   radar: RadarLayout;
   hasGhost: boolean;
   top: TopAttribute[];
   /** launched: life counts toward the traits; contributes: a track has a level and feeds them now. */
   life?: { launched: boolean; contributes: boolean };
+  /**
+   * Blueprint P28 (D24b): the radar reads the traits at condition, so while an attribute is below 100% one quiet line
+   * says so (skill-decay traitsConditionLineOf: "Read at condition: Body 70% · a Body tick restores it"). Null while
+   * condition decay is off and with every attribute at 100%.
+   */
+  conditionLine?: string | null;
 }) {
   const described = top.map((t) => `${ATTRIBUTE_META[t.attribute].label} ${t.value.toFixed(0)}`).join(", ");
   return (
     <div>
       <SectionHeader title={TRAITS_TITLE} aside={life.contributes ? "13, from your Fields and life tracks" : "13, from your Fields"} />
       <section className="card radar-c">
+        {conditionLine && <p className="t-meta status-cond radar-cond">{conditionLine}</p>}
         <div className="radar-plot">
           <svg viewBox={RADAR_VIEWBOX_ATTR} role="img" aria-label={`Trait radar${hasGhost ? " with 7 days ago dashed" : ""}. Top three: ${described || "none yet"}.`}>
             {radar.rings.map((pts, i) => (

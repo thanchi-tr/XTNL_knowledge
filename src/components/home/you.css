@@ -111,6 +111,10 @@
   .status-skills { display: inline-flex; align-items: center; min-height: 44px; margin-bottom: -12px; color: var(--ink-1); text-decoration: none; }
   .status-skills:hover { color: var(--ink-0); text-decoration: underline; }
   .status-skills:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+  /* Condition (blueprint P28): a Status row's or a skill's note while it is below 100% (a reading: no meter, no level). */
+  .status-cond { margin-top: 2px; overflow-wrap: anywhere; }
+  /* The Traits card's line while an attribute is below 100% (P28, D24b): the radar reads the traits at condition. */
+  .radar-cond { margin: 0 0 8px; }
   /* You › Skills: the skills by hours (a row each: the tier badge, the meter through the tier, its lines), a new skill,
      the suggestions, the roadmaps, and the Fields by level. Tokens only; 44 px targets. */
   .sk-board { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -227,6 +231,10 @@
   .lo-slot .coin { width: min(48px, 80%); height: auto; aspect-ratio: 1; }
   .lo-slot .coin > .glyph { width: 56%; height: 56%; }
   .lo-slot.dormant .coin > .glyph { opacity: .42; }
+  /* Frozen (blueprint P28, D24b): owned and dimmed as dormant, with the freeze glyph in the held hue (never the locked coin). */
+  .lo-slot > .lo-freeze { position: absolute; top: 4px; right: 4px; width: 14px; height: 14px; color: var(--held); }
+  .lo-frozen-note { display: flex; align-items: flex-start; gap: 4px; color: var(--held); overflow-wrap: anywhere; }
+  .lo-frozen-note > svg.sig { width: 12px; height: 12px; margin-top: 2px; }
   /* The skeleton block at the slot's own geometry. */
   .lo-slot-skel { min-width: 44px; max-width: 64px; aspect-ratio: 1; }
   /* T0: one slot glint. Resting state is no glint at all. */

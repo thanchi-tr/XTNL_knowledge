@@ -20,7 +20,15 @@ the main one:
   when neither line claims the shared change and the chip reads `/check` again;
   no chip while they are off), the **Rest tokens** chip in the header ("Rest
   tokens 2": the momentum freezes under one name, 0 said as it is, the server's
-  own number), the **Owed** card (once Duty is switched on: every open debt,
+  own number), the **streak multiplier** chip under it (once the server's
+  streak multiplier is switched on: "Streak ×1.16 · day 3", the C every full
+  tick pays from the judged Full days in a row, the server's own line, and
+  "· streak ×1.16" on a tick's line; no chip while it is off), the
+  **Condition** card after the Week card on both displays (once the server's
+  condition decay is switched on: each attribute and skill under 90%, the
+  lowest first, in the web's words, "Body 81% · 13 days idle", and that
+  levels, XP and hours never drop and one practice brings it back to 100%; no
+  card while it is off or with nothing under 90%), the **Owed** card (once Duty is switched on: every open debt,
   oldest first, in the web make-up card's words: "−4.2 owed", when it was
   missed, its line and its window; **Make up · ≈ 1.9** repays the whole debt and
   pays ×0.85, **Do minimum** pays the minimum version's own, and **Accept the
@@ -32,7 +40,11 @@ the main one:
 - **Log**: a quick line (Task · Weigh-in · Idea) with a live reading of the
   line, and the full **New idea** form in all seven formats.
 - **Review**: a session runner for every card type, with feedback after each
-  answer and a summary at the end.
+  answer and a summary at the end. Once the server's review fatigue is
+  switched on, a long day of answers says so: "Fatigued until 4:00 pm" under
+  the runner's bar (from `/review/queue`) and on the Start panel with its note
+  ("A lower combo ceiling for now. Answers still pay, and it lifts by itself.",
+  from `/check`); no line while it is off or none is in effect.
 
 **More** holds **Attributes** (the web's /you Status card, titled Attributes: the five attributes,
 Vitality, Intellect, Craft, Duty and Care, each its Body, Knowledge or track
@@ -58,7 +70,7 @@ panes on the main one, also at `xtnl://app/mall`). Then Settings and
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.11 (versionCode 23), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.14 (versionCode 26), so
 it installs over the v1 WebView shell in place.
 
 On **Check**, a long press on any open task opens its **minutes sheet** (blueprint
@@ -194,6 +206,17 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
   the card's price, a clientId answered once, Accept the loss only where
   offered, an undo inside its ten minutes bringing the card back, and a debt
   already gone as a 404;
+- the Condition card's words (ConditionLineTest: "Body 81% · 13 days idle",
+  the percent rounded down as the web's, no card with nothing sent or from an
+  older server, and what never drops);
+- the streak multiplier chip's words (StreakLineTest: the server's own line,
+  else "Streak ×1.16 · day 3" built the web's way, "Streak ×1.00" before the
+  first Full day, "day 400+" at the server's read window, TalkBack's
+  sentence) and the tick line's "· streak ×1.16" (DemoBoardTest);
+- the review fatigue line (FatigueLineTest: "Fatigued until 10:30 pm", "tomorrow"
+  when it lifts on a later day, none once it has lifted by the server's
+  clock, the note with no number) and the demo applying it once at the day's
+  200th answer and halving its combo ceiling while it lasts (DemoFatigueTest);
 - the shapes of the API's responses (a row's proof, timer and pages, the timer
   routes' answer, a row from an older server reading as none of them, and
   `/exercise`'s counts and the body the sync sends).
