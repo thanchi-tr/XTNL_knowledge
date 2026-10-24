@@ -21,6 +21,8 @@
  *            (lane D, for whoever assembles DutyBoard) owedPricesOf(template, ledger, today)
  *            missRunOf(history) · restStateOf(rows, today) · fullWeekday(day) · dayLabel(day)
  *            DUTY_READ_BACK_DAYS · DUTY_READ_AHEAD_DAYS
+ *            (blueprint P20) OwedProof · OwedCard.proof · owedProofOf(card, kind, launchDay, today)
+ *            withOwedProof(duty, kinds, launchDay, today, ledger?)   (P20 review: OwedProof.prices, each minute chip priced)
  */
 import { addDays, daysBetween, weekdayOf, type DayKey } from "./life-day";
 import { settledFor, type RestKind } from "./duty-economy";
@@ -29,7 +31,8 @@ import { validRestDays, type PendingNext, type RestRow } from "./duty-rule";
 import type { ActivitySource } from "./life-types";
 import { estEff } from "./life-grade";
 import { instanceOutcome, type InstanceLike } from "./habit";
-import { makeUpPricesOf, shortDate, type DayLedger, type PricedTemplate } from "./today-board";
+import { makeUpPricesOf, planCompletion, shortDate, type DayLedger, type PricedTemplate } from "./today-board";
+import { pageChipsOf, pagesGated, pagesTargetOf, proofGated, proofMinuteChipsOf, type ProofKind } from "./proof";
 
 // ── Types (lane 0) ────────────────────────────────────────────────────────
 
@@ -37,6 +40,25 @@ import { makeUpPricesOf, shortDate, type DayLedger, type PricedTemplate } from "
 export interface OwedTemplate extends PricedTemplate {
   startDay: DayKey;
   mvvMinutes?: number | null;
+  /** (blueprint P20) TaskTemplate.autoTarget: a reading must's day target, for its make-up's page chips. */
+  autoTarget?: number | null;
+}
+
+/**
+ * OwedCard.proof (blueprint P23, P24; closed in P20): what a make-up brings once proof of work is in force today, the
+ * same as the task's own tick. Present only then, and only for a must that is gated (duty-plan planMakeUp refuses it
+ * without): never for the minimum version, #play or a study-linked must.
+ */
+export interface OwedProof {
+  /** A deep-work must (TaskTemplate.proof 'MINUTES'): the minute chips, its estimate's shares (proof.ts proofMinuteChipsOf). */
+  minutes?: number[];
+  /**
+   * P20 review: the make-up's price at each minute chip, aligned with `minutes`, priced as the card's makeUpXp is
+   * (today's ledger, the make-up rate, no clock bound: the server's payment reads that). Absent: no ledger was given.
+   */
+  prices?: number[];
+  /** A reading must (autoMetric PAGES): its day target (null: none) and the page chips (proof.ts pageChipsOf). */
+  pages?: { target: number | null; chips: number[] };
 }
 
 /** One open debt (a debtOpen instance), as its MakeUpCard shows it. */
@@ -77,6 +99,8 @@ export interface OwedCard {
   missRun?: number;
   /** (lane D) The latest missed day of that run: the miss prompt's 'Not now' is keyed to it. */
   lastMissDay?: DayKey | null;
+  /** (blueprint P20) Proof of work in force today: the minutes or pages its make-up brings (owedProofOf). Absent: one tap, as before. */
+  proof?: OwedProof;
 }
 
 /** owedViewOf: 0 → none; 1 → one inline MakeUpCard; 2+ → one collapsed OwedSummary. */
@@ -108,13 +132,38 @@ export interface RestBanner {
   cancelLabel?: string;
 }
 
+/**
+ * P21 review: what settlement's step 3 will do with yesterday's open musts, by its own rule (rest-tokens
+ * restTokenSummaryOf's yesterday.cover, with a must that would owe a debt): 'covers' — a Rest Token is spent on
+ * yesterday whatever today holds, so nothing is owed; 'if-today' — only once today has a momentum action (an empty
+ * today keeps the run with that token, and the musts are owed).
+ */
+export type MustCover = "covers" | "if-today";
+
 export interface FreezeState {
-  /** min(FREEZE_MAX, EARN − USE). */
+  /** Blueprint P21: the one Rest Token bank now (rest-tokens.ts; the Momentum card's own number). */
   banked: number;
-  /** An unsettled yesterday with no activity and a freeze banked (display only, never stored). */
+  /**
+   * Settlement's step 3 will spend a token on an unsettled yesterday, whatever today holds (display only, never
+   * stored). P21 review: by settlement's own rule: the fold spends it by itself (no momentum action, a live run), or a
+   * must that would owe a debt is open on it and the token is still free when it is judged.
+   */
   willCover: boolean;
+  /** P21 review: yesterday's open musts and a Rest Token (MustCover); null or absent: none goes to them (they are owed). */
+  musts?: MustCover | null;
   /** (lane D) A FREEZE_USE is already dated yesterday (the switch shows on and settled). */
   usedYesterday?: boolean;
+  /**
+   * Blueprint P21: the tokens banked going into yesterday (what 'Use a freeze' can take), and the bank today once it
+   * is spent (the same as `banked` when the fold already spends it). Absent: `banked` and banked − 1, as before.
+   */
+  forYesterday?: number;
+  leftAfter?: number;
+  /**
+   * P21 review: the tokens today's own open musts can count on when today is judged: `banked`, less one a must spend
+   * on yesterday will take (not yet in the fold). Absent: `banked`.
+   */
+  forToday?: number;
 }
 
 /** A settlement row dated within the last two settled days: DEBT, FREEZE_EARN, FREEZE_USE, FULL_DAY, REPAIR. */
@@ -375,14 +424,65 @@ export function settledNoticeOf(rows: readonly SettledFact[], cursor: DayKey | n
   // 'up to': the weekly cap can trim a full day's MP to 0 (decision 6).
   if (fullDay) chips.push({ tone: "kept", text: `Full day · up to +${FULL_DAY_MP} MP when the week is judged` });
   if (repairedDay) chips.push({ tone: "kept", text: `${fullWeekday(repairedDay)} repaired` });
-  if (used) chips.push({ tone: "held", text: `A freeze held ${fullWeekday(d)}` });
+  if (used) chips.push({ tone: "held", text: `A rest token held ${fullWeekday(d)}` });
   if (earned) chips.push({ tone: "kept", text: "Freeze earned" });
   if (debts.length > 0) chips.push({ tone: "quiet", text: `${debts.length} must${debts.length === 1 ? "" : "s"} to make up, in the Must lane` });
   if (chips.length === 0) return null;
   const name = fullWeekday(d);
-  const title = fullDay ? `${name} was a Full day.` : repairedDay ? `${fullWeekday(repairedDay)} is repaired.` : used ? `A freeze held ${name}.` : `${name} is settled.`;
+  const title = fullDay ? `${name} was a Full day.` : repairedDay ? `${fullWeekday(repairedDay)} is repaired.` : used ? `A rest token held ${name}.` : `${name} is settled.`;
   // On d + 1 it can only have been an early settle. On d + 2 the board cannot
   // tell an early settle from the 04:00 one, so the note claims neither.
   const note = daysBetween(d, today) === 1 ? `Settled early, so ${name} is locked. Nothing else changed.` : "Settled; nothing else changed.";
   return { day: d, chips, repairedDay, fullDay, title, note };
+}
+
+// ── Proof of work on a make-up (blueprint P20) ────────────────────────────
+
+/**
+ * What one owed card's make-up brings (blueprint P23, P24; Stage 7's open item, closed in P20), by the server's own
+ * gate (duty-plan planMakeUp): the minute chips for a deep-work must, the page chips for a reading must, null when it is
+ * one tap. `kind` is the template's proof kind (null: none); `launchDay` PROOF_LAUNCH_DAY in force; the make-up is
+ * today's work, so it is gated on `today`. A work tab's task never owes, so the card is always the personal Board's.
+ */
+export function owedProofOf(
+  card: Pick<OwedCard, "template" | "studyLinked">,
+  kind: ProofKind | null,
+  launchDay: DayKey | null,
+  today: DayKey,
+  ledger?: DayLedger
+): OwedProof | null {
+  const t = card.template;
+  if (!t || t.intrinsic || card.studyLinked) return null;
+  const gate = { proof: kind, autoMetric: t.autoMetric, boardId: null };
+  const out: OwedProof = {};
+  if (proofGated(gate, today, launchDay)) {
+    out.minutes = proofMinuteChipsOf(t.estMinutes);
+    // The drawer's projection for a make-up: planMakeUp's own pricing at each pick (slot 0, as makeUpXp is priced).
+    if (ledger && launchDay) {
+      const template = { ...t, proof: kind };
+      out.prices = out.minutes.map(
+        (m) => planCompletion({ template, day: today, today, slot: 0, minutes: m, ledger, streakDays: 0, makeUp: true, proof: { launchDay } }).receipt.xp
+      );
+    }
+  }
+  if (pagesGated(gate, today, launchDay)) {
+    const target = pagesTargetOf(t);
+    out.pages = { target, chips: pageChipsOf(target) };
+  }
+  return out.minutes || out.pages ? out : null;
+}
+
+/**
+ * DutyBoard with each owed card's proof (owedProofOf), from the proof kinds the board read; the same object when none
+ * changes. `ledger` (today's): each minute chip is priced too (OwedProof.prices), so the card shows what it pays.
+ */
+export function withOwedProof(duty: DutyBoard, kinds: Readonly<Record<string, ProofKind>>, launchDay: DayKey | null, today: DayKey, ledger?: DayLedger): DutyBoard {
+  let changed = false;
+  const owed = duty.owed.map((c) => {
+    const proof = owedProofOf(c, kinds[c.templateId] ?? null, launchDay, today, ledger);
+    if (!proof) return c;
+    changed = true;
+    return { ...c, proof };
+  });
+  return changed ? { ...duty, owed } : duty;
 }

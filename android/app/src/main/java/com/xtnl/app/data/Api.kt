@@ -39,6 +39,12 @@ interface XtnlApi {
     /** Its stop: the minutes wait for the tick that counts them. */
     suspend fun stopTimer(sessionId: String, clientId: String): Outcome<TimerResult>
     suspend fun undoTask(instanceId: String, clientId: String): Outcome<UndoTaskResult>
+    /**
+     * An owed card's action (blueprint P22): [action] "makeup" (in full, ×0.85), "minimum" or "accept" (the loss). A full
+     * make-up of a proof must brings its [minutes], a reading must's its [pages] (sent as `proof`). [clientId] is required:
+     * a retry sends the same one, and it lands once. Refused while the server has Duty off (/check's dutyOn).
+     */
+    suspend fun makeUp(instanceId: String, action: String, clientId: String, minutes: Int? = null, pages: Int? = null): Outcome<MakeUpResult>
     suspend fun workDone(id: String, clientId: String): Outcome<WorkResult>
     suspend fun workReopen(id: String, clientId: String): Outcome<WorkResult>
     suspend fun reviewQueue(limit: Int): Outcome<ReviewQueue>

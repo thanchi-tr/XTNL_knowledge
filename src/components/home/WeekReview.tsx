@@ -55,7 +55,7 @@ import { acceptLoss, cancelRest, declareRest, doMinimum, makeUp, undoMakeUp, typ
 import { markWeekReviewed } from "@/app/actions/rituals";
 import { clarifyInbox, closeGoal, goalProgress, previewGoalClose, rescheduleGoal, setDailyCapacity, unarchiveTask } from "@/app/actions/tasks";
 import { presentAll } from "@/components/celebrate/stage";
-import { goalClosedNotice, goalRescheduledNotice } from "@/components/today/board-ui";
+import { goalClosedNotice, goalRescheduledNotice, makeUpOptsOf } from "@/components/today/board-ui";
 import { CapacityPanel } from "@/components/today/CapacityTile";
 import { GoalCloseSheet, GoalRescheduleSheet, type GoalClosePreview } from "@/components/today/GoalSheets";
 import { GoalsStrip } from "@/components/today/GoalsStrip";
@@ -161,6 +161,8 @@ function makeUpItemOf(card: OwedCard, today: DayKey): MakeUp {
     makeUpPrice: card.makeUpXp,
     minimum: card.mvv && card.minimumXp != null ? { label: card.mvv, price: card.minimumXp } : null,
     resolved: { repaid: "Repaid in full.", minimum: "Repaid in full; the minimum holds." },
+    // Proof of work (blueprint P20): a deep-work or reading must's make-up asks for its minutes or pages, as on Today.
+    ...(card.proof ? { proof: card.proof } : {}),
   };
 }
 
@@ -485,7 +487,7 @@ export function WeekReview(props: WeekReviewProps) {
                   item={r && r.state !== "written-off" ? { ...item, resolved: { repaid: r.line, minimum: r.line } } : item}
                   state={r?.state ?? "open"}
                   busy={busy}
-                  onMakeUp={() => act(() => makeUp(card.instanceId, REFRESH), (v) => made(card, v))}
+                  onMakeUp={(_, report) => act(() => makeUp(card.instanceId, { ...REFRESH, ...makeUpOptsOf(report) }), (v) => made(card, v))}
                   onMinimum={item.minimum ? () => act(() => doMinimum(card.instanceId, REFRESH), (v) => made(card, v)) : undefined}
                   onAcceptLoss={card.canWriteOff ? () => act(() => acceptLoss(card.instanceId, REFRESH), () => wroteOff(card)) : undefined}
                 >

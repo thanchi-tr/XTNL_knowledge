@@ -29,6 +29,7 @@ const NO_STREAK: DailyStreak = {
   endedAfter: 0,
   freezeWillCover: false,
   heldInRun: 0,
+  restTokens: null,
 };
 
 /**

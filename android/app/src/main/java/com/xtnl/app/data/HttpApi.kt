@@ -185,6 +185,16 @@ class HttpApi(
     override suspend fun undoTask(instanceId: String, clientId: String) =
         call("/tasks/undo", buildJsonObject { put("instanceId", instanceId); put("clientId", clientId) }, UndoTaskResult.serializer())
 
+    // P22: an owed card's action; the clientId is required (the server answers a retry once).
+    override suspend fun makeUp(instanceId: String, action: String, clientId: String, minutes: Int?, pages: Int?) =
+        call("/tasks/makeup", buildJsonObject {
+            put("instanceId", instanceId)
+            put("action", action)
+            minutes?.let { put("minutes", it) }
+            pages?.let { putJsonObject("proof") { put("kind", "PAGES"); put("qty", it) } }
+            put("clientId", clientId)
+        }, MakeUpResult.serializer())
+
     override suspend fun workDone(id: String, clientId: String) =
         call("/work/done", buildJsonObject { put("id", id); put("clientId", clientId) }, WorkResult.serializer())
 

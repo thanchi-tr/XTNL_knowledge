@@ -49,6 +49,7 @@ import {
   undoMakeUpCore,
 } from "@/lib/duty";
 import { cancelPendingChangeCore, setCompulsoryCore, setCompulsoryOnRestCore, type LifeResult } from "@/lib/tasks";
+import { cleanTickProof, tickPagesOf, type TickProofInput } from "@/lib/proof";
 
 export type DutyActionResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -136,11 +137,20 @@ const minutesOf = (m: unknown): number | null => (typeof m === "number" && Numbe
 
 // ── Debts (F6) ────────────────────────────────────────────────────────────
 
-/** Make up a missed must in full (×0.85, C 1.00). */
-export async function makeUp(instanceId: string, opts?: DutyActionOptions & { minutes?: number }): Promise<DutyActionResult<MakeUpResult>> {
+/**
+ * Make up a missed must in full (×0.85, C 1.00). Proof of work (blueprint P23, P24; P20), once in force: a deep-work
+ * must's make-up brings its `minutes` (or names a timer, `sessionId`), a reading must's its pages (`proof`, the tick's
+ * own { kind: 'PAGES', qty }); without them the make-up is refused in words, as a tick is.
+ */
+export async function makeUp(
+  instanceId: string,
+  opts?: DutyActionOptions & { minutes?: number; sessionId?: string; proof?: TickProofInput }
+): Promise<DutyActionResult<MakeUpResult>> {
   if (!isId(instanceId)) return noId();
   const minutes = minutesOf(opts?.minutes);
-  return run("makeUp", opts, (userId) => aroundMakeUp(userId, instanceId, () => makeUpCore(userId, instanceId, { minimum: false, minutes })));
+  const sessionId = isId(opts?.sessionId) ? opts.sessionId : null;
+  const pages = tickPagesOf(cleanTickProof(opts?.proof));
+  return run("makeUp", opts, (userId) => aroundMakeUp(userId, instanceId, () => makeUpCore(userId, instanceId, { minimum: false, minutes, sessionId, pages })));
 }
 
 /** Make up with the minimum version (×0.3 × 0.85); repays the debt in full. */
@@ -150,11 +160,12 @@ export async function doMinimum(instanceId: string, opts?: DutyActionOptions): P
 }
 
 /** Take a make-up back (10 minutes, the same life day): the debt reopens. */
-export async function undoMakeUp(instanceId: string, opts?: DutyActionOptions): Promise<DutyActionResult<{ instanceId: string; debtXp: number }>> {
+export async function undoMakeUp(instanceId: string, opts?: DutyActionOptions): Promise<DutyActionResult<{ instanceId: string; debtXp: number; xp: number }>> {
   if (!isId(instanceId)) return noId();
   return run("undoMakeUp", opts, async (userId) => {
     const res = await undoMakeUpCore(userId, instanceId);
-    return res.ok ? { ok: true as const, value: { instanceId: res.value.instanceId, debtXp: res.value.debtXp } } : res;
+    // `xp`: the make-up's life XP taken back (≤ 0; 0 for a repeat), for the phone's line (P22 review).
+    return res.ok ? { ok: true as const, value: { instanceId: res.value.instanceId, debtXp: res.value.debtXp, xp: res.value.xp } } : res;
   });
 }
 

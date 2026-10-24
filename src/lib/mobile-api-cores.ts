@@ -28,6 +28,8 @@ import { ingestHealthCore } from "./health-ingest-server";
 import { reviewDedupeKey } from "./srs";
 import { loadReviewDay } from "../app/review/review-data";
 import { completeTask, startTaskTimer, stopTaskTimer, undoCapture, undoCompletion } from "../app/actions/tasks";
+import { acceptLoss, doMinimum, makeUp, undoMakeUp } from "../app/actions/duty";
+import { dutyLaunchDay } from "./duty-economy";
 import { doneScheduledTask, reopenScheduledTask } from "../app/actions/scheduled-tasks";
 import { submitReview } from "../app/actions/review";
 import { createFromCapture, undoWeightCapture } from "../app/actions/capture";
@@ -69,6 +71,15 @@ export const realMobileDeps: MobileDeps = {
   // A proof task's timer (blueprint P23): actions/tasks startTaskTimer from the phone, and its stop.
   startTimer: (templateId, clientId) => startTaskTimer(templateId, clientId, { source: "phone" }),
   stopTimer: (sessionId) => stopTaskTimer(sessionId),
+
+  // Duty (blueprint P22): the switch in force, and an owed card's actions (actions/duty.ts), as Today's MakeUpCard calls
+  // them less `refresh`.
+  dutyLaunchDay: () => dutyLaunchDay(),
+  makeUp: (instanceId, input) => makeUp(instanceId, input),
+  doMinimum: (instanceId) => doMinimum(instanceId),
+  acceptLoss: (instanceId) => acceptLoss(instanceId),
+  // P22 review: a make-up's Undo from the phone, the web card's own.
+  undoMakeUp: (instanceId) => undoMakeUp(instanceId),
 
   // The Agenda's Done (no history log) and its Undo (actions/scheduled-tasks.ts).
   doneScheduled: (id) => doneScheduledTask(id, null),

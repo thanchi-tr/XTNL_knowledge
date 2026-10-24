@@ -23,6 +23,7 @@ import { addDays, dayStartOf, type DayKey } from "../src/lib/life-day";
 import type { ActivitySource } from "../src/lib/life-types";
 import type { RestRow } from "../src/lib/duty-rule";
 import { dailyStreakOf, type StreakDayRow, type StreakFacts } from "../src/lib/streak";
+import type { RestTokenSummary } from "../src/lib/rest-tokens";
 import {
   computeStreak,
   countsForStreakOf,
@@ -159,12 +160,20 @@ const none = new Set<DayKey>();
     today: TODAY,
     windowDays: STREAK_WINDOW_DAYS,
     rows: [],
-    freezeEarned: 0,
-    freezeUsed: 0,
+    restTokens: null,
     restRows: [],
     settledThroughDay: ago(2),
     dutyLaunchDay: LAUNCH,
     ...o,
+  });
+  /**
+   * Blueprint P21: the one Rest Token bank as the server reads it (rest-tokens.ts restTokenSummaryOf): `bank` now, and
+   * going into yesterday `yBank` with a momentum run of `run` (the fold spends there by itself with a run and a token).
+   */
+  const tok = (bank: number, yBank = bank, run = 1): RestTokenSummary => ({
+    bank,
+    max: 2,
+    yesterday: { bank: yBank, run, autoSpend: run > 0 && yBank > 0, spent: false, leftAfter: Math.max(0, yBank - 1), cover: yBank > 0 ? "free" : "none" },
   });
   const act = (...ns: number[]): StreakDayRow[] => ns.map((n) => ({ day: ago(n), units: 1, held: 0 }));
   /** A FREEZE_USE or REPAIR row's day (HELD_SOURCES). */
@@ -209,18 +218,21 @@ const none = new Set<DayKey>();
     `${m1.current} vs ${m1Want.current}`
   );
 
-  // The freeze balance: all history, at most 2.
+  // Re-pinned by blueprint P21 (D19, one Rest Token bank): M2's balance min(2, EARN − USE) is retired; bankedFreezes is
+  // the bank's own number (momentum's fold, rest-tokens.ts), and restTokens says whether the bank is live at all.
   check(
-    "M2: bankedFreezes = min(2, earned − used) over all history",
-    dailyStreakOf(facts({ freezeEarned: 5, freezeUsed: 2 })).bankedFreezes === 2 &&
-      dailyStreakOf(facts({ freezeEarned: 3, freezeUsed: 2 })).bankedFreezes === 1 &&
-      dailyStreakOf(facts({ freezeEarned: 1, freezeUsed: 1 })).bankedFreezes === 0 &&
-      dailyStreakOf(facts({ freezeEarned: 0, freezeUsed: 1 })).bankedFreezes === 0
+    "P21: bankedFreezes is the one Rest Token bank's number (restTokens); 0 and restTokens null while the bank is not live",
+    dailyStreakOf(facts({ restTokens: tok(2) })).bankedFreezes === 2 &&
+      dailyStreakOf(facts({ restTokens: tok(2) })).restTokens === 2 &&
+      dailyStreakOf(facts({ restTokens: tok(0) })).bankedFreezes === 0 &&
+      dailyStreakOf(facts({ restTokens: tok(0) })).restTokens === 0 &&
+      dailyStreakOf(facts()).bankedFreezes === 0 &&
+      dailyStreakOf(facts()).restTokens === null
   );
   const src = readFileSync(join(__dirname, "..", "src/lib/streak.ts"), "utf8").replace(/\r\n/g, "\n");
   check(
-    "M2: the freeze counts ride the same raw query (UNION ALL), with no day filter",
-    /UNION ALL\s*SELECT NULL::date AS "day"[\s\S]*?FROM "ActivityEvent"\s*WHERE "userId" = \$\{userId\} AND "source" IN \('FREEZE_EARN', 'FREEZE_USE'\)\s*`/.test(src)
+    "P21: the bank is read beside the raw query through rest-tokens-server (no EARN − USE union any more), and a failed read is no bank",
+    /readRestTokenSummary\(prisma, userId, today, \{ dutyLaunch: launch \}\)\.catch\(/.test(src) && !/FREEZE_EARN/.test(src) && !/UNION ALL/.test(src)
   );
   const snap = readFileSync(join(__dirname, "..", "src/lib/snapshot.ts"), "utf8");
   check(
@@ -236,17 +248,20 @@ const none = new Set<DayKey>();
     pending.current === 3 && pending.endedOn === null && pending.last7Days[5] === false && pending.held7Days[5] === false,
     `current ${pending.current}`
   );
-  check("M2: freezeWillCover with a freeze banked for that unsettled empty yesterday", live({ freezeEarned: 1 }).freezeWillCover === true);
-  check("M2: not without a freeze", live().freezeWillCover === false);
-  check("M2: not for an active yesterday", live({ freezeEarned: 1, rows: act(1, 2, 3) }).freezeWillCover === false);
-  check("M2: not for a settled yesterday (after 'Settle yesterday')", live({ freezeEarned: 1, settledThroughDay: ago(1) }).freezeWillCover === false);
-  check("M2: not for a rest day", live({ freezeEarned: 1, restRows: [rest(1)] }).freezeWillCover === false && live({ restRows: [rest(1)] }).current === 3);
-  check("M2: not with no run to carry", live({ freezeEarned: 1, rows: act(4, 5), settledThroughDay: ago(2) }).freezeWillCover === false);
-  check("M2: not before Duty launches", dailyStreakOf(facts({ dutyLaunchDay: null, settledThroughDay: null, freezeEarned: 1, rows: act(2, 3, 4) })).freezeWillCover === false);
+  // P21: the token is the one the fold spends on yesterday by itself: banked going into it, with a live momentum run
+  // (the board's own freeze state adds the must case, duty-plan freezeStateOf).
+  check("M2: freezeWillCover with a token banked going into that unsettled empty yesterday", live({ restTokens: tok(0, 1) }).freezeWillCover === true);
+  check("M2: not without a token", live().freezeWillCover === false && live({ restTokens: tok(0, 0) }).freezeWillCover === false);
+  check("P21: not when no momentum run goes into yesterday (the fold spends nothing there by itself)", live({ restTokens: tok(1, 1, 0) }).freezeWillCover === false);
+  check("M2: not for an active yesterday", live({ restTokens: tok(1), rows: act(1, 2, 3) }).freezeWillCover === false);
+  check("M2: not for a settled yesterday (after 'Settle yesterday')", live({ restTokens: tok(1), settledThroughDay: ago(1) }).freezeWillCover === false);
+  check("M2: not for a rest day", live({ restTokens: tok(1), restRows: [rest(1)] }).freezeWillCover === false && live({ restRows: [rest(1)] }).current === 3);
+  check("M2: not with no run to carry", live({ restTokens: tok(1), rows: act(4, 5), settledThroughDay: ago(2) }).freezeWillCover === false);
+  check("M2: not before Duty launches", dailyStreakOf(facts({ dutyLaunchDay: null, settledThroughDay: null, restTokens: tok(1), rows: act(2, 3, 4) })).freezeWillCover === false);
 
   // The one settled-day rule (duty-economy settledFor, floor firstDutyDay(epochDay)): only a day settlement
   // will judge waits on it. The launch script may set the cursor (launch − 1) days before the launch.
-  const preLaunch = dailyStreakOf(facts({ dutyLaunchDay: ago(-2), settledThroughDay: ago(-1), freezeEarned: 1, rows: act(2, 3, 4) }));
+  const preLaunch = dailyStreakOf(facts({ dutyLaunchDay: ago(-2), settledThroughDay: ago(-1), restTokens: tok(1), rows: act(2, 3, 4) }));
   const preWant = computeStreak(days(2, 3, 4), none, TODAY, { bankedFreezes: 1 });
   check(
     "M2: before the Duty launch, a cursor the launch script set early changes nothing (M1: an empty yesterday breaks; no pending day, no freeze cover)",
@@ -276,7 +291,7 @@ const none = new Set<DayKey>();
   // The judged break: 'Ended <day> at 23 days', never a red 0.
   const judged = live({ settledThroughDay: ago(1) });
   check("M2: once settled with nothing and no freeze, the run ends: current 0, endedOn yesterday, endedAfter 3", judged.current === 0 && judged.endedOn === ago(1) && judged.endedAfter === 3, JSON.stringify({ c: judged.current, e: judged.endedOn, a: judged.endedAfter }));
-  const frozen = live({ settledThroughDay: ago(1), rows: [...act(2, 3, 4), heldRow(1)], freezeEarned: 1, freezeUsed: 1 });
+  const frozen = live({ settledThroughDay: ago(1), rows: [...act(2, 3, 4), heldRow(1)], restTokens: tok(0, 1) });
   check("M2: settled with a freeze spent, the run holds (current 3, yesterday held, nothing ended)", frozen.current === 3 && frozen.held7Days[5] && frozen.endedOn === null && frozen.bankedFreezes === 0);
   const never = dailyStreakOf(facts({ settledThroughDay: ago(1), rows: [] }));
   check("M2: no run ever read: nothing ended (endedOn null)", never.current === 0 && never.endedOn === null && never.endedAfter === 0);

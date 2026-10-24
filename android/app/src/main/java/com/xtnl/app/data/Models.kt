@@ -1,5 +1,6 @@
 package com.xtnl.app.data
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -42,6 +43,13 @@ data class CheckData(
      * (CREDITS_LAUNCH_DAY, until the user's go), when it couldn't be read, and from an older server: no wallet chip.
      */
     val credits: Wallet? = null,
+    /**
+     * Duty is switched on for this server (DUTY_LAUNCH_DAY, blueprint P22): the switch alone, never a read. While false
+     * POST /tasks/makeup is refused, so an owed card shows without its actions. False from an older server.
+     */
+    val dutyOn: Boolean = false,
+    /** The open debts (blueprint P22, decision D18), oldest first, in the web MakeUpCard's words; empty with none and from an older server. */
+    val owed: List<OwedItem> = emptyList(),
     val work: List<WorkItem> = emptyList(),
     val level: LevelInfo? = null,
     val streak: StreakInfo? = null,
@@ -230,8 +238,85 @@ data class Wallet(val balance: Int = 0, val today: Int = 0)
 @Serializable
 data class CreditsChange(val delta: Int = 0, val balance: Int = 0, val today: Int? = null)
 
+/**
+ * The daily streak (docs/mobile-api.md `streak`). [restTokens] (blueprint P21, decision D19) is the one Rest Token bank,
+ * the momentum freezes: null while the bank is not live and from a server before it; [freezes] is the same number (0
+ * then), kept for older apps.
+ */
 @Serializable
-data class StreakInfo(val days: Int = 0, val keptToday: Boolean = false, val freezes: Int = 0)
+data class StreakInfo(val days: Int = 0, val keptToday: Boolean = false, val freezes: Int = 0, val restTokens: Int? = null)
+
+// ── Duty: the owed cards and POST /tasks/makeup (blueprint P22; decision D18) ──
+
+/**
+ * One open debt (docs/mobile-api.md `owed`): what is owed ([debt], life XP, positive; a miss owes at most 20, a task at
+ * most 3 open, 100 in all), the missed [day], and the web card's own lines ([whenLine], [text], [window]). A make-up
+ * repays it in full and pays [makeUpXp] now, at [rate] (×0.85) with no consistency bonus; within the two days
+ * ([restoresToday], through [restoreBy]) it also counts the day as kept. A debt is life XP, never credits.
+ */
+@Serializable
+data class OwedItem(
+    val instanceId: String,
+    val templateId: String = "",
+    val title: String = "",
+    val archived: Boolean = false,
+    val day: String = "",
+    val dayLabel: String = "",
+    val debt: Double = 0.0,
+    val restoreBy: String? = null,
+    val restoresToday: Boolean = false,
+    val restoresStreak: Int? = null,
+    val rate: Double = 0.85,
+    val makeUpXp: Double = 0.0,
+    /** The minimum version's words and what its make-up pays; null without one. */
+    val minimum: OwedMinimum? = null,
+    /** A study must: its make-up pays 0 and clears the debt. */
+    val studyLinked: Boolean = false,
+    /** Accept the loss is offered (Settings › Days on the web, and the debt 14 days old). */
+    val canAcceptLoss: Boolean = false,
+    /** Proof of work in force: the chips a full make-up brings, as its tick does; null while it is one tap. */
+    val proof: OwedProof? = null,
+    /** "Stretch · Monday". */
+    @SerialName("when") val whenLine: String = "",
+    val text: String = "",
+    val window: String = "",
+)
+
+@Serializable
+data class OwedMinimum(val label: String = "", val xp: Double = 0.0)
+
+/** A proof must's make-up (P20, P22): its minute chips, a reading must's page chips and day target (null: pages optional). */
+@Serializable
+data class OwedProof(val minutes: List<Int>? = null, val pages: OwedPages? = null)
+
+@Serializable
+data class OwedPages(val target: Int? = null, val chips: List<Int> = emptyList())
+
+/**
+ * POST /tasks/makeup's answer: the [action] done ("makeup", "minimum" or "accept"), its [status] (DONE_LATE, DONE_MVV,
+ * MADE_UP or WRITTEN_OFF), whether the day was [restored], the [xp] paid and the [debt] repaid or written off, the
+ * server's [line], and, as a tick's, the cards left ([owed]; null when that read failed), [allDone], the [level] after
+ * and the [credits] across it. [duplicate]: a repeat the server already recorded (nothing paid twice).
+ */
+@Serializable
+data class MakeUpResult(
+    val instanceId: String = "",
+    val action: String = "makeup",
+    val status: String = "",
+    val restored: Boolean = false,
+    val xp: Double = 0.0,
+    val debt: Double = 0.0,
+    val owedLeft: Int? = null,
+    val clearedLast: Boolean? = null,
+    val undoUntil: String? = null,
+    val duplicate: Boolean = false,
+    val line: String? = null,
+    val celebrations: List<JsonElement> = emptyList(),
+    val allDone: Boolean = false,
+    val owed: List<OwedItem>? = null,
+    val level: LevelInfo? = null,
+    val credits: CreditsChange? = null,
+)
 
 // ── GET /quests (blueprint P15) ─────────────────────────────────────────────
 

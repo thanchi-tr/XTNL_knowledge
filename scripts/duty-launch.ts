@@ -10,11 +10,15 @@
  * (duty-economy validateDutyLaunchDay) refuses --apply unless DUTY_LAUNCH_DAY is set, a Monday,
  * on or after LIFE_LAUNCH_DAY and on or after that deploy day.
  *
- * The database guard (settlement.ts launchTargetOf), before anything is read on --apply:
- *   - --apply writes only to the xtnl-idea project (DATABASE_URL, and DIRECT_URL when set, name the
- *     ref xvlkujmtdcpaoxdftgpl: db.<ref>.supabase.co or a pooler user postgres.<ref>) or to the
+ * The dry run is read only (blueprint P22): its one write, the cursor's, sits after the dry run's
+ * return, and every other call it makes is a read or a pure plan (settle-check §6 pins both).
+ *
+ * The database guard (settlement.ts launchTargetOf), before anything is read, dry run or --apply:
+ *   - it reads and writes only the xtnl-idea project (DATABASE_URL, and DIRECT_URL when set, name the
+ *     ref xvlkujmtdcpaoxdftgpl: db.<ref>.supabase.co or a pooler user postgres.<ref>) or the
  *     rehearsal mirror (both localhost:55432). Anything else (XTNL_thesis, another local database,
- *     the two URLs disagreeing) is refused before a connection is made.
+ *     the two URLs disagreeing) is refused before a connection is made: a dry run against the wrong
+ *     database would show a plan for the wrong data (M2 leftover 9, blueprint P20).
  *   - XTNL_DUTY_LAUNCH_DAY and XTNL_LIFE_LAUNCH_DAY are honoured on the rehearsal mirror only.
  *     Against any other database the code constants decide, as on the production server (a shell
  *     left with a rehearsal override would otherwise set a production cursor on the wrong Monday);
@@ -26,13 +30,17 @@
  *   - the launch day, today, the cursor (null, or already set by newLifeSettingsDays after a
  *     reset), epochDay and firstDutyDay = max(DUTY_LAUNCH_DAY, epochDay);
  *   - when --apply may run: from firstDutyDay + 1 (see below);
- *   - every compulsory template (and every template with a pending rule change) with its rule on
- *     firstDutyDay (duty-rule ruleOn), compulsoryOnRest, its minimum version, and its first expected
- *     occurrences from firstDutyDay with the debt each would carry (life-grade debtFor), so the user
- *     can un-flag or archive while that is still immediate; inbox musts are listed as 'not expected
- *     until clarified';
+ *   - every compulsory template on the personal Board (and every template with a pending rule change)
+ *     with its rule on firstDutyDay (duty-rule ruleOn), compulsoryOnRest, its minimum version, and its
+ *     first expected occurrences from firstDutyDay with the debt each would carry (life-grade debtFor),
+ *     so the user can un-flag or archive while that is still immediate; inbox musts are listed as 'not
+ *     expected until clarified';
+ *   - (blueprint P22) the worst first week: settlement's own plan (settlement-plan worstWeekOf) of the
+ *     first seven judged days with every must missed, no rest day and no Rest Token: the misses, what
+ *     they would owe with no cap, what settlement charges within the caps (20 a miss, 3 open a task,
+ *     100 in all), and each debt by day;
  *   - RestDay rows and the vacation budget used;
- *   - the freeze balance (0: there is no starter freeze);
+ *   - the Rest Token bank (blueprint P21: the momentum freezes, one bank; settlement earns none, so FREEZE_EARN is 0);
  *   - the M5 state: the last judged week per track; every week whose Sunday is before the launch
  *     day is judged without the DUTY gate;
  *   - planSettlement from firstDutyDay onward, as settlement would plan it with the cursor at
@@ -66,8 +74,12 @@ import {
 import { expectedOn, parsePendingChange, ruleOn, validRestDays, type DutyTemplate } from "../src/lib/duty-rule";
 import { debtFor } from "../src/lib/life-grade";
 import { describeRule, parseRule, periodOf } from "../src/lib/recurrence";
-import { planSettlement } from "../src/lib/settlement-plan";
-import { launchApplyTooEarly, launchDaysFor, launchTargetOf, readSettlementState } from "../src/lib/settlement";
+import { planSettlement, worstWeekOf } from "../src/lib/settlement-plan";
+import { launchApplyTooEarly, launchDaysFor, launchTargetOf, readSettlementState, settlementTemplateOf } from "../src/lib/settlement";
+import { readRestTokenSummary } from "../src/lib/rest-tokens-server";
+import { PERSONAL_BOARD } from "../src/lib/work-boards";
+import { MAKEUP_RESTORE_DAYS } from "../src/lib/duty-economy";
+import { DEBT_CAP, DEBT_OPEN_PER_TEMPLATE, DEBT_OPEN_TOTAL_CAP, TIMING_FACTOR } from "../src/lib/life-grade";
 
 const APPLY = process.argv.includes("--apply");
 const DEPLOY_ARG = process.argv.find((a) => a.startsWith("--deploy="))?.slice("--deploy=".length) ?? null;
@@ -81,8 +93,8 @@ async function main() {
   console.log(`Target: ${target.kind === "refused" ? "REFUSED for --apply" : target.kind} · ${target.label}`);
   for (const p of target.problems) console.log(`  !! ${p}`);
   console.log(`Mode: ${APPLY ? "APPLY (writes the cursor)" : "dry run (writes nothing)"}`);
-  if (APPLY && target.kind === "refused") {
-    console.log("\nRefused: --apply writes only to the xtnl-idea project or the rehearsal mirror (localhost:55432). Nothing read, nothing written.");
+  if (target.kind === "refused") {
+    console.log(`\nRefused: ${APPLY ? "--apply writes" : "the dry run reads"} only the xtnl-idea project or the rehearsal mirror (localhost:55432). Nothing read, nothing written.`);
     process.exitCode = 1;
     return;
   }
@@ -126,12 +138,16 @@ async function main() {
   console.log(`  --apply may run from ${addDays(first, 1)}${tooEarly ? " (not yet)" : " (now)"}; run it before ${settleAt.toISOString()} so ${first} settles on time.`);
 
   // ── The musts, as they will be judged from firstDutyDay ──
+  // The personal Board only, as settlement reads it (a work tab's task is never judged or owed). Blueprint P22: the
+  // columns settlement plans from (settlementTemplateOf), so the worst first week below prices what settlement will.
   const templates = await prisma.taskTemplate.findMany({
-    where: { userId, kind: { in: ["TASK", "HABIT"] }, archivedAt: null, OR: [{ compulsory: true }, { pendingChange: { not: Prisma.DbNull } }] },
+    where: { userId, ...PERSONAL_BOARD, kind: { in: ["TASK", "HABIT"] }, archivedAt: null, OR: [{ compulsory: true }, { pendingChange: { not: Prisma.DbNull } }] },
     select: {
       id: true,
       title: true,
+      normTitle: true,
       kind: true,
+      track: true,
       recurrence: true,
       startDay: true,
       dueDay: true,
@@ -142,6 +158,11 @@ async function main() {
       archivedAt: true,
       pendingChange: true,
       mvv: true,
+      mvvMinutes: true,
+      intrinsic: true,
+      autoMetric: true,
+      autoTarget: true,
+      createdAt: true,
       band: true,
       bandOverride: true,
       estMinutes: true,
@@ -187,7 +208,23 @@ async function main() {
       const rx = ruleOn(dt, x);
       if (rx.compulsory && expectedOn(rx, x)) due.push(x);
     }
-    console.log(`      first expected: ${due.length ? due.join(", ") : `none in the first ${PREVIEW_DAYS} days`}`);
+    console.log(`      first expected: ${due.length ? `${due.join(", ")} (each owes ${debt} if missed)` : `none in the first ${PREVIEW_DAYS} days`}`);
+  }
+
+  // ── The worst first week (blueprint P22; decision D18): every must missed, as settlement would charge it ──
+  const worst = worstWeekOf(musts.map(settlementTemplateOf), { launchDay, epochDay, now });
+  if (worst) {
+    console.log(
+      `\nWorst first week (every must missed ${worst.from} – ${worst.to}, no rest day, no Rest Token): ${worst.misses} misses would owe ${worst.uncapped} with no cap; ` +
+        `settlement charges ${worst.owed} (at most ${DEBT_CAP} a miss, ${DEBT_OPEN_PER_TEMPLATE} open a task, ${DEBT_OPEN_TOTAL_CAP} in all) and records ${worst.capped} past a cap with nothing owed.`
+    );
+    const titleOf = new Map(musts.map((t) => [t.id, t.title.slice(0, 40)]));
+    const byDay = new Map<DayKey, string[]>();
+    for (const x of worst.debts) byDay.set(x.day, [...(byDay.get(x.day) ?? []), `${titleOf.get(x.templateId) ?? x.templateId} −${x.debt}`]);
+    for (const [day, lines] of byDay) console.log(`  ${day}: ${lines.join(" · ")}`);
+    console.log(
+      `  Each debt is life XP on Duty, never credits. A make-up repays it in full at ×${TIMING_FACTOR.MAKE_UP} (C 1.00); within ${MAKEUP_RESTORE_DAYS} days it also counts the day as kept. A Rest Token excuses one day's missed musts.`
+    );
   }
 
   // ── Rest days and the vacation budget ──
@@ -206,13 +243,17 @@ async function main() {
   const vacation = restRows.filter((r) => r.kind === "VACATION" && !r.cancelledAt && r.day >= addDays(first, -(VACATION_BUDGET_SPAN_DAYS - 1)) && r.day <= addDays(first, VACATION_BUDGET_SPAN_DAYS - 1)).length;
   console.log(`  Vacation days declared within 365 days either side of ${first}: ${vacation} (budget ${VACATION_DAYS_PER_365} in any ${VACATION_BUDGET_SPAN_DAYS} days)`);
 
-  // ── Freezes and the M5 weeks ──
-  const [freezes, weekRows] = await Promise.all([
+  // ── Freezes (blueprint P21: the one Rest Token bank, momentum's fold) and the M5 weeks ──
+  const [freezes, tokens, weekRows] = await Promise.all([
     prisma.activityEvent.groupBy({ by: ["source"], where: { userId, source: { in: ["FREEZE_EARN", "FREEZE_USE"] } }, _count: { _all: true } }),
+    readRestTokenSummary(prisma, userId, today, { dutyLaunch: launchDay }),
     prisma.activityEvent.findMany({ where: { userId, source: "WEEK", dedupeKey: { not: null } }, select: { dedupeKey: true, day: true } }),
   ]);
   const count = (s: string) => freezes.find((f) => f.source === s)?._count._all ?? 0;
-  console.log(`\nFreeze balance: ${count("FREEZE_EARN") - count("FREEZE_USE")} (earned ${count("FREEZE_EARN")}, used ${count("FREEZE_USE")}; no starter freeze, so 0 is expected)`);
+  console.log(
+    `\nRest tokens (the momentum freezes, one bank): ${tokens ? `${tokens.bank} of ${tokens.max} banked today` : "none (momentum is not live)"}; ` +
+      `FREEZE_USE rows ${count("FREEZE_USE")}, FREEZE_EARN rows ${count("FREEZE_EARN")} (settlement earns none since P21, so 0 is expected)`
+  );
   const lastByTrack = new Map<string, { weekKey: string; sunday: DayKey }>();
   for (const w of weekRows) {
     const parsed = parseWeekRowKey(w.dedupeKey);

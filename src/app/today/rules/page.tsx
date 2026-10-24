@@ -8,9 +8,6 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/user";
 import {
   AKRASIA_DAYS,
-  FREEZE_EARN_ACTIVE_DAYS,
-  FREEZE_MAX,
-  FREEZE_START_BALANCE,
   MAKEUP_RESTORE_DAYS,
   MAKEUP_RESTORE_EVERY_DAYS,
   REPAIR_EVERY_DAYS,
@@ -29,6 +26,7 @@ import { dutyPhaseOf, dutySettledLine, preLaunchNotice } from "@/lib/rituals";
 import { CREDIT_KIND_LABEL, CREDIT_UNIT, creditModelOn, creditRows, creditsLaunchDay, type CreditModel } from "@/lib/credits";
 import { MALL_UNDO_MINUTES } from "@/lib/mall";
 import { proofLaunchDay, proofOn, proofRuleLines } from "@/lib/proof";
+import { REST_TOKENS_PER_DAY, REST_TOKENS_WORD } from "@/lib/rest-tokens";
 import {
   BODY_EFFORT_MINUTES,
   CAPPED_REASONS,
@@ -803,13 +801,54 @@ const TIER_WORD: Record<1 | 2 | 3 | 4, string> = { 1: "Tier I", 2: "Tier II", 3:
 const withPerk = (code: PerkCode) => lifeModsOf(new Set<PerkCode>([code]));
 
 /**
+ * The one Rest Token bank (blueprint P21; decision D19): the momentum freezes under their published name. Every
+ * number is momentum.ts's, rest-tokens.ts's or duty-economy's; what a token does for musts is said only once Duty is
+ * live (before, it says when that starts, if a day is set).
+ */
+function RestTokenRules({ duty }: { duty: { live: boolean; launchDay: DayKey | null } }) {
+  const spare = withPerk("D_SPARE").freezeMax;
+  return (
+    <Card id="rest-tokens" title={`${REST_TOKENS_WORD}: one bank`} sub="The momentum freezes, under one name; Today shows them on the Daily quests" wide>
+      <ul className="rules-bullets">
+        <li>
+          One bank: the freezes above. You start with {MOMENTUM_START_FREEZES}, earn one every {MOMENTUM.FREEZE_EVERY}{" "}momentum
+          days, and a chest&apos;s rare freeze or a kept Body week with Recovery adds one. At most {MOMENTUM.FREEZE_MAX} are
+          banked ({spare} with Spare flame). They are never bought.
+        </li>
+        <li>
+          A day spends at most {REST_TOKENS_PER_DAY}. A past day with no momentum, while a run is alive, spends it by itself
+          and holds the run.
+        </li>
+        {duty.live ? (
+          <li>
+            A settled day with a must still open that would owe a debt spends one too, whether or not you did other things
+            that day, while the token is still free: your run comes first, so a token already holding a later empty day
+            stays there and those musts are owed. It excuses every must that day, and nothing is owed. Today&apos;s Record
+            yesterday can spend one by hand for a day with nothing on it.
+          </li>
+        ) : (
+          <li>
+            Once Duty starts{duty.launchDay ? ` (${longDayLabel(duty.launchDay)})` : ""}, a token may also excuse a day&apos;s
+            missed musts, one a day. Until then nothing is owed, so a token only holds the run.
+          </li>
+        )}
+        <li>
+          The minimum version, make-ups and rest days work as before: a minimum keeps a must, a make-up repays a debt, and a
+          declared rest, sick or vacation day holds the run and spends no token.
+        </li>
+      </ul>
+    </Card>
+  );
+}
+
+/**
  * Momentum's published rules (momentum.md §A–§B): the run and its freezes, Today's three and the chest
  * (its odds from chestOdds, the one function the server's drop table publishes), crits and chains, walks,
  * the roadmap's pay and Life perks (the Life tree; D6). Every number is read from momentum.ts and the modules that
  * pay; nothing below is typed by hand. Rendered only once momentum is live (momentumLive), so before
  * MOMENTUM_LAUNCH_DAY this page is exactly what it was.
  */
-function MomentumRules({ launchDay }: { launchDay: DayKey }) {
+function MomentumRules({ launchDay, duty }: { launchDay: DayKey; duty: { live: boolean; launchDay: DayKey | null } }) {
   const C = MOMENTUM.CHEST;
   const odds = chestOdds();
   const winds = chestOdds(withPerk("P_WINDS").windsRareBonus);
@@ -837,6 +876,10 @@ function MomentumRules({ launchDay }: { launchDay: DayKey }) {
             A past day with no momentum, while a run is alive and a freeze is banked, is held: one freeze bridges it, and the
             day itself doesn&apos;t count. Recording yesterday before today ends gives that freeze back.
           </li>
+          <li>
+            These freezes are your <a href="#rest-tokens">{REST_TOKENS_WORD.toLowerCase()}</a>: one bank, the same number on
+            Today, on Character and on the phone.
+          </li>
           <li>A run of {RUN_MILESTONES.join(", ")} days is a Seal, once ever each.</li>
           <li>
             From {hh(MOMENTUM_NUDGE.BELL_FROM_HOUR)} the bell says when a run of {MOMENTUM_NUDGE.MIN_RUN} days or more has nothing
@@ -845,6 +888,8 @@ function MomentumRules({ launchDay }: { launchDay: DayKey }) {
           </li>
         </ul>
       </Card>
+
+      <RestTokenRules duty={duty} />
 
       <Card title="Today's three and the chest" sub="Three named actions, picked once a day from your own due list" wide>
         <ul className="rules-bullets">
@@ -1846,10 +1891,11 @@ function DutyRules({ edge }: { edge: string }) {
 
       <Card title="Freezes, rest and repair" sub="Held days owe nothing and hold every streak">
         <p>
-          A freeze is earned on a settled day with activity once {FREEZE_EARN_ACTIVE_DAYS} active days have built up since the last
-          one. At most {FREEZE_MAX} are banked, starting from {FREEZE_START_BALANCE}. A day with nothing on it spends one by itself
-          when that keeps a live streak or covers a must; it excuses every must that day. On Today, an unsettled yesterday with
-          nothing on it can spend one by hand.
+          A freeze is a rest token: one bank, the momentum freezes (<a href="#rest-tokens">{REST_TOKENS_WORD}</a>), at most{" "}
+          {REST_TOKENS_PER_DAY} a day. A settled day spends one by itself when the run would break without it, or when a must
+          that would owe is still open and the token isn&apos;t already holding your run on a later day; it excuses every
+          must that day. None is spent on a rest, sick or vacation day. On Today, an unsettled yesterday with nothing on it
+          can spend one by hand.
         </p>
         <ul className="rules-bullets">
           <li>Rest: declared before the day starts, at most {REST_PER_WEEK} a week.</li>
@@ -1858,7 +1904,7 @@ function DutyRules({ edge }: { edge: string }) {
             Vacation: {VACATION_MIN_DAYS} to {VACATION_MAX_DAYS} days in a row, from tomorrow, at most {VACATION_DAYS_PER_365} days
             in any {VACATION_BUDGET_SPAN_DAYS}. A cancelled day is given back.
           </li>
-          <li>A must marked Even on rest days stays owed on rest, sick and vacation days; only a freeze covers it.</li>
+          <li>A must marked Even on rest days stays owed on rest, sick and vacation days; no rest token is spent on those days, so do it or make it up.</li>
           <li>A Full day straight after a broken day repairs it, once every {REPAIR_EVERY_DAYS} days.</li>
         </ul>
         <p>
@@ -2229,7 +2275,7 @@ export default async function RulesPage() {
         <section aria-labelledby="rules-momentum" style={{ marginTop: 28 }}>
           <SectionHeader id="rules-momentum" title="Momentum" aside="chance, stakes and Life perks · read from the code that pays" />
           <div className="rules-grid">
-            <MomentumRules launchDay={momentumLaunch} />
+            <MomentumRules launchDay={momentumLaunch} duty={{ live: dutyLive, launchDay: dutyLaunch }} />
           </div>
         </section>
       )}

@@ -35,8 +35,9 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     paid once (a repeat answers "Already recorded"), a logged line is saved once per clientId (it is the line's
     capture key), a review answer lands once per clientId (its ledger row is keyed by it; a repeat answers
     `409 recorded`), a Mall purchase lands once per clientId (its ledger row is keyed by it: `POST /mall/buy`
-    requires one) and an undo once per purchase, Done and Reopen are idempotent, and a repeated new idea is merged
-    into the first by dedup.
+    requires one) and an undo once per purchase, a make-up once per debt (`POST /tasks/makeup` requires a clientId; a
+    repeat answers `duplicate`), Done and Reopen are idempotent, and a repeated new idea is merged into the first by
+    dedup.
   - Writes revalidate the same cache tags the web actions do (they run the same actions).
 - **Errors:** the app keeps what the user typed on any failure.
 
@@ -44,11 +45,12 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 
 | Method | Path | Wraps |
 | --- | --- | --- |
-| GET | /check | the Today board's read, the Review hub's counts, the shell's level, the work tabs' due tasks, the week audit, the credits wallet |
+| GET | /check | the Today board's read, the Review hub's counts, the shell's level, the work tabs' due tasks, the week audit, the credits wallet, the owed cards |
 | POST | /tasks/complete | `completeTask` (actions/tasks.ts) |
 | POST | /tasks/undo | `undoCompletion` (actions/tasks.ts) |
 | POST | /tasks/start | `startTaskTimer` (actions/tasks.ts), a proof task's timer |
 | POST | /tasks/stop | `stopTaskTimer` (actions/tasks.ts), its stop |
+| POST | /tasks/makeup | `makeUp`, `doMinimum`, `acceptLoss` and `undoMakeUp` (actions/duty.ts), an owed card's actions |
 | POST | /work/done | `doneScheduledTask` with no log (actions/scheduled-tasks.ts) |
 | POST | /work/reopen | `reopenScheduledTask` (actions/scheduled-tasks.ts) |
 | GET | /review/queue | the Review hub's due cards in the runner's order |
@@ -90,6 +92,16 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     "decaying": { "count": 4, "unread": 0, "top": [ { "kind": "domain", "title": "Probability fell to L3 (from L4)",
       "detail": "2 ideas fading in it. Reviewing them brings the level back." } ] } | null } | null,
   "credits": { "balance": 120, "today": 40 } | null,
+  "dutyOn": false,
+  "owed": [
+    { "instanceId": "…", "templateId": "…", "title": "Stretch", "archived": false, "day": "2026-10-19",
+      "dayLabel": "Mon 19 Oct", "debt": 4.2, "restoreBy": "2026-10-21", "restoresToday": true, "restoresStreak": 12 | null,
+      "rate": 0.85, "makeUpXp": 3.5, "minimum": { "label": "10 pushups", "xp": 1.1 } | null, "studyLinked": false,
+      "canAcceptLoss": false,
+      "proof": { "minutes": [15, 30, 45] | null, "pages": { "target": 30 | null, "chips": [10, 20, 30] } | null } | null,
+      "when": "Stretch · Monday", "text": "Monday's Stretch is still open. 10 min makes it right.",
+      "window": "Within Thu 04:00 it brings back its streak of 12." }
+  ],
   "work": [
     { "id": "…", "boardId": "…", "boardName": "Acme Sales", "title": "Call Jordan back",
       "dueAt": "…", "allDay": false, "channel": "CALL" | "VISIT" | "EMAIL" | "MESSAGE" | "OTHER",
@@ -97,7 +109,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
       "customer": { "id": "…", "name": "Jordan Lee", "number": "1042", "phone": "0412 345 678" | null } | null }
   ],
   "level": { "level": 1, "title": "Novice", "progress": 0.75 } | null,
-  "streak": { "days": 12, "keptToday": true, "freezes": 2 } | null
+  "streak": { "days": 12, "keptToday": true, "freezes": 2, "restTokens": 2 | null } | null
 } }
 ```
 
@@ -193,11 +205,41 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     chest 10 more, a kept week 15 per track, a kept plan week 25, and a checkpoint 25, a milestone 100 and a goal
     10 / 40 × g / 120 × g only when it pays MP. XP is never spent, and no penalty ever takes credits. The web's rules
     page (`/today/rules#credits`) publishes the table once credits count.
+- `dutyOn` (blueprint 2.3 and 3.2b, P22; decision D18): Duty is switched on (`DUTY_LAUNCH_DAY` in force: false until the
+  user's go). It is the switch alone, never a read, as `auditOn` is. While it is false, `POST /tasks/makeup` is refused,
+  so the app shows an owed card without its actions ("make it up on the web app").
+- `owed` (P22; decision D18): every open debt, as Today's MakeUpCards list them (oldest first), each in the web card's
+  own words. A must missed on a settled day owes min(20, B × E): at most 20 for one miss, at most 3 open debts for one
+  task and at most 100 in all; a miss past a cap owes nothing. Nothing is owed for a day before Duty's launch day. A debt
+  is life XP on Duty, never credits: no penalty takes credits. Empty with none (always before the launch).
+  - `debt` is what is owed (positive, one decimal; the card prints "−4.2 owed"). `day` is the missed day and `dayLabel`
+    its words; `when` ("Stretch · Monday"), `text` (one plain sentence, never a reproach) and `window` (the restore
+    window, true when read) are the web card's lines. `archived`: the task was archived since ("Stretch (archived)").
+  - A make-up always repays the whole debt and pays `makeUpXp` now: the task's price at `rate` (×0.85, the make-up
+    timing factor) with no consistency bonus (C 1.00). Within two days of the missed day (`restoresToday`, until the
+    end of `restoreBy`, and at most one restore per task in 7 days) it also counts the day as kept and brings back the
+    task's streak (`restoresStreak`, in the rule's own unit; null with none); later it clears the debt only.
+  - `minimum`: the minimum version's words and what its make-up pays (×0.3 of a full one; it still repays the whole
+    debt and holds the day), null without one. `studyLinked`: a study must, whose make-up pays 0 and clears the debt.
+  - `canAcceptLoss`: Accept the loss is offered (Settings › Days › Accept a loss is on, on the web, and the debt is at
+    least 14 days old). The miss stays on the ledger and nothing more is owed.
+  - `proof`: once proof of work is in force (`PROOF_LAUNCH_DAY`), what a full make-up brings, as the task's own tick
+    does: a deep-work must's minute chips (`minutes`), a reading must's page chips and its day target (`pages`); null
+    while the make-up is one tap (always while proof of work is switched off). The minimum version never needs any.
 - `work`: the open scheduled tasks across the open work tabs that are overdue or due today, in the Agenda's order
   (Overdue first, then Today; soonest first, an all-day task before the timed ones of its day), at most 30.
-- `level` (the character level, as the top bar shows it) and `streak` (the daily streak; `freezes` banked) are null
-  when they couldn't be read; so is `work` an empty list. The board, the Field tree or today's review count failing
-  fails the whole check (500).
+- `level` (the character level, as the top bar shows it) and `streak` (the daily streak) are null when they couldn't be
+  read; so is `work` an empty list. The board, the Field tree or today's review count failing fails the whole check
+  (500).
+  - `restTokens` (blueprint 3.2c, P21; decision D19): the one Rest Token bank, the web's "Rest tokens 2" chip on Today's
+    Daily quests and on Character. It is the momentum freezes, under one name: 1 to start, one more every 10 momentum
+    days (a chest's rare freeze and a kept Body week with Recovery add one too), at most 2 banked (3 with the Spare flame
+    perk). A day spends at most one: a past day with nothing that keeps the momentum run, while a run is alive, spends
+    one by itself; once Duty is live (`DUTY_LAUNCH_DAY`, null until the user's go) a settled day with a must still open
+    spends one too and it excuses that day's missed musts. A rest, sick or vacation day spends none. Null while the bank
+    is not live (before momentum's launch, or when it couldn't be read); a whole number of tokens otherwise, 0 included.
+  - `freezes`: the same number (0 while `restTokens` is null), kept for apps built before it. It used to read Duty's own
+    freeze balance, which nothing ever earned, so it was always 0.
 - Before it reads, the server runs momentum's lazy writes, as Today does (the day's quest set first, so `xpHint` and a
   tick made from this check price today's frog); they return at once when nothing is owed. After the reply it runs
   what opening Today and the Review hub owe: the day's first open fixes the review quest's target, study tasks the
@@ -293,6 +335,53 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   never stays running.
 - Returns `{ "timer": { … }, "line": "Timer stopped at 34 min. Tick the task to count them." }`, `timer` as
   `/tasks/start`'s with `running` false and its `endedAt`.
+
+### POST /tasks/makeup
+- Duty (blueprint 2.3 and 3.2b, P22; decision D18): an owed card's action, as Today's MakeUpCard runs it.
+- Body: `{ "instanceId": "…", "action"?: "makeup" | "minimum" | "accept" | "undo", "minutes"?: 45, "sessionId"?: "…",
+  "proof"?: { "kind": "PAGES", "qty": 30 }, "clientId": "…" }`. `instanceId` is an `owed` row's (for `undo`, the
+  make-up's own: the instance it answered). `action` is `makeup` when left out: a make-up in full (`makeUp`), its
+  `minimum` version (`doMinimum`), `accept` the loss (`acceptLoss`), or `undo` a make-up or a minimum (`undoMakeUp`).
+  `minutes`, `sessionId` and `proof` are a full make-up's proof of work, exactly as `/tasks/complete` takes them (with
+  any other action they are refused, 400). The `clientId` is required (a UUID, `bad` without it): send the same one on
+  every retry of one action.
+- Refused (409) while Duty is switched off (`dutyOn` false: "Duty hasn't started yet. Until then, make it up on the web
+  app."), before anything runs.
+- A make-up repays the whole debt and pays the task's price at ×0.85 with C 1.00 (the `owed` row's `makeUpXp`), dated
+  today; within the two-day window it also counts the missed day as kept (`restored`, status `DONE_LATE`, or
+  `DONE_MVV` for the minimum), else it clears the debt only (`MADE_UP`). Once proof of work is in force, a deep-work
+  must's full make-up without its minutes, or a reading must's without its pages, is refused with the tick's own line
+  ("Log the minutes: …", "Log the pages: …", 409); a make-up counts a timer only when it names it (`sessionId`).
+  Accept the loss writes the debt off (status `WRITTEN_OFF`): its DEBT row stays on the ledger, nothing is paid, and it
+  is refused (409) unless `canAcceptLoss` was true.
+- Once per debt, on any server instance: a repeat of a make-up already recorded answers it with `duplicate` true
+  ("Already made up. Nothing is paid twice."), and a debt already written off answers as written off. A debt that is
+  not there is `404 gone` ("That debt no longer exists."); one no longer owed is `409` ("Nothing is owed there any
+  more.").
+- Then, as a tick's: the board read again (`owed`, the cards left, null when that read failed; `allDone`), the level
+  after, and the credits across it (a make-up is today's work, so it can finish one of Today's three; null while
+  credits are off). No penalty and no make-up ever takes credits.
+- `undo` takes a make-up (or its minimum) back, as the web card's Undo does: within ten minutes of it, on the same life
+  day (until its `undoUntil`). The debt is open again (status `MISSED`), the make-up's life XP is taken back (`xp`,
+  zero or less) and the day's repair with it; "Make-up undone. It is owed again; nothing else changed.". A repeat
+  answers the same. Past its window it is refused (409, the web's words); a make-up that is not there is `404 gone`
+  ("That make-up no longer exists."). Accept the loss has no undo.
+
+```json
+{ "ok": true, "data": { "instanceId": "…", "action": "makeup" | "minimum" | "accept" | "undo",
+  "status": "DONE_LATE" | "DONE_MVV" | "MADE_UP" | "WRITTEN_OFF" | "MISSED", "restored": true, "xp": 3.5, "debt": 4.2,
+  "owedLeft": 0 | null, "clearedLast": true | null, "undoUntil": "…" | null, "duplicate": false,
+  "line": "Repaid 4.2 and paid 3.5 exactly; its streak is back. Nothing is owed.",
+  "celebrations": [ { "tier": 2, "kind": "…", "title": "…" } ], "allDone": false, "owed": [ … ] | null,
+  "level": { "level": 7, "title": "Adept", "progress": 0.81 } | null, "credits": { … } | null } }
+```
+
+- `credits`, `level` and `celebrations` are `/tasks/complete`'s, read the same way. `xp`: the life XP the make-up paid (one decimal; 0 for Accept the loss). `debt`: the debt repaid or written off.
+  `owedLeft` and `clearedLast`: the open debts left, and whether this cleared the last (Accept the loss reads them from
+  the board read after it: null when that failed; an undo reads `owedLeft` the same way and `clearedLast` false).
+  `undoUntil`: when the make-up's Undo closes (null for Accept the loss and for an undo, which have none). `line`: the
+  web card's resolved words, then what is still owed ("1 still owed.", "Nothing is owed."); Accept the loss says
+  "Its −4.2 stays in Duty XP; nothing more is owed.".
 
 ## POST /work/done and POST /work/reopen: a scheduled task (work tab)
 - Body: `{ "id": "…", "clientId"?: "…" }`. Done uses the core behind the agenda's Done, without a history log;

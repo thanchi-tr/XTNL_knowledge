@@ -10,9 +10,10 @@ import { FULL_DAY_MP } from "@/lib/full-day";
 import { bump, countTo, formatFigure, roll } from "@/lib/motion";
 import { useMiniLedger } from "@/components/shell/MiniLedger";
 import { cx } from "@/components/ui/cx";
-import { CurrencyGlyph, HeldGlyph, Icon } from "@/components/ui/Icon";
+import { CurrencyGlyph, Icon } from "@/components/ui/Icon";
 import { Chip } from "@/components/ui/Chip";
 import { PromiseRing } from "@/components/ui/PromiseRing";
+import { restTokensText } from "@/lib/rest-tokens";
 import { fmtMinutes } from "./format";
 import { ledgerGate } from "./ledger-gate";
 
@@ -21,7 +22,7 @@ import { ledgerGate } from "./ledger-gate";
  *
  *   top      the DaySeal (flame in a dashed ring; lit = light ring + halo;
  *            broken = hollow flame), the streak numeral, a state caption,
- *            and freeze crystals when there are any;
+ *            and the Rest tokens chip while the bank is live (blueprint P21);
  *   middle   the Full-day strip: three promise rings (Musts, Quest, Life)
  *            from lib/full-day.ts, "n of 3", and the stamp when all close;
  *   bottom   life XP · review pts · planned of capacity. Two ledgers, side
@@ -54,7 +55,7 @@ export interface DayLedgerProps {
   };
   /** The sentence under the numeral ("Kept today. Safe until 04:00."). */
   caption: ReactNode;
-  /** Freeze crystals (M2). Null hides them. */
+  /** The Rest tokens chip (blueprint P21; M2's freeze crystals before it): 'Rest tokens 2'. Null hides it. */
   freezes: { banked: number; used?: number } | null;
   fullDay: FullDay;
   /** M2's daily settlement pays Full days. False: the strip says the payout is not live yet. */
@@ -63,7 +64,7 @@ export interface DayLedgerProps {
   fullNote?: ReactNode;
   /** The aside beside 'n of 3'; a default says what a Full day pays. */
   aside?: ReactNode;
-  /** M2: a held chip under the caption ('A freeze will cover Wed'): the held glyph plus words. */
+  /** M2: a held chip under the caption ('A rest token will cover Wed'): the held glyph plus words. */
   heldNote?: ReactNode;
   /** Rings that just closed (one glint each). */
   glint?: ReadonlySet<FullDayRingKind>;
@@ -83,7 +84,7 @@ export interface DayLedgerProps {
 
 /**
  * The streak on its own block (Today): the DaySeal, the numeral, the caption,
- * the held note and the freeze crystals, the same pieces as the ledger's top.
+ * the held note and the Rest tokens chip, the same pieces as the ledger's top.
  * `children` sits in its corner (the Asks' badge).
  */
 export function StreakCard({
@@ -124,8 +125,9 @@ function StreakTop({ streak, caption, freezes, heldNote, sealRef }: Pick<DayLedg
             </Chip>
           </div>
         )}
+        {/* Blueprint P21: under the caption, not at the edge where the crystals were: the words need the column's width at 344 px. */}
+        {freezes && <RestTokensChip banked={freezes.banked} />}
       </div>
-      {freezes && freezes.banked + (freezes.used ?? 0) > 0 && <Freezes {...freezes} />}
     </div>
   );
 }
@@ -271,19 +273,16 @@ export function DaySeal({ lit, broken, sealRef, size }: { lit: boolean; broken?:
   );
 }
 
-/** Freeze crystals: "2 banked" / "0 banked · 2 used". Held glyph plus words, never colour alone. */
-export function Freezes({ banked, used = 0 }: { banked: number; used?: number }) {
-  const crystals = [...Array.from({ length: banked }, () => false), ...Array.from({ length: used }, () => true)].slice(0, 4);
+/**
+ * The one Rest Token bank (blueprint P21; decision D19: the momentum freezes) as a held chip, 'Rest tokens 2': the
+ * freeze glyph plus the words, never colour alone. 0 is said as it is.
+ */
+export function RestTokensChip({ banked }: { banked: number }) {
   return (
-    <div className="freezes" aria-label={`${banked} freeze${banked === 1 ? "" : "s"} banked${used ? `, ${used} used` : ""}`}>
-      <div className="pips" aria-hidden="true">
-        {crystals.map((isUsed, i) => (
-          <HeldGlyph key={i} kind="freeze" size={18} className={isUsed ? "used" : undefined} />
-        ))}
-      </div>
-      <div className="cap">
-        {banked} banked{used ? ` · ${used} used` : ""}
-      </div>
+    <div className="rest-tokens">
+      <Chip tone="held" held="freeze">
+        {restTokensText(banked)}
+      </Chip>
     </div>
   );
 }

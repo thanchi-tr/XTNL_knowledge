@@ -14,12 +14,15 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { QuestionType } from "@prisma/client";
 import { addDays, type DayKey } from "./life-day";
 import { buildBoard, shortDate, weekdayName, type Board, type BoardData, type BoardRow } from "./today-board";
-import { boardClearOf, splitTodayLane } from "../components/today/board-ui";
+import { boardClearOf, madeUpLineOf, makeUpViewOf, splitTodayLane } from "../components/today/board-ui";
+import { launchRefusal } from "./duty-plan";
+import type { OwedCard } from "./duty-view";
+import type { MakeUpResult } from "../app/actions/duty";
 import { dailyQuestsOf } from "./daily-quests";
 import { auditWeekLabel, type WeekAudit } from "./week-audit";
 import { DECAY_TOP, type AuditDecaying } from "./audit-decay";
 import { fmtXp } from "../components/today/format";
-import { TRACK_LABEL } from "./life-grade";
+import { TIMING_FACTOR, TRACK_LABEL } from "./life-grade";
 import { questTargetOf } from "./review-facts";
 import { isDue } from "./due";
 import { ideaStatusOf } from "./forgetting";
@@ -111,6 +114,7 @@ export const MOBILE_ENDPOINTS: readonly { method: MobileMethod; path: string }[]
   { method: "POST", path: "/tasks/undo" },
   { method: "POST", path: "/tasks/start" },
   { method: "POST", path: "/tasks/stop" },
+  { method: "POST", path: "/tasks/makeup" },
   { method: "POST", path: "/work/done" },
   { method: "POST", path: "/work/reopen" },
   { method: "GET", path: "/review/queue" },
@@ -195,6 +199,11 @@ export function bad(line: string): never {
  * `conflict` for every other refusal (a rule said no: too late to undo, not due, archived …). The line is the
  * core's own, shown as is.
  */
+/** duty.ts makeUpCore's and acceptLossCore's line for a debt that isn't there (mobile-api-check holds the two the same). */
+export const MAKEUP_GONE = "That debt no longer exists.";
+/** P22 review: an undo naming a make-up that isn't there (duty.ts undoMakeUpCore). */
+export const MAKEUP_UNDO_GONE = "That make-up no longer exists.";
+
 export const GONE_LINES: ReadonlySet<string> = new Set([
   "That task no longer exists.",
   "That tick no longer exists.",
@@ -206,6 +215,10 @@ export const GONE_LINES: ReadonlySet<string> = new Set([
   PURCHASE_GONE,
   // Proof of work (blueprint P23): a timer that isn't there (or a tick naming one already counted).
   TIMER_GONE,
+  // Duty (blueprint P22): a make-up or an Accept the loss naming a debt that isn't there (duty.ts makeUpCore, acceptLossCore),
+  // or an undo naming a make-up that isn't there (undoMakeUpCore).
+  MAKEUP_GONE,
+  MAKEUP_UNDO_GONE,
 ]);
 
 export const SERVER_LINES: ReadonlySet<string> = new Set([
@@ -730,10 +743,17 @@ export function levelOf(shell: { character: { level: number | null; progress: nu
   return { level: c.level, title: c.title ?? "", progress: c.progress ?? 0 };
 }
 
-/** The daily streak (streak.ts getDailyStreak): its run, whether today already counts, and the freezes banked. */
-export function streakOf(s: { current: number; last7Days: readonly boolean[]; bankedFreezes: number } | null): { days: number; keptToday: boolean; freezes: number } | null {
+/**
+ * The daily streak (streak.ts getDailyStreak): its run, whether today already counts, and the one Rest Token bank
+ * (blueprint P21; decision D19: the momentum freezes). `restTokens` is the bank, null while it is not live; `freezes`
+ * is the same number (0 then), so an app built before P21 reads the bank too (it read M2's balance, always 0).
+ */
+export function streakOf(
+  s: { current: number; last7Days: readonly boolean[]; bankedFreezes: number; restTokens?: number | null } | null
+): { days: number; keptToday: boolean; freezes: number; restTokens: number | null } | null {
   if (!s) return null;
-  return { days: s.current, keptToday: s.last7Days[s.last7Days.length - 1] === true, freezes: s.bankedFreezes };
+  const restTokens = s.restTokens ?? null;
+  return { days: s.current, keptToday: s.last7Days[s.last7Days.length - 1] === true, freezes: restTokens ?? s.bankedFreezes, restTokens };
 }
 
 /**
@@ -759,6 +779,201 @@ export function checkCreditsOf(w: CreditsWallet | null): { balance: number; toda
 export function writeCreditsOf(before: CreditsWallet | null, after: CreditsWallet | null): { delta: number; balance: number; today: number } | null {
   if (!before || !after || !before.live || !after.live) return null;
   return { delta: after.earned - before.earned, balance: after.balance, today: after.today };
+}
+
+// ── Duty: the owed cards and POST /tasks/makeup (blueprint P22; decision D18) ─
+
+/**
+ * One open debt as the phone shows it (blueprint 2.3 and 3.2b, P22; decision D18): the web's MakeUpCard in its words
+ * (board-ui makeUpViewOf: `when`, its one line `text`, the window line `window`), from the board's own owed card
+ * (duty-plan owedCardOf, re-priced against today's ledger by buildBoard). `debt` is what is owed, life XP and positive
+ * (the card prints '−4.2 owed'); a miss owes min(20, B × E), at most 3 open per task and 100 in all. `makeUpXp` is what a
+ * make-up pays now: always at `rate` (life-grade TIMING_FACTOR.MAKE_UP, ×0.85) with C 1.00, and it repays the whole
+ * debt; within the two days (`restoresToday`, through `restoreBy`) it also counts the day as kept and brings back the
+ * streak (`restoresStreak`, in the rule's own unit). `canAcceptLoss`: Accept the loss is offered (Settings › Days on the
+ * web, and the debt 14 days old). `proof`: once proof of work is in force, what its make-up brings (the minute chips,
+ * a reading must's page chips and day target), as its tick does; null while it is one tap.
+ */
+export interface MobileOwed {
+  instanceId: string;
+  templateId: string;
+  title: string;
+  archived: boolean;
+  day: DayKey;
+  dayLabel: string;
+  debt: number;
+  restoreBy: DayKey;
+  restoresToday: boolean;
+  restoresStreak: number | null;
+  rate: number;
+  makeUpXp: number;
+  minimum: { label: string; xp: number } | null;
+  studyLinked: boolean;
+  canAcceptLoss: boolean;
+  proof: { minutes: number[] | null; pages: { target: number | null; chips: number[] } | null } | null;
+  when: string;
+  text: string;
+  window: string;
+}
+
+/** A make-up's rate: the timing factor every make-up pays at (T 0.85), within its two days or after them. */
+export const MAKEUP_RATE = TIMING_FACTOR.MAKE_UP;
+
+/**
+ * /check's `owed` (P22): every open debt on the board (Board.owed, oldest first: the web's OwedSummary order), each in
+ * its MakeUpCard's words. Empty with none. Debts show whenever they exist (M2 decision 2), Duty live or not; the phone
+ * offers their actions only while `dutyOn`.
+ */
+export function checkOwedOf(board: Pick<Board, "owed" | "today">): MobileOwed[] {
+  return board.owed.map((card: OwedCard): MobileOwed => {
+    const v = makeUpViewOf(card, board.today);
+    return {
+      instanceId: card.instanceId,
+      templateId: card.templateId,
+      title: card.title,
+      archived: card.archived,
+      day: card.day,
+      dayLabel: dayLabelOf(card.day),
+      debt: round1(card.debtXp),
+      restoreBy: card.restoreBy,
+      restoresToday: card.restoresToday,
+      restoresStreak: card.restoresStreak,
+      rate: MAKEUP_RATE,
+      makeUpXp: round1(card.makeUpXp),
+      minimum: v.minimum ? { label: v.minimum.label, xp: round1(v.minimum.price) } : null,
+      studyLinked: card.studyLinked,
+      canAcceptLoss: card.canWriteOff,
+      proof: card.proof
+        ? { minutes: card.proof.minutes ? [...card.proof.minutes] : null, pages: card.proof.pages ? { target: card.proof.pages.target, chips: [...card.proof.pages.chips] } : null }
+        : null,
+      when: v.when,
+      text: v.text,
+      window: v.window,
+    };
+  });
+}
+
+/** POST /tasks/makeup's fields besides clientId (required). */
+export const MAKEUP_KEYS = ["instanceId", "action", "minutes", "sessionId", "proof"] as const;
+
+/** `makeup` in full (×0.85), its `minimum` version, `accept` the loss, or `undo` a make-up (P22 review: its ten minutes, as the web card's Undo). */
+export type MakeUpAction = "makeup" | "minimum" | "accept" | "undo";
+export const MAKEUP_ACTIONS: readonly MakeUpAction[] = ["makeup", "minimum", "accept", "undo"];
+
+export const MAKEUP_NEEDS_CLIENT_ID = "clientId is required for a make-up: send the same one on every retry.";
+export const MAKEUP_PROOF_FULL_ONLY = "minutes, sessionId and proof go with a full make-up only (action 'makeup').";
+
+/** Why the phone's make-up is refused while Duty is not live (DUTY_LAUNCH_DAY): the web's own launch line, and where else. */
+export function makeUpDutyOffLine(launchDay: DayKey | null): string {
+  return `${launchRefusal(launchDay)} Until then, make it up on the web app.`;
+}
+
+export interface MakeUpRequest {
+  instanceId: string;
+  action: MakeUpAction;
+  minutes?: number;
+  sessionId?: string;
+  proof?: TickProofInput;
+  clientId: string;
+}
+
+/**
+ * POST /tasks/makeup's body: the debt (`instanceId`, an open debt's instance), the `action` (`makeup` when left out),
+ * and for a full make-up only its proof, as a tick's (`minutes` 1 to 480, a timer it names, a reading must's pages).
+ * The clientId is required: it keys the replay, so a retry lands once (the cores' own repeat answers hold across
+ * instances).
+ */
+export function makeUpRequestOf(body: Record<string, unknown>): MakeUpRequest {
+  const instanceId = idOf(body.instanceId, "instanceId");
+  const raw = absent(body.action) ? "makeup" : body.action;
+  if (typeof raw !== "string" || !(MAKEUP_ACTIONS as readonly string[]).includes(raw)) bad("action must be 'makeup', 'minimum', 'accept' or 'undo'.");
+  const action = raw as MakeUpAction;
+  const minutes = tickMinutesOf(body.minutes);
+  const sessionId = optionalIdOf(body.sessionId, "sessionId");
+  const proof = tickProofInputOf(body.proof);
+  if (action !== "makeup" && (minutes !== undefined || sessionId !== undefined || proof !== undefined)) bad(MAKEUP_PROOF_FULL_ONLY);
+  const clientId = clientIdOf(body.clientId);
+  if (!clientId) bad(MAKEUP_NEEDS_CLIENT_ID);
+  return {
+    instanceId,
+    action,
+    ...(minutes !== undefined ? { minutes } : {}),
+    ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(proof !== undefined ? { proof } : {}),
+    clientId,
+  };
+}
+
+/** A repeat of a make-up already recorded (a double tap, a second device, another instance): nothing is paid twice. */
+export const MAKEUP_REPEAT_LINE = "Already made up. Nothing is paid twice.";
+
+/** An undone make-up's line (P22 review): the web's own (TodayBoard undoOwed), the debt open again. */
+export const MAKEUP_UNDONE_LINE = "Make-up undone. It is owed again; nothing else changed.";
+
+/** A make-up's line: the web card's resolved words (board-ui madeUpLineOf), and what is still owed, never a reproach. */
+export function makeUpLineOf(v: Pick<MakeUpResult, "xp" | "debtXp" | "restored" | "status" | "owedLeft" | "clearedLast" | "duplicate">): string {
+  if (v.duplicate) return MAKEUP_REPEAT_LINE;
+  const left = v.clearedLast ? "Nothing is owed." : `${v.owedLeft} still owed.`;
+  return `${madeUpLineOf(v)} ${left}`;
+}
+
+/** Accept the loss's line: the web's own (TodayBoard acceptLossOwed): the miss stays on the ledger, nothing more is owed. */
+export function acceptLossLineOf(debtXp: number): string {
+  return `Its −${fmtXp(debtXp)} stays in Duty XP; nothing more is owed.`;
+}
+
+/** A make-up's or a minimum's reply fields from its result (the action's own figures; `xp` the TASK row's, one decimal). */
+export function makeUpReplyOf(action: Exclude<MakeUpAction, "accept">, v: MakeUpResult) {
+  return {
+    instanceId: v.instanceId,
+    action,
+    status: v.status,
+    restored: v.restored,
+    xp: round1(v.xp),
+    debt: round1(v.debtXp),
+    owedLeft: v.owedLeft,
+    clearedLast: v.clearedLast,
+    undoUntil: v.undoUntil,
+    duplicate: !!v.duplicate,
+    line: makeUpLineOf(v),
+  };
+}
+
+/**
+ * An undo's reply fields (P22 review): the debt open again (MISSED, its debt back), the make-up's XP taken back (`xp`,
+ * ≤ 0), no undo of an undo; `owedLeft` from the board read after it (null when it failed).
+ */
+export function undoMakeUpReplyOf(v: { instanceId: string; debtXp: number; xp: number }, owed: readonly MobileOwed[] | null) {
+  return {
+    instanceId: v.instanceId,
+    action: "undo" as const,
+    status: "MISSED" as const,
+    restored: false,
+    xp: round1(v.xp),
+    debt: round1(v.debtXp),
+    owedLeft: owed ? owed.length : null,
+    clearedLast: false,
+    undoUntil: null,
+    duplicate: false,
+    line: MAKEUP_UNDONE_LINE,
+  };
+}
+
+/** Accept the loss's reply fields: written off (WRITTEN_OFF), nothing paid or restored, no undo; `owedLeft` from the board read after it (null when it failed). */
+export function acceptLossReplyOf(v: { instanceId: string; debtXp: number }, owed: readonly MobileOwed[] | null) {
+  return {
+    instanceId: v.instanceId,
+    action: "accept" as const,
+    status: "WRITTEN_OFF" as const,
+    restored: false,
+    xp: 0,
+    debt: round1(v.debtXp),
+    owedLeft: owed ? owed.length : null,
+    clearedLast: owed ? owed.length === 0 : null,
+    undoUntil: null,
+    duplicate: false,
+    line: acceptLossLineOf(v.debtXp),
+  };
 }
 
 // ── GET /quests ─────────────────────────────────────────────────────────────

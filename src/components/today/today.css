@@ -110,11 +110,8 @@
 .seal.broken .flame { fill: none; stroke: var(--ink-mute); stroke-width: 1.4; }
 html[data-motion="calm"] :is(.seal .ring-lit, .seal .halo, .seal .flame) { transition-duration: 200ms; }
 
-/* Freeze crystals: the held glyph plus a word. */
-.freezes { margin-left: auto; text-align: right; flex: none; }
-.freezes .pips { display: flex; gap: 2px; justify-content: flex-end; color: var(--held); }
-.freezes .pips svg.used { color: var(--ink-mute); }
-.freezes .cap { font-size: 12px; color: var(--ink-2); margin-top: 3px; white-space: nowrap; }
+/* Blueprint P21: the Rest tokens chip, under the streak's caption (M2's freeze crystals sat at the right edge, too narrow for its words). */
+.rest-tokens { margin-top: 6px; }
 
 /* The Full-day strip: three promise rings and the stamp. */
 .today-day .d-full { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-1); position: relative; }
@@ -635,6 +632,8 @@ html[data-motion="calm"] .today-clear[data-fresh="1"] { animation: today-fade 20
 .makeup .mu-text { font-size: 15px; line-height: 20px; margin-top: 8px; }
 .makeup .mu-sub { font-size: 13px; color: var(--ink-2); margin-top: 2px; line-height: 18px; }
 .makeup .acts { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+/* Proof of work on a make-up (blueprint P20): the drawer's own chip rows, under the window line. */
+.makeup .mu-proof { margin-top: 10px; }
 /* The minimum's label is the player's own words (up to 80 characters): a
    long one wraps inside the card at 344 px instead of spilling past it
    (.btn is nowrap; the lane body clips). */
@@ -677,8 +676,11 @@ html[data-motion="calm"] .today-clear[data-fresh="1"] { animation: today-fade 20
 /* The rest banner (.o1): held glyph plus words, a quiet Cancel for a day not started. */
 .today-rest .rest-txt { display: flex; gap: 8px; align-items: flex-start; min-width: 0; padding: 8px 0; }
 .today-rest .rest-txt > svg { flex: none; margin-top: 1px; }
-/* The Day ledger's held chip ('A freeze will cover Wed'). */
+/* The Day ledger's held chip ('A rest token will cover Wed'). P21 review: its longer lines (yesterday's open musts and
+   a token) wrap inside the streak's column at 344 px rather than run past the card. */
 .today-day .held-note { margin-top: 6px; }
+.held-note { min-width: 0; }
+.held-note .chip { white-space: normal; max-width: 100%; padding-block: 3px; }
 /* Asks beyond the first two. */
 .asks-more { display: inline-flex; align-items: center; min-height: 40px; padding: 0 4px; border: 0; background: none; color: var(--ink-0); font: 600 13px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; justify-self: start; }
 /* Record yesterday's honesty line. */

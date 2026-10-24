@@ -126,6 +126,7 @@ import {
   laneRowsOf,
   laneTally,
   madeUpLineOf,
+  makeUpOptsOf,
   makeUpViewOf,
   mergeSkew,
   missPromptCopyOf,
@@ -183,7 +184,7 @@ import {
 import { saveReflection } from "@/app/actions/rituals";
 import { openChest, setFlameSkin, swapQuest } from "@/app/actions/momentum";
 import { MomentumCard, momentumMarkOf, paidDiffersFromShown, type MomentumCardActions } from "./MomentumCard";
-import { MakeUpCard, OwedRow, OwedSummary } from "./m2/MakeUpCard";
+import { MakeUpCard, OwedRow, OwedSummary, type MakeUpReport } from "./m2/MakeUpCard";
 import { RestBannerCard, YesterdaySettled, type SettledChip as NoticeChip } from "./m2/Notices";
 import { CancelList, FreezeOption, RestControls, SettleFooter, VacationForm } from "./m2/Sheets";
 import { MissPrompt } from "./MissPrompt";
@@ -2012,7 +2013,9 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   );
   // Daily quests (D14, D15): the personal Board's Must lane is the Daily Quests, with its 1/0 strip; a work tab's stays "Must".
   const daily = isWork ? null : dailyQuestsOf(board);
-  const mustView = mustLaneOf({ must: board.must, owed: laneCards, restToday: board.restToday, live, launchDay, today: current.today, deferred: board.deferred, ...(daily ? { daily } : {}) });
+  // Blueprint P21 (D19): the one Rest Token bank, the Momentum card's own number, as the Daily quests' 'Rest tokens 2' chip.
+  const restTokens = !isWork && momentum?.live ? momentum.run.bank : null;
+  const mustView = mustLaneOf({ must: board.must, owed: laneCards, restToday: board.restToday, live, launchDay, today: current.today, deferred: board.deferred, ...(daily ? { daily } : {}), restTokens });
   const hiddenMusts = board.deferred.filter((i) => i.must);
   const hiddenOther = board.deferred.filter((i) => !i.must);
   const owedTotal = owedTotalOf(openOwed);
@@ -2042,9 +2045,10 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
    * lane (Tier 1, nothing-owed), and Undo waits in the ToastDock. A refusal
    * takes the card back and says why.
    */
-  function makeUpOwed(card: OwedCard, minimum: boolean, from: Element | null) {
+  function makeUpOwed(card: OwedCard, minimum: boolean, from: Element | null, report?: MakeUpReport) {
     if (staleDay() || owedBusy) return;
-    const shownXp = minimum ? (card.minimumXp ?? 0) : card.makeUpXp;
+    // P20 review: a proof make-up flies and is compared at the price its picks showed, not the estimate's.
+    const shownXp = minimum ? (card.minimumXp ?? 0) : (report?.price ?? card.makeUpXp);
     const amount = Math.round((shownXp + card.debtXp) * 10) / 10;
     actedAt.current = tapTime();
     const flight = mark({
@@ -2065,7 +2069,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     startTransition(async () => {
       let res: DutyActionResult<MakeUpResult>;
       try {
-        res = minimum ? await doMinimum(card.instanceId, REFRESH) : await makeUp(card.instanceId, REFRESH);
+        // Proof of work (P20): a deep-work or reading must's make-up carries what its chips picked.
+        res = minimum ? await doMinimum(card.instanceId, REFRESH) : await makeUp(card.instanceId, { ...REFRESH, ...makeUpOptsOf(report) });
       } catch {
         res = { ok: false, error: "Couldn't reach the server. Check the connection and try again." };
       }
@@ -2079,7 +2084,11 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
       setMadeUp((prev) =>
         prev[card.instanceId] ? { ...prev, [card.instanceId]: { ...prev[card.instanceId], state: v.status === "DONE_MVV" ? "minimum" : "repaid", line: madeUpLineOf(v) } } : prev
       );
-      if (Math.abs(v.xp - shownXp) > 0.05) setNotice(`${card.title}'s make-up paid ${fmtXp(v.xp)} XP, not about ${fmtXp(shownXp)}: today's total changed since the board loaded.`);
+      // P20 review: compared with what the card showed (a proof make-up's projected price), so a clock-bounded count is said too.
+      if (Math.abs(v.xp - shownXp) > 0.05) {
+        const why = report?.minutes ? "today's total, or the time since today's own tick, changed it" : "today's total changed since the board loaded";
+        setNotice(`${card.title}'s make-up paid ${fmtXp(v.xp)} XP, not about ${fmtXp(shownXp)}: ${why}.`);
+      }
       if (v.clearedLast) {
         chime({ kind: "nothing-owed", id: `nothing-owed:${current.today}:${v.instanceId}`, text: "Nothing owed", say: "Nothing owed. Every debt is made up.", sweepEl: mustBodyRef.current });
       }
@@ -2182,7 +2191,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     if (!on) return;
     dutyWrite(
       () => spendFreeze(REFRESH),
-      (v) => announce(`A freeze covers ${fullWeekday(v.day)}. ${v.left} left.`)
+      (v) => announce(`A rest token covers ${fullWeekday(v.day)}. ${v.left} left.`)
     );
   }
 
@@ -2221,7 +2230,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   }
 
   // Close the day (F13): what is still open, with the moves the server accepts (board-ui.ts closeItemsOf).
-  const closeItems = closeItemsOf({ must: board.must, todayRows: board.todayRows, today: current.today, live });
+  // P21 review: what today's open musts can count on from the Rest Token bank (FreezeState.forToday), so the line is honest.
+  const closeItems = closeItemsOf({ must: board.must, todayRows: board.todayRows, today: current.today, live, tokens: live ? (duty?.freezes.forToday ?? duty?.freezes.banked ?? 0) : null });
   const rowByKey = new Map(lanes.map((r) => [r.key, r]));
   const onCloseChoice = (key: string, choice: string) => {
     const r = rowByKey.get(key);
@@ -2310,7 +2320,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         item={{ ...view, resolved: done ? { repaid: done.line, minimum: done.line, writtenOff: done.line } : undefined }}
         state={done ? done.state : "open"}
         busy={owedBusy === card.instanceId || busyTemplates.has(card.templateId)}
-        onMakeUp={(from) => makeUpOwed(card, false, from)}
+        onMakeUp={(from, report) => makeUpOwed(card, false, from, report)}
         onMinimum={view.minimum ? (from) => makeUpOwed(card, true, from) : undefined}
         onAcceptLoss={card.canWriteOff ? () => acceptLossOwed(card) : undefined}
       >

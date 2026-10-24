@@ -29,6 +29,9 @@ import androidx.test.core.app.ApplicationProvider
 import com.xtnl.app.XtnlApp
 import com.xtnl.app.core.HealthLine
 import com.xtnl.app.core.MallLine
+import com.xtnl.app.core.OwedLine
+import com.xtnl.app.core.RestTokenLine
+import com.xtnl.app.data.OwedItem
 import com.xtnl.app.core.StatusLine
 import com.xtnl.app.data.MotionChoice
 import com.xtnl.app.data.ThemeChoice
@@ -106,6 +109,14 @@ class ScreensTest {
     /** P15: the Quest card in the main display's second pane. */
     @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
     fun questCardMain() = questCard("main")
+
+    /** P22: the Owed card (Make up, Do minimum, Accept the loss) on the front display's one column, before and after a make-up. */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun owedCardFront() = owedCard("front")
+
+    /** P22: the Owed card at the end of the main display's first pane. */
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun owedCardMain() = owedCard("main")
 
     /** P1: More › Status (the five attributes, then Capital and the note) on the front display's one column. */
     @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
@@ -401,6 +412,50 @@ class ScreensTest {
         snap("$name-quest-card")
     }
 
+    /**
+     * P22: Check with demo data (Duty on, two debts), scrolled until the Owed card is in view, then one PNG; Make up on
+     * yesterday's Stretch (the card leaves, the line is said), and a second PNG with the debt left and its Accept the loss.
+     * P22 review: the make-up's line carries its Undo; tapping it brings Stretch's card back (a last PNG).
+     */
+    private fun owedCard(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), MutableStateFlow<Uri?>(null), {}, WebHolder(), {})
+        }
+        settle()
+        val head = hasText(OwedLine.header(listOf(OwedItem("a", debt = 3.0), OwedItem("b", debt = 4.2))).removePrefix("${OwedLine.TITLE}: "))
+        val lists = rule.onAllNodes(hasScrollAction())
+        fun scrollTo(m: SemanticsMatcher) {
+            for (i in 0 until lists.fetchSemanticsNodes().size) {
+                if (runCatching { scrolling { lists[i].performScrollToNode(m) } }.isSuccess) break
+            }
+            settle()
+        }
+        scrollTo(hasText(OwedLine.ACCEPT))
+        rule.onAllNodes(head).onFirst().assertExists()
+        rule.onAllNodes(hasText(OwedLine.ACCEPT)).onFirst().assertExists()
+        snap("$name-owed-card")
+        // Yesterday's Stretch, the second card: its Make up and its minimum, in view before the tap.
+        val makeUp = hasText("Make up · ≈ 1.9")
+        scrollTo(hasText("Minimum: 1 stretch"))
+        snap("$name-owed-card-stretch")
+        // scrolling() leaves the test clock held; the make-up's answer and its recomposition need it running again.
+        rule.mainClock.autoAdvance = true
+        rule.onAllNodes(makeUp).onFirst().performClick()
+        settle()
+        snap("$name-owed-card-made-up")
+        rule.onAllNodes(hasText("Stretch · Yesterday")).assertCountEquals(0)
+        rule.onAllNodes(hasText(OwedLine.ACCEPT)).onFirst().assertExists()
+        rule.onAllNodes(hasText(OwedLine.UNDO_LABEL)).onFirst().assertExists()
+        rule.onAllNodes(hasText(OwedLine.UNDO_LABEL)).onFirst().performClick()
+        settle()
+        rule.onAllNodes(hasText("Stretch · Yesterday")).onFirst().assertExists()
+        snap("$name-owed-card-undone")
+    }
+
     /** More › Attributes (P1's Status screen; titled so since P2) with demo data, opened by its deep link: one PNG at the top, one scrolled to its end (one column), then More's list after Back. */
     private fun status(name: String) {
         val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
@@ -546,6 +601,8 @@ class ScreensTest {
         }
         settle()
         snap("$name-1-check")
+        // P21: the Rest tokens chip is on the check's header, on every display.
+        rule.onAllNodes(hasText(RestTokenLine.chip(2))).onFirst().assertExists()
         rule.onAllNodes(hasText("Call the dentist")).onFirst().performClick()
         settle(1_200)
         snap("$name-1b-check-ticked")

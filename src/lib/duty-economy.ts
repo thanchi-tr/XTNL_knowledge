@@ -20,6 +20,7 @@
  *   Launch and gates
  *     DUTY_LAUNCH_DAY (null until the lead sets it) · DUTY_LAUNCH_DAY_ENV 'XTNL_DUTY_LAUNCH_DAY' · DutyEnv
  *     dutyLaunchDay(env?) · isDutyLaunched(today, launchDay?) · firstDutyDay(epochDay, launchDay?)
+ *     DUTY_REHEARSAL_PORT 55432 · dutyOverrideScoped(databaseUrl)   (blueprint P20: the override's scope)
  *     newLifeSettingsDays(today, launchDay?) · newLifeSettingsData(today, launchDay?)
  *     DutyLaunchCheck · validateDutyLaunchDay(launchDay, {deployDay, lifeLaunchDay})
  *   Settlement
@@ -57,13 +58,18 @@ import type { InstanceSource } from "./life-types";
  */
 export const DUTY_LAUNCH_DAY = null as DayKey | null;
 
-/** Outside production, a valid 'YYYY-MM-DD' here overrides DUTY_LAUNCH_DAY (the rehearsal server). */
+/**
+ * Outside production, a valid 'YYYY-MM-DD' here overrides DUTY_LAUNCH_DAY, and only where it cannot reach the
+ * shared database: DATABASE_URL unset (a pure script, a sim) or the local rehearsal mirror (dutyOverrideScoped).
+ */
 export const DUTY_LAUNCH_DAY_ENV = "XTNL_DUTY_LAUNCH_DAY";
 
 /** The variables the Duty gate reads. Defaults to process.env; the checks pass their own. */
 export interface DutyEnv {
   NODE_ENV?: string;
   XTNL_DUTY_LAUNCH_DAY?: string;
+  /** The app's database (blueprint P20): the override is honoured only with none named or the rehearsal mirror. */
+  DATABASE_URL?: string;
 }
 
 /**
@@ -74,7 +80,30 @@ export interface DutyEnv {
 function readEnv(env?: DutyEnv): DutyEnv {
   if (env) return env;
   if (typeof process === "undefined" || !process.env) return {};
-  return { NODE_ENV: process.env.NODE_ENV, XTNL_DUTY_LAUNCH_DAY: process.env.XTNL_DUTY_LAUNCH_DAY };
+  return { NODE_ENV: process.env.NODE_ENV, XTNL_DUTY_LAUNCH_DAY: process.env.XTNL_DUTY_LAUNCH_DAY, DATABASE_URL: process.env.DATABASE_URL };
+}
+
+/** The rehearsal mirror's port (xtnl-rehearsal; settlement.ts REHEARSAL_DB_PORT is the same number, duty-check holds them together). */
+export const DUTY_REHEARSAL_PORT = 55432;
+const MIRROR_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+/**
+ * Whether XTNL_DUTY_LAUNCH_DAY may be honoured against this DATABASE_URL (blueprint P20, M2 leftover 8): with none
+ * named (nothing here can reach a database: a pure script, a sim, a check's injected env) or the local rehearsal
+ * mirror (localhost, 127.0.0.1 or [::1] on DUTY_REHEARSAL_PORT). Any other URL, the shared Supabase database a dev
+ * server reads from .env above all, keeps the code constant: dev and prod share one database, so an override left in
+ * a dev shell must never launch Duty on the live account. An unreadable URL counts as another database.
+ */
+export function dutyOverrideScoped(databaseUrl: string | undefined): boolean {
+  const raw = databaseUrl?.trim();
+  if (!raw) return true;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  return MIRROR_HOSTS.has(u.hostname.toLowerCase()) && u.port === String(DUTY_REHEARSAL_PORT);
 }
 
 /** A real calendar date written 'YYYY-MM-DD' (life-economy isDayKey's rule, kept local so this module imports no values but life-day's). */
@@ -87,12 +116,13 @@ function isKey(x: unknown): x is DayKey {
 
 /**
  * The Duty launch day in force: outside production, XTNL_DUTY_LAUNCH_DAY
- * when it is a valid 'YYYY-MM-DD'; otherwise DUTY_LAUNCH_DAY. Production
- * reads the constant only.
+ * when it is a valid 'YYYY-MM-DD' and DATABASE_URL is none or the rehearsal
+ * mirror (dutyOverrideScoped); otherwise DUTY_LAUNCH_DAY. Production reads
+ * the constant only.
  */
 export function dutyLaunchDay(env?: DutyEnv): DayKey | null {
   const e = readEnv(env);
-  if (e.NODE_ENV !== "production") {
+  if (e.NODE_ENV !== "production" && dutyOverrideScoped(e.DATABASE_URL)) {
     const override = e.XTNL_DUTY_LAUNCH_DAY?.trim();
     if (isKey(override)) return override;
   }
@@ -237,11 +267,14 @@ export const MAKE_UP_SOURCE: InstanceSource = "make-up";
 
 // ── Freezes and repair ────────────────────────────────────────────────────
 
-/** Freezes bank at most this many. Balance = count(FREEZE_EARN) − count(FREEZE_USE). */
+// Blueprint P21 (decision D19): one Rest Token bank, the momentum freezes (rest-tokens.ts; momentum.ts MOMENTUM.FREEZE_MAX,
+// FREEZE_EVERY, MOMENTUM_START_FREEZES). M2's own earn and balance below are retired: nothing reads them to spend or earn.
+
+/** M2's bank held at most this many (the momentum bank's own cap is the same 2). Retired by P21. */
 export const FREEZE_MAX = 2;
-/** A freeze is earned on a settled active day with ≥ 7 active days since the last earn (or firstDutyDay − 1). */
+/** M2's earn rule: ≥ 7 active days since the last earn. Retired by P21 (settlement plans no FREEZE_EARN). */
 export const FREEZE_EARN_ACTIVE_DAYS = 7;
-/** No starter freeze. */
+/** M2's starting balance. Retired by P21 (the momentum bank starts with MOMENTUM_START_FREEZES on its launch day). */
 export const FREEZE_START_BALANCE = 0;
 /** One REPAIR per 7 days: none dated in (d − 8, d − 1). */
 export const REPAIR_EVERY_DAYS = 7;

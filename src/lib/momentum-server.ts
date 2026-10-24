@@ -62,7 +62,6 @@ import {
   COSMETICS,
   MOMENTUM,
   MOMENTUM_NUDGE,
-  MOMENTUM_START_FREEZES,
   QUEST,
   QUEST_PICK_ORDER,
   SUMMIT_CHEST_U1,
@@ -84,7 +83,6 @@ import {
   cosmeticById,
   countedBranchXp,
   flameSkinOf,
-  foldMomentum,
   inNudgeWindow,
   isChestReceipt,
   isQuestSet,
@@ -95,7 +93,6 @@ import {
   lspThreshold,
   milestoneMintKey,
   milestoneRowKey,
-  momentumDays,
   momentumLaunchDay,
   momentumLive,
   nextRespecDay,
@@ -132,6 +129,10 @@ import {
   type QuestSwap,
 } from "./momentum";
 import { completesItself, type ActivityInput, type Receipt, type Track } from "./life-types";
+import { restTokenFold, restTokenInputsOf, restTokenSpendFrom } from "./rest-tokens";
+import { dutyLaunchDay } from "./duty-economy";
+import { heldDaysOf, type RestRow } from "./duty-rule";
+import { isMissingRestDayTable } from "./rest-rules";
 import type { CelebrationEvent, ProgressSnapshot } from "./celebration-types";
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -201,8 +202,8 @@ export interface ChestView {
   yesterday: { day: DayKey; receipt: ChestReceipt } | null;
 }
 
-/** A day of the Momentum sheet's grid. 'open': today with nothing yet; 'before': before the launch day. */
-export type RunMark = "active" | "held" | "missed" | "open" | "before";
+/** A day of the Momentum sheet's grid. 'open': today with nothing yet; 'before': before the launch day; 'rest': a declared rest, sick or vacation day (blueprint P21: held with no token). */
+export type RunMark = "active" | "held" | "rest" | "missed" | "open" | "before";
 
 export interface RunView {
   /** The run: consecutive momentum days ending today, or yesterday while today is still empty. */
@@ -572,6 +573,11 @@ export interface MomentumStore {
   /** The personal Board's candidates and the roadmap's plan facts for `day` (work tabs are never read). */
   questSources(userId: string, day: DayKey, now: Date): Promise<QuestSources>;
   roadmapPay(userId: string, from: DayKey): Promise<RoadmapPayFacts>;
+  /**
+   * Blueprint P21: RestDay rows dated [from, to] (duty-rule heldDaysOf decides which hold the run). Absent: no rest
+   * day is read (a store with no RestDay table, or the checks' in-memory ledger).
+   */
+  restDays?(userId: string, from: DayKey, to: DayKey): Promise<RestRow[]>;
   /** Fail soft: null when the row or the columns are missing. */
   prefs(userId: string): Promise<MomentumPrefs | null>;
   savePrefs(userId: string, patch: Partial<MomentumPrefs>): Promise<void>;
@@ -860,6 +866,13 @@ export interface MomentumLedger {
   bodyKept: Set<DayKey>;
   /** MP_MINT rows of LIFE_CHEST, LIFE_MILESTONE and LIFE_CHECKPOINT. */
   mints: LedgerRow[];
+  /**
+   * Blueprint P21 (D19, one Rest Token bank): the FREEZE_USE days (settlement's step 3 or 'Use a freeze': each is
+   * that day's one token) and the valid rest, sick and vacation days (held with no token). Absent: none, as before
+   * Duty writes any.
+   */
+  spent?: ReadonlySet<DayKey>;
+  rest?: ReadonlySet<DayKey>;
 }
 
 const byDayThenTime = (a: LedgerRow, b: LedgerRow): number => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.occurredAt.getTime() - b.occurredAt.getTime() || a.id.localeCompare(b.id));
@@ -872,28 +885,13 @@ export function perksAt(perkRows: readonly LedgerRow[], at: Date): Set<PerkCode>
   );
 }
 
-/** The run through `through` (§A.3): foldMomentum with the chest freezes, Recovery and Spare flame as owned on each day. */
+/**
+ * The run through `through` (§A.3): foldMomentum with the chest freezes, Recovery and Spare flame as owned on each
+ * day. Blueprint P21: through rest-tokens.ts, the one Rest Token bank, so the FREEZE_USE rows and rest days count
+ * exactly as settlement counts them (without either it is the same fold as before).
+ */
 export function runOf(L: MomentumLedger, through: DayKey): MomentumFold {
-  const days = momentumDays(through, L.launch);
-  const chestFreeze = new Map<DayKey, number>();
-  for (const c of L.chests) if (isChestReceipt(c.receipt) && c.receipt.freeze) chestFreeze.set(c.day, (chestFreeze.get(c.day) ?? 0) + 1);
-  const modsByDay = new Map<DayKey, LifeMods>();
-  const modsOn = (d: DayKey): LifeMods => {
-    let m = modsByDay.get(d);
-    if (!m) {
-      m = lifeModsOf(perksAt(L.perkRows, lastInstantOf(d)));
-      modsByDay.set(d, m);
-    }
-    return m;
-  };
-  return foldMomentum(
-    days,
-    through,
-    (d) => (L.units.get(d) ?? 0) > 0,
-    (d) => (chestFreeze.get(d) ?? 0) + (L.bodyKept.has(d) && modsOn(d).bodyKeptFreeze ? 1 : 0),
-    (d) => modsOn(d).freezeMax,
-    { startBank: MOMENTUM_START_FREEZES }
-  );
+  return restTokenFold(restTokenInputsOf({ launch: L.launch, through, units: L.units, chests: L.chests, perkRows: L.perkRows, bodyKept: L.bodyKept, spent: L.spent, rest: L.rest }), through);
 }
 
 function chestReceiptsOf(L: MomentumLedger): { row: LedgerRow; r: ChestReceipt }[] {
@@ -1192,13 +1190,36 @@ export function planCheckpoint(c: CheckpointFact, L: MomentumLedger, now: Date):
 
 const MOMENTUM_MINT_PREFIXES = ["mp:LIFE_CHEST:", "mp:LIFE_MILESTONE:", "mp:LIFE_CHECKPOINT:"];
 
+/**
+ * Blueprint P21 (D19): the rest days that hold the run with no token: RestDay rows from the Duty launch day (they
+ * exist only from it), through duty-rule heldDaysOf, as settlement and the streak read them. None without a Duty
+ * launch day or a store that reads them.
+ */
+export async function readRestHeld(store: MomentumStore, userId: string, launch: DayKey, through: DayKey): Promise<Set<DayKey>> {
+  const from = restTokenSpendFrom(launch, dutyLaunchDay());
+  if (from == null || !store.restDays) return new Set();
+  if (from > through) return new Set();
+  return heldDaysOf(await store.restDays(userId, from, through), from, through);
+}
+
+/**
+ * The FREEZE_USE days the bank counts (P21 review): from the Duty launch day only (rest-tokens restTokenSpendFrom), so
+ * with Duty off no row changes the run, the bank, 'bank full' or the nudge, whatever a stray writer left.
+ */
+export function spentDaysOf(rows: readonly Pick<LedgerRow, "source" | "day">[], launch: DayKey): Set<DayKey> {
+  const from = restTokenSpendFrom(launch, dutyLaunchDay());
+  return new Set(from == null ? [] : rows.filter((r) => r.source === "FREEZE_USE" && r.day >= from).map((r) => r.day));
+}
+
 /** The fold's rows from the launch day through `through`, in one wave. */
 async function readLedger(ctx: Ctx, userId: string, launch: DayKey, through: DayKey): Promise<MomentumLedger> {
-  const [units, rows, weeks, mints] = await Promise.all([
+  const [units, rows, weeks, mints, rest] = await Promise.all([
     ctx.store.units(userId, launch, through),
-    ctx.store.events(userId, { sources: ["CHEST", "PERK", "RESPEC", "MILESTONE", "CHECKPOINT"], from: launch }),
+    // FREEZE_USE (blueprint P21): each is its day's one Rest Token, so the run and the bank read settlement's spends.
+    ctx.store.events(userId, { sources: ["CHEST", "PERK", "RESPEC", "MILESTONE", "CHECKPOINT", "FREEZE_USE"], from: launch }),
     ctx.store.events(userId, { sources: ["WEEK"], from: launch, to: through, keyPrefixes: ["week:BODY:"] }),
     ctx.store.events(userId, { sources: ["MP_MINT"], from: addDays(launch, -40), keyPrefixes: MOMENTUM_MINT_PREFIXES }),
+    readRestHeld(ctx.store, userId, launch, through),
   ]);
   return {
     launch,
@@ -1208,6 +1229,8 @@ async function readLedger(ctx: Ctx, userId: string, launch: DayKey, through: Day
     paid: rows.filter((r) => r.source === "MILESTONE" || r.source === "CHECKPOINT"),
     bodyKept: new Set(weeks.filter((w) => (w.qty ?? 0) > 0).map((w) => w.day)),
     mints,
+    spent: spentDaysOf(rows, launch),
+    rest,
   };
 }
 
@@ -1643,12 +1666,14 @@ export async function setNudgeCore(userId: string, on: boolean, deps: MomentumDe
 // ════════════════════════════════════════════════════════════════════════════
 
 function runViewOf(fold: MomentumFold, L: MomentumLedger, today: DayKey, freezeMax: number): RunView {
-  const held = new Set(fold.heldDays);
+  // Blueprint P21: a token spent with no run to bridge (coveredDays) is held on the grid too; only heldDays kept a run.
+  const held = new Set([...fold.heldDays, ...fold.coveredDays]);
+  const rested = new Set(fold.restDays);
   const todayKept = (L.units.get(today) ?? 0) > 0;
   const grid: RunView["grid"] = [];
   for (let i = MOMENTUM_GRID_DAYS - 1; i >= 0; i--) {
     const d = addDays(today, -i);
-    const mark: RunMark = d < L.launch ? "before" : (L.units.get(d) ?? 0) > 0 ? "active" : held.has(d) ? "held" : d === today ? "open" : "missed";
+    const mark: RunMark = d < L.launch ? "before" : (L.units.get(d) ?? 0) > 0 ? "active" : held.has(d) ? "held" : rested.has(d) ? "rest" : d === today ? "open" : "missed";
     grid.push({ day: d, mark });
   }
   return {
@@ -1660,7 +1685,7 @@ function runViewOf(fold: MomentumFold, L: MomentumLedger, today: DayKey, freezeM
     earned: fold.earned,
     used: fold.used,
     heldInRun: fold.heldInRun,
-    heldYesterday: held.has(addDays(today, -1)),
+    heldYesterday: fold.heldDays.includes(addDays(today, -1)),
     todayKept,
     atRisk: fold.current >= MOMENTUM_NUDGE.MIN_RUN && !todayKept,
     grid,
@@ -2140,6 +2165,17 @@ export const prismaMomentumStore: MomentumStore = {
   },
 
   dayFacts: readDayFacts,
+
+  async restDays(userId, from, to) {
+    const rows = await prisma.restDay
+      .findMany({ where: { userId, day: { gte: dateColumn(from), lte: dateColumn(to) } }, select: { day: true, kind: true, declaredAt: true, cancelledAt: true } })
+      .catch((err: unknown) => {
+        // A Duty launch day set before life_duty is applied reads no rest (rest-rules isMissingRestDayTable), as the board does.
+        if (!isMissingRestDayTable(err)) throw err;
+        return [] as { day: Date; kind: string; declaredAt: Date; cancelledAt: Date | null }[];
+      });
+    return rows.map((r) => ({ day: keyOfDateColumn(r.day), kind: r.kind, declaredAt: r.declaredAt, cancelledAt: r.cancelledAt }));
+  },
 
   async questSources(userId, day, now) {
     const monday = weekStartKeyOf(day);

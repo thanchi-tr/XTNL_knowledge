@@ -27,15 +27,23 @@
  *   settleReadWindow(range)           how far back the executor reads (TARGET periods, repair window)
  *   settledInstanceId(tpl, day, slot) the deterministic id of an instance settlement creates
  *
+ * Added by blueprint P22 (pure, compatible):
+ *   WorstWeek · worstWeekOf(templates, ctx)  the launch dry run's worst first week: planSettlement over the first judged
+ *                                            days with every must missed (scripts/duty-launch.ts prints it; spiral-check)
+ *
  * Per day d (first judged day = max(cursor + 1, firstDutyDay(epochDay))):
  *   1  expected occurrences: expectedOn(ruleOn(t, d), d), d ≥ startDay (the launch floor is the range's);
  *   2  a held day (heldDaysOf over RestDay rows): EXCUSED for every open expected recurring occurrence
  *      and compulsory deadline one-off, except musts with compulsoryOnRest;
- *   3  a no-activity day (net streak units ≤ 0) not already held, with a freeze banked, that the spend
- *      protects (d − 1 active or held, or an open must due on d): FREEZE_USE 'freeze-use:<d>' and EXCUSED
- *      for everything still open, compulsoryOnRest included. A FREEZE_USE already dated d (a manual
- *      spend) excuses the same way while d has no activity; once d is active it holds nothing
- *      (decision 12: a freeze is never a skip-a-must token);
+ *   3  one Rest Token (blueprint P21; decision D19): the bank is momentum's freeze fold (rest-tokens.ts), one
+ *      token a day at most. A FREEZE_USE already dated d (a manual spend) is d's token. Otherwise, on a day not
+ *      held by rest: when the fold spends d's token by itself (no momentum action, a live run, a token banked)
+ *      settlement writes that same token as FREEZE_USE 'freeze-use:<d>'; and with no such spend, a must that
+ *      would owe a debt on d (within the caps: a capped miss owes nothing, so it takes no token) spends one
+ *      while it is still free (rest-tokens restTokenFreeOn over the bank through yesterday: the run comes first,
+ *      so a token the fold gave a later day stays there and d's musts are owed), whether or not d had other
+ *      activity. Either way d's token excuses everything still open on d, compulsoryOnRest included; the fold
+ *      counts the row, so the two never spend two;
  *   4  study musts: the auto-completion rebuilt from the day's REVIEW / IDEA_CREATE / DAY_OPEN facts
  *      (today-board autoStateOf, the auto-completer's rule): the same 0-XP TASK row and DONE instance;
  *   5  misses: MISSED (slot 0, or the UNDONE slot 0 moved) with debtFor(t) and a DEBT row within the caps
@@ -44,7 +52,7 @@
  *   6  TARGET periods ending on d (started on or after max(startDay, firstDutyDay), compulsory under
  *      ruleOn on both their first and last day, as the M5 judge reads them): one MISSED slot with
  *      debt per unit short (habit.ts targetUnits with the held days, per day), after the highest slot;
- *   7  freeze earn: an active day with ≥ 7 active days since max(last earn, firstDutyDay − 1), balance < 2;
+ *   7  (retired by blueprint P21: the bank's earns are momentum's own, so settlement plans no FREEZE_EARN);
  *   8  FULL_DAY 'fullday:<d>' when full-day.ts fullDayOf over the settled facts is full;
  *   9  REPAIR dated d − 1 ('repair:<d − 1>'): d full, d − 1 neither active nor held, d − 2 active or held,
  *      d − 1 ≥ firstDutyDay, no REPAIR in (d − 8, d − 1);
@@ -69,19 +77,17 @@ import {
 } from "./duty-rule";
 import {
   DEBT_COMPOSITION_KEY,
-  FREEZE_EARN_ACTIVE_DAYS,
-  FREEZE_MAX,
   REPAIR_EVERY_DAYS,
   SETTLE_LAG_DAYS,
   SETTLE_MAX_DAYS_PER_RUN,
   debtKey,
   firstDutyDay,
-  freezeEarnKey,
   freezeUseKey,
   fullDayKey,
   isDutyLaunched,
   repairKey,
 } from "./duty-economy";
+import { restTokenBefore, restTokenFreeOn, withSpent, type RestTokenInputs } from "./rest-tokens";
 import { DEBT_OPEN_PER_TEMPLATE, DEBT_OPEN_TOTAL_CAP, debtFor } from "./life-grade";
 import { targetUnits } from "./habit";
 import { parseRule, periodOf } from "./recurrence";
@@ -217,22 +223,21 @@ export interface SettlementState {
   instances: readonly SettlementInstance[];
   rows: readonly SettlementLedgerRow[];
   days: readonly SettlementDayFacts[];
-  /** All history: count(FREEZE_EARN), count(FREEZE_USE), and the last FREEZE_EARN day. */
+  /** All history: count(FREEZE_EARN) and count(FREEZE_USE): the guard's freeze-row count, nothing more (blueprint P21). */
   freezeEarned: number;
   freezeUsed: number;
-  lastFreezeEarnDay: DayKey | null;
+  /**
+   * Blueprint P21 (D19): the one Rest Token bank, momentum's freeze fold from MOMENTUM_LAUNCH_DAY through yesterday
+   * (rest-tokens-server readRestTokens; past the range, so step 3 sees a token the fold gave a later day). Step 3
+   * spends from it. Null or absent: no bank (momentum not live), so nothing is spent; a FREEZE_USE row already dated
+   * a day still excuses it.
+   */
+  tokens?: RestTokenInputs | null;
   openDebts: readonly SettlementDebt[];
   /** RestDay rows for [from − 1, to]; read through duty-rule.ts heldDaysOf only. */
   restRows: readonly RestRow[];
   /** ISO week keys ('YYYY-Www') whose DUTY WEEK row exists, for weeks holding a prior segment's throughDay. */
   judgedDutyWeeks: ReadonlySet<string>;
-  /**
-   * Lane A (optional): active days strictly before the earliest day in
-   * `days` and after max(lastFreezeEarnDay, firstDutyDay − 1), for the
-   * freeze-earn count when the last earn is older than the facts read.
-   * Absent: 0.
-   */
-  activeDaysBefore?: number;
 }
 
 // ── Ops (grouped per chunk by settlement.ts for statement count) ──────────
@@ -390,9 +395,8 @@ class Working {
   private readonly rest: Set<DayKey>;
   private readonly openPerTpl = new Map<string, number>();
   private openTotal = 0;
-  private balance: number;
-  private lastEarn: DayKey | null;
-  private earnedInRun = false;
+  /** The bank's working copy: each planned spend joins its FREEZE_USE days for the next day's fold. */
+  private tokens: RestTokenInputs | null;
 
   constructor(s: SettlementState, floor: DayKey) {
     this.s = s;
@@ -418,8 +422,10 @@ class Working {
       this.openPerTpl.set(d.templateId, (this.openPerTpl.get(d.templateId) ?? 0) + 1);
       this.openTotal += d.debtXp;
     }
-    this.balance = Math.max(0, s.freezeEarned - s.freezeUsed);
-    this.lastEarn = s.lastFreezeEarnDay;
+    // Every FREEZE_USE read with the range's rows is a spent day of the bank too (one fold, whoever wrote it).
+    let tokens = s.tokens ?? null;
+    if (tokens) for (const d of this.freezeDays) tokens = withSpent(tokens, d);
+    this.tokens = tokens;
   }
 
   // ── reads over the working copy ──
@@ -506,14 +512,6 @@ class Working {
     return n;
   }
 
-  /** Active days counted toward the next freeze: in (max(last earn, firstDutyDay − 1), d]. */
-  private activeTowardFreeze(d: DayKey): number {
-    const lower = maxKey(this.lastEarn ?? "", addDays(this.floor, -1));
-    let n = this.earnedInRun ? 0 : Math.max(0, Math.floor(this.s.activeDaysBefore ?? 0));
-    for (const [day, f] of this.facts) if (day > lower && day <= d && f.streakUnits > 0) n += 1;
-    return n;
-  }
-
   /** A REPAIR dated in (d − 8, d − 1). */
   private repairedWithin(d: DayKey): boolean {
     const after = addDays(d, -(REPAIR_EVERY_DAYS + 1));
@@ -579,6 +577,12 @@ class Working {
 
   private excuse(ops: SettlementOp[], t: SettlementTemplate, d: DayKey): void {
     this.resolve(ops, t, d, 0, "EXCUSED", { debtXp: 0, debtOpen: false });
+  }
+
+  /** Whether charging t now would owe a debt: priced above 0 and inside both caps (charge()'s own test). */
+  private wouldOwe(t: SettlementTemplate): boolean {
+    const debt = debtFor(t);
+    return debt > 0 && (this.openPerTpl.get(t.id) ?? 0) < DEBT_OPEN_PER_TEMPLATE && this.openTotal + debt <= DEBT_OPEN_TOTAL_CAP + 1e-9;
   }
 
   /** A missed occurrence: MISSED with its debt and a DEBT row, or 'debt capped' (debtXp 0, nothing owed). */
@@ -714,33 +718,36 @@ class Working {
       notes.push(`held: rest day${n > 0 ? ` · ${n} excused` : ""}`);
     }
 
-    // 3. A freeze on a no-activity day it protects (or a manual spend already dated d). A freeze covers a
-    //    no-activity day only (decision 12): a manual spend whose day was recorded afterwards (ticks dated d
-    //    landing after the spend) holds nothing, so its musts are charged as usual and the freeze stays spent.
+    // 3. One Rest Token (blueprint P21, D19): momentum's freeze fold is the bank, one token a day. A FREEZE_USE already
+    //    dated d (a manual spend) is d's token. Otherwise, on a day rest does not hold: the token the fold spends on d by
+    //    itself is written as FREEZE_USE (the same token, so never a second), and with no such spend a must that would
+    //    owe a debt spends one while it is still free, whether or not d had other activity. d's token excuses all of d.
     const spentOn = this.freezeDays.has(d);
-    let freezeHeld = spentOn && !this.isActive(d);
-    if (freezeHeld) notes.push("held: a freeze spent on it");
-    else if (spentOn) notes.push("a freeze spent on it holds nothing: the day had activity");
-    if (!spentOn && !restHeld && !this.isActive(d) && this.balance >= 1) {
-      const y = addDays(d, -1);
-      // A live streak, or a must that would otherwise be owed (a study must met with nothing to do, such as
-      // REVIEW_DUE on a day that opened with nothing due, is no reason to spend one).
-      const protects = this.isActive(y) || this.isHeld(y) || open.some((r) => r.compulsory && !this.studyMet(r, d));
-      if (protects) {
+    let freezeHeld = spentOn;
+    if (spentOn) notes.push("held: a rest token spent on it");
+    else if (!restHeld && this.tokens) {
+      const before = restTokenBefore(this.tokens, d);
+      // A study must met with nothing to do (REVIEW_DUE on a day that opened with nothing due) is never a reason, and
+      // neither is a miss the caps leave owing nothing (P21 review): the token stays for the run.
+      const owed = open.some((r) => r.compulsory && !this.studyMet(r, d) && this.wouldOwe(r));
+      // The run comes first (P21 review): a token the fold already gave a later day (an empty yesterday that kept the
+      // run, a 'Use a freeze' for it) is not free, so it stays there and d's musts are charged below.
+      const free = owed && restTokenFreeOn(this.tokens, d, this.s.today);
+      if (before.autoSpend || free) {
         const spent = this.event(ops, {
           source: "FREEZE_USE",
           sink: "NONE",
           day: d,
           qty: 1,
           countsForStreak: false,
-          detail: "spent automatically on a day with no activity",
+          detail: before.autoSpend ? "spent automatically on a day with no momentum" : "spent automatically on a day with a must missed",
           dedupeKey: freezeUseKey(d),
         });
         if (spent) {
-          this.balance -= 1;
+          this.tokens = withSpent(this.tokens, d);
           this.freezeDays.add(d);
           freezeHeld = true;
-          notes.push(`held: a freeze spent (${this.balance} left)`);
+          notes.push(`held: a rest token spent (${Math.max(0, before.bank - 1)} left)`);
         }
       }
     }
@@ -790,27 +797,7 @@ class Working {
     misses.sort((a, b) => (a.r.id < b.r.id ? -1 : a.r.id > b.r.id ? 1 : a.slot - b.slot));
     for (const m of misses) this.charge(ops, notes, m.r, d, m.slot);
 
-    // 7. A freeze earned.
-    if (this.isActive(d) && this.balance < FREEZE_MAX) {
-      const n = this.activeTowardFreeze(d);
-      if (n >= FREEZE_EARN_ACTIVE_DAYS) {
-        const earned = this.event(ops, {
-          source: "FREEZE_EARN",
-          sink: "NONE",
-          day: d,
-          qty: 1,
-          countsForStreak: false,
-          detail: `${n} active days`,
-          dedupeKey: freezeEarnKey(d),
-        });
-        if (earned) {
-          this.balance += 1;
-          this.lastEarn = d;
-          this.earnedInRun = true;
-          notes.push(`freeze earned (${this.balance} banked)`);
-        }
-      }
-    }
+    // 7. (Retired by blueprint P21: the one bank's earns are momentum's own fold; settlement plans no FREEZE_EARN.)
 
     // 8. The Full day, over the settled facts (full-day.ts, the board's own rule).
     const f = this.facts.get(d);
@@ -902,4 +889,74 @@ export function planSettlement(state: SettlementState): DayPlan[] {
   const plans: DayPlan[] = [];
   for (let d = range.from; d <= range.to; d = addDays(d, 1)) plans.push(w.planDay(d, plans.length === 0));
   return plans;
+}
+
+// ── The worst first week (blueprint P22; decision D18) ────────────────────
+
+/** worstWeekOf's answer: what the first judged days would owe if every must were missed on every one of them. */
+export interface WorstWeek {
+  /** The judged days, firstDutyDay onward. */
+  from: DayKey;
+  to: DayKey;
+  /** Every expected must occurrence of those days (each one missed). */
+  misses: number;
+  /** Σ debtFor over the misses: what they would owe with no cap at all. */
+  uncapped: number;
+  /** What settlement charges: within 20 a miss, 3 open a task and 100 in all (Σ of the DEBT rows, positive). */
+  owed: number;
+  /** The misses a cap left at nothing owed (recorded MISSED, debt 0). */
+  capped: number;
+  /** One line per debt settlement would write, oldest first. */
+  debts: { day: DayKey; templateId: string; debt: number }[];
+}
+
+/**
+ * The launch dry run's worst first week (blueprint P22): planSettlement itself over `days` judged days from
+ * firstDutyDay, with nothing done on any of them, no rest day, no Rest Token and no open debt before it, so the caps
+ * are the only thing between the musts and their debt. Pure (the dry run feeds it the musts it read; spiral-check
+ * holds it to the cron's own run). Null with no launch day.
+ */
+export function worstWeekOf(
+  templates: readonly SettlementTemplate[],
+  ctx: { launchDay: DayKey | null; epochDay: DayKey; now: Date; days?: number }
+): WorstWeek | null {
+  const first = ctx.launchDay ? firstDutyDay(ctx.epochDay, ctx.launchDay) : null;
+  if (!first) return null;
+  const days = Math.max(1, Math.min(SETTLE_MAX_DAYS_PER_RUN, ctx.days ?? 7));
+  const to = addDays(first, days - 1);
+  const plans = planSettlement({
+    today: addDays(to, SETTLE_LAG_DAYS),
+    now: ctx.now,
+    dutyLaunchDay: ctx.launchDay,
+    epochDay: ctx.epochDay,
+    cursor: addDays(first, -1),
+    templates,
+    instances: [],
+    rows: [],
+    days: [],
+    freezeEarned: 0,
+    freezeUsed: 0,
+    tokens: null,
+    openDebts: [],
+    restRows: [],
+    judgedDutyWeeks: new Set<string>(),
+  });
+  const debtOf = new Map(templates.map((t) => [t.id, debtFor(t)]));
+  let misses = 0;
+  let uncapped = 0;
+  let capped = 0;
+  const debts: WorstWeek["debts"] = [];
+  for (const p of plans)
+    for (const op of p.ops) {
+      if ((op.kind === "instanceCreate" || op.kind === "instanceUpdate") && op.data.status === "MISSED") {
+        const templateId = op.kind === "instanceCreate" ? op.data.templateId : null;
+        misses += 1;
+        if (templateId) uncapped += debtOf.get(templateId) ?? 0;
+        if (!op.data.debtOpen) capped += 1;
+      } else if (op.kind === "event" && op.input.source === "DEBT") {
+        debts.push({ day: op.input.day ?? p.day, templateId: op.input.templateId ?? "", debt: -(op.input.xp ?? 0) });
+      }
+    }
+  const round1 = (x: number) => Math.round(x * 10) / 10;
+  return { from: first, to, misses, uncapped: round1(uncapped), owed: round1(debts.reduce((s, x) => s + x.debt, 0)), capped, debts };
 }

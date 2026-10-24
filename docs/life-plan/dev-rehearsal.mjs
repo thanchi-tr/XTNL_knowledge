@@ -8,6 +8,11 @@
 // nothing until the launch has been applied to this database once:
 //   DATABASE_URL=<LOCAL> DIRECT_URL=<LOCAL> XTNL_LIFE_LAUNCH_DAY=2026-09-21 //     npx tsx scripts/life-launch.ts            (dry run), then  --apply
 // Set XTNL_LIFE_LAUNCH_DAY= (empty) in the shell to rehearse the not-launched state.
+// M2 (blueprint P20): Duty is rehearsed as of XTNL_DUTY_LAUNCH_DAY (default 2026-09-28, the Monday after the life
+// launch default), for the visual pass on seeded state; dutyLaunchDay honours it here because DATABASE_URL is the
+// mirror. Settlement and the early settle switch on once the cursor is set on this database:
+//   DATABASE_URL=<LOCAL> DIRECT_URL=<LOCAL> XTNL_LIFE_LAUNCH_DAY=2026-09-21 XTNL_DUTY_LAUNCH_DAY=2026-09-28 //     npx tsx scripts/duty-launch.ts --deploy=2026-09-28
+// (dry run), then --apply. Set XTNL_DUTY_LAUNCH_DAY= (empty) in the shell to rehearse Duty inert.
 // Blueprint P14: set XTNL_ROADMAP_GOALS_LIVE=1 in the shell to see the roadmap's Start button on this server
 // (roadmap-types roadmapGoalsLive; ROADMAP_GOALS_LIVE stays false in code). scripts/roadmap-rehearse.ts runs the
 // Start path end to end against this same database.
@@ -26,6 +31,7 @@ const child = spawn("npx", ["next", "dev", "-p", "3100"], {
     GEMINI_API_KEY: "",
     XTNL_LIFE_JUDGE: "1",
     XTNL_LIFE_LAUNCH_DAY: process.env.XTNL_LIFE_LAUNCH_DAY ?? "2026-09-21",
+    XTNL_DUTY_LAUNCH_DAY: process.env.XTNL_DUTY_LAUNCH_DAY ?? "2026-09-28",
   },
   stdio: "inherit",
   shell: true,

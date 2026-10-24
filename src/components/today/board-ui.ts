@@ -41,9 +41,10 @@ import {
   type SettledNotice,
 } from "../../lib/duty-view";
 import { FULL_DAY_MP } from "../../lib/full-day";
-import { PROOF_ROW_NOTE, pagesRowNoteOf } from "../../lib/proof";
+import { PROOF_ROW_NOTE, pagesRowNoteOf, type TickProofInput } from "../../lib/proof";
 import { mustCountOf, type DeferredItem } from "../../lib/task-decisions";
 import type { DailyQuests } from "../../lib/daily-quests";
+import { restTokensText } from "../../lib/rest-tokens";
 import { RECORD_YESTERDAY_EVENT, RECORD_YESTERDAY_HREF, RECORD_YESTERDAY_PARAM } from "../../lib/shortcuts";
 import { OWED_NOTICE_ID, WEEK_AUDIT_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID } from "../shell/shell-types";
 import {
@@ -977,7 +978,7 @@ const xp1 = (v: number): string => {
 export interface LaneChip {
   tone: "held" | "quiet";
   text: string;
-  held?: "rest" | "sick" | "away";
+  held?: "rest" | "sick" | "away" | "freeze";
   icon?: "clock";
 }
 
@@ -1010,6 +1011,11 @@ export function mustLaneOf(p: {
    * musts; 'Not a must' is in the drawer). Absent: no chip (a work tab).
    */
   daily?: Pick<DailyQuests, "minimum" | "over">;
+  /**
+   * Blueprint P21 (D19): the one Rest Token bank (the Momentum card's number): a held chip 'Rest tokens 2' at the end,
+   * the freeze glyph and the words. Null or absent: no chip (momentum not live, or a work tab).
+   */
+  restTokens?: number | null;
 }): MustLaneView {
   const hidden = (p.deferred ?? []).filter((i) => i.must);
   if (hidden.length > 0) {
@@ -1030,6 +1036,7 @@ export function mustLaneOf(p: {
   if (!p.live && p.launchDay && p.launchDay > p.today) chips.push({ tone: "held", icon: "clock", text: `Musts carry stakes from ${dayLabel(p.launchDay)}` });
   if (p.daily && p.daily.minimum > 0) chips.push({ tone: "quiet", text: `${p.daily.minimum} at minimum` });
   if (p.daily && p.daily.over > 0) chips.push({ tone: "quiet", text: `${p.daily.over} over the cap` });
+  if (p.restTokens != null) chips.push({ tone: "held", held: "freeze", text: restTokensText(p.restTokens) });
   // Held musts are not asked today: with only those left, no '0 of 0' under the held chip.
   const allHeld = tally.total === 0 && p.must.some((r) => r.heldToday);
   return {
@@ -1051,6 +1058,19 @@ export interface MakeUpView {
   window: string;
   makeUpPrice: number;
   minimum: { label: string; price: number } | null;
+  /** Proof of work in force (blueprint P20, duty-view OwedProof): the chips its make-up asks for. */
+  proof?: OwedCard["proof"] | null;
+}
+
+/**
+ * The make-up action's options for what a proof card's chips picked (blueprint P20): the minutes, and a reading must's
+ * pages as the tick's own proof ({ kind: 'PAGES', qty }). Nothing picked: none, so any other make-up is as before.
+ */
+export function makeUpOptsOf(report: { minutes?: number; pages?: number } | undefined): { minutes?: number; proof?: TickProofInput } {
+  return {
+    ...(report?.minutes != null ? { minutes: report.minutes } : {}),
+    ...(report?.pages != null ? { proof: { kind: "PAGES" as const, qty: report.pages } } : {}),
+  };
 }
 
 /** The window line: 'Within Tue 04:00 it brings back 12 days.' or why a make-up now only clears the debt. */
@@ -1074,6 +1094,7 @@ export function makeUpViewOf(card: OwedCard, today: DayKey): MakeUpView {
     window: makeUpWindowOf(card, today),
     makeUpPrice: card.makeUpXp,
     minimum: card.mvv && card.minimumXp != null ? { label: card.mvv, price: card.minimumXp } : null,
+    ...(card.proof ? { proof: card.proof } : {}),
   };
 }
 
@@ -1216,18 +1237,34 @@ export function yesterdaySheetOf(p: { yesterday: DayKey; recordBy: string; duty:
   const W = fullWeekday(p.yesterday);
   if (isSettledOn(duty, p.yesterday)) return { title: `Record ${W}`, description: `${W} is settled. Anything missed is made up from its card.`, honesty: null, settle: null, freeze: null };
   if (!isUnsettledDutyDay(duty, p.yesterday)) return preM2;
-  const banked = duty.freezes.banked;
+  // Blueprint P21: the token yesterday can take (the bank going into it) and the bank once it is spent; a board read
+  // before P21 carried only `banked`.
+  const banked = duty.freezes.forYesterday ?? duty.freezes.banked;
+  const leftAfter = duty.freezes.leftAfter ?? Math.max(0, banked - 1);
   const used = !!duty.freezes.usedYesterday;
   const offer = duty.rest.yesterday == null && (used || (!p.yesterdayActive && banked >= 1));
+  // P21 review (D19): with a must that would owe open on it and a token banked, settling now spends a Rest Token on
+  // yesterday, so nothing is owed and there is no make-up; left to settle on its own, the token covers it then only
+  // while it is still free ('if-today': once today has a task done).
+  const token = duty.freezes.musts ?? null;
+  const until = `Or leave it: it settles on its own at ${settlesAtLabel(p.yesterday)}.`;
   return {
     title: `Record ${W}`,
-    description: used ? `A freeze covers ${W}, so nothing more is recorded on it.` : base,
-    honesty: used ? null : `Tick only what you did on ${W}. Doing it now? Settle ${W} first: its make-up pays ×0.85 and brings its streak back.`,
-    settle: { label: `Settle ${W} now`, until: `Or leave it: it settles on its own at ${settlesAtLabel(p.yesterday)}.`, lock: `Settling locks ${W}.` },
+    description: used ? `A rest token covers ${W}, so nothing more is recorded on it.` : base,
+    honesty: used
+      ? null
+      : token
+        ? `Tick only what you did on ${W}. Settling ${W} spends a rest token on its open musts (${leftAfter} left after): nothing owed, nothing to make up.`
+        : `Tick only what you did on ${W}. Doing it now? Settle ${W} first: its make-up pays ×0.85 and brings its streak back.`,
+    settle: {
+      label: `Settle ${W} now`,
+      until: token === "if-today" ? `${until} A rest token covers its open musts then only if today has a task done.` : until,
+      lock: `Settling locks ${W}.`,
+    },
     freeze: offer
       ? {
-          label: `Use a freeze for ${weekdayName(p.yesterday)}`,
-          sub: used ? `Used. It covers all of ${W}'s musts.` : `Covers all of ${W}'s musts · ${Math.max(0, banked - 1)} left after`,
+          label: `Use a rest token for ${weekdayName(p.yesterday)}`,
+          sub: used ? `Used. It covers all of ${W}'s musts.` : `Covers all of ${W}'s musts · ${leftAfter} left after`,
           checked: used,
           disabled: used,
         }
@@ -1254,6 +1291,11 @@ export interface StreakDutyFields {
   last7Days: readonly boolean[];
   held7Days: readonly boolean[];
   bankedFreezes: number;
+  /**
+   * Blueprint P21: the one Rest Token bank (lib/streak.ts DailyStreak.restTokens): a number while the bank is live
+   * (0 included), null when it is not. Absent: a streak read before P21 (bankedFreezes alone, shown above 0).
+   */
+  restTokens?: number | null;
   /** The judged day with nothing in it that ended the last run (lib/streak.ts DailyStreak.endedOn). */
   endedOn?: DayKey | null;
   /** That run's length in active days, 0 with no endedOn (lib/streak.ts DailyStreak.endedAfter). */
@@ -1277,7 +1319,7 @@ export interface DayLedgerDuty {
   broken: boolean;
   /** Replaces the streak caption when set. */
   caption: string | null;
-  /** A held chip under the caption: 'A freeze will cover Wed'. */
+  /** A held chip under the caption: 'A rest token will cover Wed', or yesterday's open musts and a token (P21 review). */
   heldNote: string | null;
   /** The Full-day note under the rings. */
   fullNote: string | null;
@@ -1298,7 +1340,10 @@ export function dayLedgerDutyOf(p: {
 }): DayLedgerDuty {
   const duty = p.duty;
   if (!duty?.live) {
-    return { settles: false, freezes: p.streak.bankedFreezes > 0 ? { banked: p.streak.bankedFreezes } : null, broken: false, caption: null, heldNote: null, fullNote: null, aside: null };
+    // Blueprint P21: the Rest tokens chip shows whenever the bank is live, 0 included; before P21 only above 0.
+    const live = p.streak.restTokens;
+    const freezes = live != null ? { banked: live } : p.streak.bankedFreezes > 0 ? { banked: p.streak.bankedFreezes } : null;
+    return { settles: false, freezes, broken: false, caption: null, heldNote: null, fullNote: null, aside: null };
   }
   const yesterday = addDays(p.today, -1);
   const W = fullWeekday(yesterday);
@@ -1313,8 +1358,13 @@ export function dayLedgerDutyOf(p: {
   let heldNote: string | null = null;
   let broken = false;
   if (open && !p.yesterdayActive && !heldY) {
-    if (willCover) heldNote = `A freeze will cover ${weekdayName(yesterday)}`;
+    if (willCover) heldNote = `A rest token will cover ${weekdayName(yesterday)}`;
     else if (before) caption = `${W} had nothing yet; record it by ${settlesAtLabel(yesterday)} or the streak ends.`;
+  } else if (open && !heldY) {
+    // P21 review (D19): an active yesterday whose open musts a Rest Token will take (or will, once today has a task).
+    const musts = duty.freezes.musts;
+    if (musts === "covers") heldNote = `A rest token will cover ${weekdayName(yesterday)}'s open musts`;
+    else if (musts === "if-today") heldNote = `A task today, and a rest token covers ${weekdayName(yesterday)}'s open musts`;
   }
   if (!p.kept && p.streak.current === 0 && p.streak.endedOn) {
     broken = true;
@@ -1335,7 +1385,9 @@ export function dayLedgerDutyOf(p: {
       ? `Full day. Up to +${FULL_DAY_MP} MP, paid when the week is judged (Wed).`
       : `A Full day pays ${FULL_DAY_PAY_LINE}.`;
   const banked = duty.freezes.banked;
-  return { settles: true, freezes: banked > 0 ? { banked } : null, broken, caption, heldNote, fullNote, aside: FULL_DAY_PAY_LINE };
+  // P21 review: the chip shows 0 as it is whenever the bank is live (the rule before Duty, Today's chip and the phone's).
+  const freezes = p.streak.restTokens != null ? { banked } : banked > 0 ? { banked } : null;
+  return { settles: true, freezes, broken, caption, heldNote, fullNote, aside: FULL_DAY_PAY_LINE };
 }
 
 /**
@@ -1372,8 +1424,12 @@ export interface CloseChoiceItem {
  * must (its minimum, or the honest line of what leaving it open costs),
  * Tomorrow / Anytime / Drop for a non-must one-off, and Skip today for a
  * non-must habit. Held musts (a rest day) owe nothing and are not listed.
+ *
+ * P21 review (D19): `tokens` is what today's musts can count on (FreezeState.forToday). With one or more, settlement
+ * spends a Rest Token on today's open musts if one is still banked when today is judged (the run comes first: an
+ * empty tomorrow may need it), so the line says that before the debt. Absent or 0: the debt alone.
  */
-export function closeItemsOf(p: { must: readonly BoardRow[]; todayRows: readonly BoardRow[]; today: DayKey; live: boolean }): CloseChoiceItem[] {
+export function closeItemsOf(p: { must: readonly BoardRow[]; todayRows: readonly BoardRow[]; today: DayKey; live: boolean; tokens?: number | null }): CloseChoiceItem[] {
   const out: CloseChoiceItem[] = [];
   for (const r of p.must) {
     if (r.state !== "open" || r.day !== p.today || r.heldToday) continue;
@@ -1383,7 +1439,10 @@ export function closeItemsOf(p: { must: readonly BoardRow[]; todayRows: readonly
       out.push({
         key: r.key,
         title: r.template.title,
-        meta: `Left open, ${fullWeekday(p.today)} is judged ${settlesAtLabel(p.today)}: −${xp1(debtFor(r.template))} owed, made up at ×0.85`,
+        meta:
+          (p.tokens ?? 0) >= 1
+            ? `Left open, ${fullWeekday(p.today)} is judged ${settlesAtLabel(p.today)}: a rest token covers it if one is still banked then, else −${xp1(debtFor(r.template))} owed`
+            : `Left open, ${fullWeekday(p.today)} is judged ${settlesAtLabel(p.today)}: −${xp1(debtFor(r.template))} owed, made up at ×0.85`,
         choices: [],
       });
     }

@@ -2049,7 +2049,7 @@ async function cheapCheck(): Promise<void> {
   const db = prisma as unknown as Record<string, unknown>;
   const ENTRIES = ["$transaction", "$executeRaw", "$queryRaw", "taskTemplate", "taskInstance", "activityEvent", "masteryLedgerEntry", "lifeSettings", "restDay"] as const;
   const saved = ENTRIES.map((k) => [k, db[k]] as const);
-  const env = { judge: process.env.XTNL_LIFE_JUDGE, duty: process.env.XTNL_DUTY_LAUNCH_DAY };
+  const env = { judge: process.env.XTNL_LIFE_JUDGE, duty: process.env.XTNL_DUTY_LAUNCH_DAY, db: process.env.DATABASE_URL };
   const quiet = console.error;
   const calls: string[] = [];
   const MON = "2026-10-12";
@@ -2089,6 +2089,9 @@ async function cheapCheck(): Promise<void> {
   };
   process.env.XTNL_LIFE_JUDGE = "1";
   process.env.XTNL_DUTY_LAUNCH_DAY = MON;
+  // Blueprint P20: the Duty override is honoured only with no database named (or the rehearsal mirror); Prisma's import
+  // loaded .env's shared URL, and every entry the judge could reach is a spy here, so none is named while this runs.
+  delete process.env.DATABASE_URL;
   console.error = () => {};
   try {
     cursor = new Date("2026-10-17T00:00:00Z"); // settled through Saturday: W42's DUTY is gated
@@ -2117,6 +2120,8 @@ async function cheapCheck(): Promise<void> {
     else process.env.XTNL_LIFE_JUDGE = env.judge;
     if (env.duty === undefined) delete process.env.XTNL_DUTY_LAUNCH_DAY;
     else process.env.XTNL_DUTY_LAUNCH_DAY = env.duty;
+    if (env.db === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = env.db;
   }
 }
 

@@ -665,6 +665,13 @@ export interface MomentumFold {
   since: number;
   /** Every held day (a freeze bridged it), oldest first. */
   heldDays: DayKey[];
+  /** Blueprint P21: the declared rest, sick and vacation days that held the run without a freeze, oldest first. */
+  restDays: DayKey[];
+  /**
+   * Blueprint P21: FREEZE_USE days with no run to bridge (a token spent on a must, after a break), oldest first. Held
+   * for the grid; never in heldDays, so never 'a freeze kept your run'.
+   */
+  coveredDays: DayKey[];
 }
 
 /**
@@ -672,6 +679,15 @@ export interface MomentumFold {
  * `active(d)`: the day has a momentum action. `earnedExtra(d)`: freezes a chest or Recovery added that day.
  * A day before `today` with no action spends a banked freeze (held) or breaks the run; today never breaks.
  * `opts.startBank`: the bank before the first day (the server passes MOMENTUM_START_FREEZES; the sim's goldens 0).
+ *
+ * Blueprint P21 (decision D19: one Rest Token bank, these freezes). Both options are absent until Duty writes a
+ * row, so without them the fold is exactly the one above:
+ *   - `opts.spent(d)`: a FREEZE_USE row is dated d (settlement's step 3, or 'Use a freeze'). That row is the day's
+ *     one token, whatever else the day holds: it is taken first, from the bank before d (the bank settlement judged
+ *     d on), and it holds d when d has no momentum action (a live run's heldDays, else coveredDays). The fold never spends a second one on that day, so the
+ *     fold and settlement on the same day spend one token. With the bank already empty the row still holds its day
+ *     (its musts were excused) and takes nothing.
+ *   - `opts.rest(d)`: a declared rest, sick or vacation day (duty-rule heldDaysOf). It holds the run with no token.
  */
 export function foldMomentum(
   days: readonly DayKey[],
@@ -679,7 +695,7 @@ export function foldMomentum(
   active: (d: DayKey) => boolean,
   earnedExtra: (d: DayKey) => number,
   freezeMax: (d: DayKey) => number,
-  opts: { startBank?: number } = {},
+  opts: { startBank?: number; spent?: (d: DayKey) => boolean; rest?: (d: DayKey) => boolean } = {},
 ): MomentumFold {
   let current = 0;
   let bank = days.length > 0 ? Math.max(0, Math.min(Math.floor(opts.startBank ?? 0), freezeMax(days[0]))) : 0;
@@ -690,9 +706,16 @@ export function foldMomentum(
   let heldInRun = 0;
   let breaks = 0;
   const heldDays: DayKey[] = [];
+  const restDays: DayKey[] = [];
+  const coveredDays: DayKey[] = [];
   for (const d of days) {
     if (d > today) break;
     const max = freezeMax(d);
+    const written = opts.spent?.(d) === true;
+    if (written && bank > 0) {
+      bank -= 1;
+      used += 1;
+    }
     if (active(d)) {
       current += 1;
       since += 1;
@@ -703,6 +726,13 @@ export function foldMomentum(
           earned += 1;
         }
       }
+    } else if (written) {
+      if (current > 0) {
+        heldInRun += 1;
+        heldDays.push(d);
+      } else coveredDays.push(d);
+    } else if (d < today && opts.rest?.(d) === true) {
+      restDays.push(d);
     } else if (d < today) {
       if (bank > 0 && current > 0) {
         bank -= 1;
@@ -724,7 +754,7 @@ export function foldMomentum(
     bank = Math.min(bank, max);
     longest = Math.max(longest, current);
   }
-  return { current, bank, used, earned, longest, heldInRun, breaks, since, heldDays };
+  return { current, bank, used, earned, longest, heldInRun, breaks, since, heldDays, restDays, coveredDays };
 }
 
 // ════════════════════════════════════════════════════════════════════════════

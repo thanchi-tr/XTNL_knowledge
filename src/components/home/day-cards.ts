@@ -20,7 +20,7 @@ export interface DayCardsView {
   /** The caption under the numeral: a bold lead ("Kept today, 08:05.") and the rest, or Duty's own sentence. */
   caption: { lead: string | null; rest: string };
   freezes: { banked: number } | null;
-  /** A held chip under the caption ("A freeze will cover Wed"). */
+  /** A held chip under the caption ("A rest token will cover Wed"). */
   heldNote: string | null;
   fullDay: FullDay;
   /** Daily settlement pays Full days (Duty is live). */

@@ -26,7 +26,10 @@ import { Sheet } from "@/components/ui/Sheet";
 import { cx } from "@/components/ui/cx";
 import { useShell } from "./shell-store";
 import { RECORD_YESTERDAY_EVENT, RECORD_YESTERDAY_HREF } from "@/lib/shortcuts";
-import { EFFECTS_GROUP, type ShellAsk } from "./shell-types";
+import { askSectionsOf, type ShellAsk } from "./shell-types";
+
+// The three groups are shell-types' one rule (M2 leftover 7, blueprint P20); re-exported for the callers that import it here.
+export { askSectionsOf };
 
 export function AsksBell() {
   const [open, setOpen] = useState(false);
@@ -46,23 +49,6 @@ export function AsksBell() {
       <AsksSheet open={open} onClose={() => setOpen(false)} items={asks?.items ?? []} />
     </>
   );
-}
-
-/**
- * The sheet's three groups, in feed order: the rows that ask (exactly the
- * bell's count, askCount), the listed rows that are never counted (counted
- * false), and the effects in play.
- */
-export function askSectionsOf(items: readonly ShellAsk[]): { asking: ShellAsk[]; listed: ShellAsk[]; effects: ShellAsk[] } {
-  const asking: ShellAsk[] = [];
-  const listed: ShellAsk[] = [];
-  const effects: ShellAsk[] = [];
-  for (const a of items) {
-    if (a.group === EFFECTS_GROUP) effects.push(a);
-    else if (a.counted === false) listed.push(a);
-    else asking.push(a);
-  }
-  return { asking, listed, effects };
 }
 
 export function AsksSheet({ open, onClose, items }: { open: boolean; onClose: () => void; items: ShellAsk[] }) {

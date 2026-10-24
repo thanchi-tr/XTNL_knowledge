@@ -82,6 +82,8 @@
 .mo-grid li, .mo-key { aspect-ratio: 1; border-radius: 6px; border: 1px solid var(--line-2); background: transparent; }
 .mo-grid li[data-mark="active"], .mo-key[data-mark="active"] { background: var(--kept); border-color: var(--kept); }
 .mo-grid li[data-mark="held"], .mo-key[data-mark="held"] { background: var(--hatch); border-color: var(--held); }
+/* Blueprint P21: a declared rest, sick or vacation day holds the run with no token: the held hatch, a dashed edge. */
+.mo-grid li[data-mark="rest"], .mo-key[data-mark="rest"] { background: var(--hatch); border-color: var(--held); border-style: dashed; }
 .mo-grid li[data-mark="missed"], .mo-key[data-mark="missed"] { border-color: var(--line-ctl); }
 .mo-grid li[data-mark="open"] { border-style: dashed; border-color: var(--line-ctl); }
 .mo-grid li[data-mark="before"] { border-color: var(--line-1); opacity: .5; }

@@ -43,10 +43,11 @@
  *      its Wednesday; on the Duty week's Wednesday BODY, CRAFT and CARE are judged while
  *      settlement is held back and DUTY waits; Full days are recorded on settlement and paid
  *      after the kept tracks, inside the cap, when DUTY is judged.
- *   B  a no-activity day with a live streak: the freeze earned on the 7th active day is spent
- *      automatically; the board's 'a freeze will cover it' shows the day before.
- *   C  a declared rest day: no freeze spent, its must excused, the streak held; an 8-day
- *      settlement in two chunks; a manual freeze refused for an active yesterday.
+ *   B  a no-activity day with a must due: the bank's token (blueprint P21: momentum's freezes, from
+ *      MOMENTUM_LAUNCH_DAY) is spent automatically; the board's 'a freeze will cover it' shows the day before.
+ *   C  a declared rest day: no freeze spent, its must excused, the streak held; a manual freeze
+ *      refused for the rest day itself (blueprint P20: it needs none); an 8-day settlement in two
+ *      chunks; a manual freeze refused for an active yesterday.
  *   D  'Use a freeze for Monday', then a record of Monday refused (frozen), then the early
  *      settle: exactly one FREEZE_USE.
  *   I  the manual spend and the early settle racing at balance 1: exactly one FREEZE_USE.
@@ -58,8 +59,29 @@
  *   G  a reset between an early --apply and the launch: the new row has no cursor; --apply is
  *      held until firstDutyDay + 1 and then switches settlement on.
  *   H  the akrasia horizon on the database: an un-flag before launch is immediate, after
- *      launch it waits 7 days, a second weakening is refused, 'Keep it' clears it, 'Even on
- *      rest days' on is immediate with its prior segment, off waits.
+ *      launch it waits 7 days, the same un-flag again is the pending one, a second (different)
+ *      weakening is refused, 'Keep it' clears it, 'Even on rest days' on is immediate with its
+ *      prior segment, off waits.
+ *   P  proof of work on a make-up (blueprint P20, Stage 7's open item; XTNL_PROOF_LAUNCH_DAY
+ *      also Mon 5 Oct): a deep-work must's make-up is refused without its minutes and paid with
+ *      them (its receipt gated), a reading must's below its pages target is refused and its pages
+ *      are recorded; the owed cards ask for both. Skipped, and said so, when the mirror lacks the
+ *      proof migrations (20270101000000_task_proof, 20270102000000_proof_qty).
+ *
+ * P20 corrections after the first Postgres run (2026-10-24, 264 passed, 7 failed; each beside its
+ * step): A's '03:59 on d + 2' was scripted on the wrong life day (at() reads an hour before 04:00 as
+ * the next morning of the day it names); every template's createdAt was the database's own clock,
+ * weeks past the scripted one, so the 60-minute typo grace made H's deferral immediate (and the
+ * rest of H cascaded from it); and H sent the same un-flag twice where the rule (duty-actions-check)
+ * answers the pending one, so its refusal is now a different weakening.
+ *
+ * P21 (one Rest Token bank, decision D19): the bank is momentum's freeze fold, which starts on MOMENTUM_LAUNCH_DAY
+ * (the production constant, Mon 12 Oct, with its one starting token) and earns every 10 momentum days; settlement
+ * earns none. So no FREEZE_EARN is ever written here: B's and C's 'the freeze is earned on Sunday' became 'no
+ * FREEZE_EARN is written', and the one token B, C, D and I spend or keep is the launch day's. With no momentum run
+ * going into Monday (the bank opens that day), B's 'a freeze will cover Monday' is the board's (its must is due),
+ * not the streak's own (which is the fold's spend on a live run). D and I are otherwise unchanged; each change sits
+ * beside its step.
  *
  * It replicates one write instead of running a script: duty-launch.ts --apply (one conditional
  * update, settledThroughDay = firstDutyDay − 1 WHERE settledThroughDay IS NULL), because that
@@ -71,7 +93,6 @@ import {
   debtKey,
   dutyLaunchDay,
   firstDutyDay,
-  freezeEarnKey,
   freezeUseKey,
   fullDayKey,
   fullDayMintKey,
@@ -237,6 +258,11 @@ async function capture(u: string, line: string): Promise<string> {
   const parsed = M.parse.parseCapture(line, { today: todayKey(NOW) });
   try {
     const created = await M.tasks.createTemplateCore(u, parsed, { rawText: line, captureSource: "quick", now: NOW });
+    // TaskTemplate.createdAt is the database's own clock (now()), weeks past this scripted one, so every template read
+    // as younger than the 60-minute typo grace (duty-rule classifyChange: now − createdAt ≤ 60 min, true for any negative
+    // age) and every weakening was immediate: H's first failure on Postgres (P20). A live capture's createdAt is its own
+    // moment, so the rehearsal stamps the scripted one.
+    await M.prisma.taskTemplate.update({ where: { id: created.id }, data: { createdAt: NOW } });
     NAMES.set(created.id, parsed.title);
     return created.id;
   } catch (err) {
@@ -442,7 +468,11 @@ async function scenarioA(): Promise<void> {
   check("the daily streak runs on (a missed must on an active day never breaks it)", (await streakOf(u)).s.current >= 4);
   okOr("'Even on rest days' on: immediate", await M.tasks.setCompulsoryOnRestCore(u, S, true, NOW));
 
-  step(THU8, "03:59", "still Wednesday's life day");
+  // at() reads an hour before 04:00 as the next morning of the life day it names: 03:59 on calendar Thu 8 is still
+  // Wednesday's life day, so it is step(WED7, "03:59"). The first Postgres run (P20) had step(THU8, "03:59"), which is
+  // Fri 9 03:59, Thursday's life day, when Tuesday is due: so it settled Tuesday, the board showed its card, and 04:00
+  // then found nothing left. A script error, not a settlement one: the day arithmetic is settle-check's and duty-check's.
+  step(WED7, "03:59", "03:59 on Thu 8: still Wednesday's life day");
   const r359 = await settle(u);
   check("03:59 on d + 2 settles nothing", !r359.wrote && r359.plans.length === 0, show({ wrote: r359.wrote, plans: r359.plans.length }));
   check("and the board still shows no card", cardOf(await boardOf(u), S, TUE6) == null);
@@ -623,13 +653,21 @@ async function noDebtOn(u: string, tpl: string, day: DayKey): Promise<void> {
 async function scenarioB(): Promise<void> {
   const u = userOf("B");
   const { meds, walk } = await activeWeek(u);
-  step(TUE13, "04:00", "Sunday settles: 7 active days earn a freeze");
+  // P21: settlement earns no freeze; the bank is momentum's, opening on Mon 12 (MOMENTUM_LAUNCH_DAY) with one token.
+  step(TUE13, "04:00", "Sunday settles (P21: the bank is momentum's fold; settlement earns none)");
   const r = await settle(u);
   check("settled through Sunday", r.cursorAfter === SUN11, show(r.cursorAfter));
-  check("the freeze is earned on Sunday", (await keysOf(u, freezeEarnKey(SUN11))).length === 1);
+  check("P21: no FREEZE_EARN is written (was: the freeze earned on Sunday; the one bank's earns are momentum's own)", (await keysOf(u, "freeze-earn:")).length === 0);
   step(TUE13, "12:00", "Monday had nothing in it");
   const st = await streakOf(u);
-  check("the board says a freeze will cover Monday", st.s.freezeWillCover && st.s.bankedFreezes === 1, show({ will: st.s.freezeWillCover, banked: st.s.bankedFreezes }));
+  // P21: Monday is the bank's launch day, so no momentum run goes into it and the streak's own cover (the fold's spend
+  // on a live run) is false; the board's cover is the must case (meds is due), which step 3 spends a token on.
+  const bB = await boardOf(u);
+  check(
+    "the board says a freeze will cover Monday (P21: its must is due), with the bank's one token",
+    bB.data.duty?.freezes.willCover === true && bB.data.duty?.freezes.banked === 1 && st.s.bankedFreezes === 1 && st.s.restTokens === 1,
+    show({ will: bB.data.duty?.freezes, banked: st.s.bankedFreezes, tokens: st.s.restTokens })
+  );
   await doDay(u, [meds, walk]);
   step(WED14, "04:00", "Monday settles: the freeze is spent on its own");
   const r2 = await settle(u);
@@ -648,24 +686,30 @@ async function scenarioC(): Promise<void> {
   step(SUN11, "20:00", "declare rest for Monday");
   refused("rest for today is refused (declared before the day starts)", await M.duty.declareRestCore(u, SUN11, NOW), /declared before it starts/);
   okOr("rest for Monday", await M.duty.declareRestCore(u, MON12, NOW));
+  step(TUE13, "09:00", "a manual freeze for the rest day itself (P20, M2 leftover 4)");
+  // Re-pinned by the P21 review: the refusal's words (it never claims an Even on rest days must is covered).
+  refused("a manual freeze is refused for a declared rest day: it needs none", await M.duty.spendFreezeCore(u, NOW), /was a rest day: it holds your streaks by itself, so no rest token is spent on it/);
+  check("and nothing was spent", (await keysOf(u, "freeze-use:")).length === 0);
   step(TUE13, "10:00", "back to it (no settlement since Sunday)");
   await doDay(u, [meds, walk]);
-  step(WED14, "04:00", "eight days settle in two chunks: the freeze is earned on Sunday and Monday is rest");
+  step(WED14, "04:00", "eight days settle in two chunks: Monday is rest (P21: no freeze is earned; the bank's token is Mon 12's)");
   const r = await settle(u);
   check("eight days settled, through Monday", r.cursorAfter === MON12 && r.plans.length === 8, show({ cursor: r.cursorAfter, days: r.plans.length }));
-  check("the freeze is earned", (await keysOf(u, freezeEarnKey(SUN11))).length === 1);
+  check("P21: no FREEZE_EARN is written (was: the freeze is earned; the one bank's earns are momentum's own)", (await keysOf(u, "freeze-earn:")).length === 0);
   check("a rest day consumes no freeze", (await keysOf(u, "freeze-use:")).length === 0);
   await noDebtOn(u, meds, MON12);
   step(WED14, "12:00", "a manual freeze for an active yesterday");
   refused("a manual freeze is refused for an active yesterday", await M.duty.spendFreezeCore(u, NOW), /has activity/);
   const st = await streakOf(u);
+  // P21: the token kept is the bank's launch-day one; the rest day spends none (the fold holds it with no token).
   check("the rest day holds the streak and the freeze stays banked", st.s.current >= 8 && held7(st.s, MON12) && st.s.bankedFreezes === 1, show({ current: st.s.current, held7: st.s.held7Days, banked: st.s.bankedFreezes }));
 }
 
 async function scenarioD(): Promise<void> {
   const u = userOf("D");
   const { meds, walk } = await activeWeek(u);
-  step(TUE13, "04:00", "Sunday settles: the freeze is earned");
+  // P21: nothing is earned on Sunday any more; the token Monday takes is the bank's launch-day one (Mon 12).
+  step(TUE13, "04:00", "Sunday settles (P21: the token is the bank's, from its launch day)");
   await settle(u);
   step(TUE13, "12:00", "'Use a freeze for Monday'");
   const spent = okOr("the manual freeze", await M.duty.spendFreezeCore(u, NOW));
@@ -683,7 +727,8 @@ async function scenarioD(): Promise<void> {
 async function scenarioI(): Promise<void> {
   const u = userOf("I");
   const { meds } = await activeWeek(u);
-  step(TUE13, "04:00", "Sunday settles: the freeze is earned");
+  // P21: the balance of 1 is the bank's launch-day token (Mon 12), not a freeze earned on Sunday.
+  step(TUE13, "04:00", "Sunday settles (P21: the token is the bank's, from its launch day)");
   await settle(u);
   step(TUE13, "12:00", "a manual freeze and the early settle race at balance 1");
   const [spend, early] = await Promise.all([M.duty.spendFreezeCore(u, NOW), M.duty.settleYesterdayCore(u, NOW)]);
@@ -797,7 +842,15 @@ async function scenarioH(): Promise<void> {
   const t1 = await templateOf(meds);
   const pc1 = M.rule.parsePendingChange(t1?.pendingChange ?? null);
   check("it is deferred to Wed 14 Oct and the must stays a must meanwhile", def.effect === "deferred" && def.effectiveDay === WED14 && t1?.compulsory === true && pc1?.next?.effectiveDay === WED14 && pc1.next.compulsory === false, show({ def, pc1 }));
-  refused("a second weakening is refused while one pends", await M.tasks.setCompulsoryCore(u, meds, NOW), /already pending/);
+  // P20: the same un-flag again is the pending one (planRuleEdit; duty-actions-check pins it): it answers 'deferred' and
+  // writes nothing. The M2 script sent it and expected a refusal; the refusal is for a DIFFERENT weakening while one pends.
+  const again = okOr("the same 'Not a must' again", await M.tasks.setCompulsoryCore(u, meds, NOW));
+  check(
+    "the same un-flag again answers the pending one and writes nothing",
+    again.effect === "deferred" && again.effectiveDay === WED14 && show(M.rule.parsePendingChange((await templateOf(meds))?.pendingChange ?? null)) === show(pc1),
+    show(again)
+  );
+  refused("a second weakening (Archive) is refused while one pends", await M.tasks.archiveCore(u, meds, NOW), /already pending/);
   step(WED7, "12:05", "'Keep it'");
   okOr("cancel the pending change", await M.tasks.cancelPendingChangeCore(u, meds, NOW));
   check("nothing is pending", M.rule.parsePendingChange((await templateOf(meds))?.pendingChange ?? null)?.next == null);
@@ -809,6 +862,67 @@ async function scenarioH(): Promise<void> {
   step(WED7, "12:15", "'Even on rest days' off: a weakening, deferred");
   const off = okOr("'Even on rest days' off", await M.tasks.setCompulsoryOnRestCore(u, meds, false, NOW));
   check("it waits 7 days", off.effect === "deferred" && off.effectiveDay === WED14 && (await templateOf(meds))?.compulsoryOnRest === true, show(off));
+}
+
+// ── Scenario P: proof of work on a make-up (blueprint P20) ────────────────
+
+/** XTNL_PROOF_LAUNCH_DAY: proof of work's override (proof.ts PROOF_LAUNCH_DAY_ENV), set for scenario P only. */
+const PROOF_ENV = "XTNL_PROOF_LAUNCH_DAY";
+let skipped = 0;
+
+async function scenarioP(): Promise<void> {
+  const u = userOf("P");
+  const cols = await M.prisma.$queryRaw<{ n: number }[]>`
+    SELECT COUNT(*)::int AS "n" FROM information_schema.columns
+    WHERE table_schema = 'public' AND ((table_name = 'TaskTemplate' AND column_name = 'proof') OR (table_name = 'TaskInstance' AND column_name = 'proofQty'))
+  `;
+  if ((cols[0]?.n ?? 0) < 2) {
+    skipped += 1;
+    console.log("    SKIP the mirror has no proof columns: apply 20270101000000_task_proof and 20270102000000_proof_qty to it, then run again");
+    return;
+  }
+  const saved = process.env[PROOF_ENV];
+  process.env[PROOF_ENV] = L;
+  try {
+    step(MON5, "09:00", "captures on the launch day (proof of work in force from Mon 5 too); Monday is then missed");
+    const deep = await capture(u, "deep work 60m daily ! #proof");
+    const reading = await capture(u, "read 30 pages daily !");
+    const tD = await M.prisma.taskTemplate.findUnique({ where: { id: deep }, select: { proof: true, compulsory: true } });
+    const tR = await M.prisma.taskTemplate.findUnique({ where: { id: reading }, select: { autoMetric: true, autoTarget: true, compulsory: true } });
+    check("'#proof' makes the must a MINUTES proof template", tD?.proof === "MINUTES" && tD.compulsory === true, show(tD));
+    check("'read 30 pages' is a reading must (PAGES, target 30)", tR?.autoMetric === "PAGES" && tR.autoTarget === 30 && tR.compulsory === true, show(tR));
+
+    step(TUE6, "10:00", "Tuesday's ticks, each with its proof");
+    await M.tasks.recordDayOpen(u, 0, NOW);
+    refused("the deep-work tick without its minutes is refused (the tick's own gate)", await tick(u, deep), /^Log the minutes/);
+    okOr("its tick with 60 minutes", await M.tasks.completeInstanceCore(u, deep, { day: "today", minutes: 60, now: NOW }));
+    okOr("the reading tick with 30 pages", await M.tasks.completeInstanceCore(u, reading, { day: "today", proof: { kind: "PAGES", qty: 30 }, now: NOW }));
+
+    step(WED7, "04:00", "Monday settles: both musts are owed");
+    check("settled through Monday", (await settle(u)).cursorAfter === MON5);
+    const dMiss = must("the deep-work must's Monday instance", (await instancesOf(u, deep, MON5))[0]);
+    const rMiss = must("the reading must's Monday instance", (await instancesOf(u, reading, MON5))[0]);
+    check("both are MISSED with their debts open", dMiss.status === "MISSED" && dMiss.debtOpen && rMiss.status === "MISSED" && rMiss.debtOpen, show({ dMiss, rMiss }));
+
+    step(WED7, "10:00", "the owed cards, then the make-ups");
+    const b = await boardOf(u);
+    const cD = cardOf(b, deep, MON5);
+    const cR = cardOf(b, reading, MON5);
+    check("the deep-work card asks for its minutes (its estimate's shares)", (cD?.proof?.minutes?.length ?? 0) > 0 && cD?.proof?.pages == null, show(cD?.proof));
+    check("the reading card asks for at least its 30 pages", cR?.proof?.pages?.target === 30 && cR.proof.minutes == null, show(cR?.proof));
+    refused("a deep-work make-up without its minutes is refused, as its tick is", await M.duty.makeUpCore(u, dMiss.id, { minimum: false }, NOW), /^Log the minutes/);
+    const muD = okOr("its make-up with 60 minutes", await M.duty.makeUpCore(u, dMiss.id, { minimum: false, minutes: 60 }, NOW));
+    const proofOf = (r: unknown) => (r as { proof?: { gated?: boolean } } | null)?.proof ?? null;
+    check("it restores (d + 2), and its receipt is gated proof of work", muD.status === "DONE_LATE" && muD.restored && proofOf(muD.receipt)?.gated === true, show({ status: muD.status, proof: proofOf(muD.receipt) }));
+    refused("a reading make-up below its 30 pages is refused", await M.duty.makeUpCore(u, rMiss.id, { minimum: false, pages: 20 }, NOW), /^Log the pages/);
+    const muR = okOr("its make-up with 30 pages", await M.duty.makeUpCore(u, rMiss.id, { minimum: false, pages: 30 }, NOW));
+    const rMade = await M.prisma.taskInstance.findUnique({ where: { id: rMiss.id }, select: { status: true, proofKind: true, proofQty: true } });
+    check("the pages are recorded on the made-up instance", muR.restored && rMade?.status === "DONE_LATE" && rMade.proofKind === "PAGES" && rMade.proofQty === 30, show(rMade));
+    check("no debt is left open", (await M.prisma.taskInstance.count({ where: { userId: u, debtOpen: true } })) === 0);
+  } finally {
+    if (saved === undefined) delete process.env[PROOF_ENV];
+    else process.env[PROOF_ENV] = saved;
+  }
 }
 
 // ── Cleanup ──────────────────────────────────────────────────────────────
@@ -882,11 +996,13 @@ async function main(): Promise<void> {
   await run("F · --apply before launch leaves pre-launch days open", scenarioF);
   await run("G · a reset between an early --apply and the launch", scenarioG);
   await run("H · the akrasia horizon on the database", scenarioH);
+  await run("P · proof of work on a make-up (P20)", scenarioP);
 
   if (KEEP) console.log(`\nKept this run's rows (user ids '${TAG}${RUN}:…'); remove them with --clean.`);
   else console.log(`\nCleaned up: ${show(await deleteRows(`${TAG}${RUN}:`))}`);
 
   console.log(`\nduty-rehearse: ${passed} passed, ${fails.length} failed`);
+  if (skipped > 0) console.log(`  (${skipped} scenario skipped: see its SKIP line)`);
   for (const f of fails) console.log(`  FAIL ${f}`);
   process.exitCode = fails.length ? 1 : 0;
 }

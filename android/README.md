@@ -18,8 +18,17 @@ the main one:
   from each tick's answer and never added up here; a tick that finishes one of
   Today's three says "· +10 cr", unless another tick was out at the same time,
   when neither line claims the shared change and the chip reads `/check` again;
-  no chip while they are off), and the work items that are due, with call and
-  text buttons.
+  no chip while they are off), the **Rest tokens** chip in the header ("Rest
+  tokens 2": the momentum freezes under one name, 0 said as it is, the server's
+  own number), the **Owed** card (once Duty is switched on: every open debt,
+  oldest first, in the web make-up card's words: "−4.2 owed", when it was
+  missed, its line and its window; **Make up · ≈ 1.9** repays the whole debt and
+  pays ×0.85, **Do minimum** pays the minimum version's own, and **Accept the
+  loss** only where the web offers it; a proof must's minute or page chips come
+  first and Make up waits for them; a make-up's line has an **Undo** for its ten
+  minutes, as the web card's; while Duty is off on the server the card shows
+  without its actions: "Make it up on the web app"), and the work items that
+  are due, with call and text buttons.
 - **Log**: a quick line (Task · Weigh-in · Idea) with a live reading of the
   line, and the full **New idea** form in all seven formats.
 - **Review**: a session runner for every card type, with feedback after each
@@ -49,7 +58,7 @@ panes on the main one, also at `xtnl://app/mall`). Then Settings and
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.8 (versionCode 20), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.11 (versionCode 23), so
 it installs over the v1 WebView shell in place.
 
 On **Check**, a long press on any open task opens its **minutes sheet** (blueprint
@@ -178,6 +187,13 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
   paying a newer walk and answering a resend as duplicates; and the manifest
   declaring exactly the permissions asked, the rationale activity and the
   Android 14+ alias (HealthManifestTest);
+- the Rest tokens chip's words ("Rest tokens 2", none from an older server) and
+  the Owed card's (the owed chip, ×0.85 and the whole debt, Make up waiting for
+  Duty and for its proof, Undo only while the server sends `undoUntil`, which
+  refusals take a card away), and the demo's owed cards: a make-up repaying at
+  the card's price, a clientId answered once, Accept the loss only where
+  offered, an undo inside its ten minutes bringing the card back, and a debt
+  already gone as a 404;
 - the shapes of the API's responses (a row's proof, timer and pages, the timer
   routes' answer, a row from an older server reading as none of them, and
   `/exercise`'s counts and the body the sync sends).

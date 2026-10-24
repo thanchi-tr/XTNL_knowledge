@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/Tabs";
  * nothing here writes. Today's own Record-yesterday sheet keeps M1's rows
  * (decision 24: no Did / Didn't toggles there).
  *
- *   RecordYesterdaySheet  Did / Didn't per open item, "Use a freeze for Wed",
+ *   RecordYesterdaySheet  Did / Didn't per open item, "Use a rest token for Wed",
  *                         "Settle Wednesday now" or it settles on its own at
  *                         Fri 04:00. Anything ticked pays at the full rate.
  *   RestControls          Plan time off: rest tomorrow (declared the day
@@ -99,12 +99,12 @@ export function RecordYesterdaySheet({
         <div className="today-opt-card">
           <HeldGlyph kind="freeze" size={22} className="held" />
           <div className="n">
-            Use a freeze for {day}
+            Use a rest token for {day}
             <span>
-              {freezes} banked. A freeze holds the whole day; nothing is owed.
+              {freezes} banked. A rest token holds the whole day; nothing is owed.
             </span>
           </div>
-          <Switch checked={useFreeze} onChange={onUseFreeze} label={`Use a freeze for ${day}`} />
+          <Switch checked={useFreeze} onChange={onUseFreeze} label={`Use a rest token for ${day}`} />
         </div>
       )}
     </Sheet>
@@ -173,7 +173,7 @@ export function SettleFooter({ label, until, lock, onSettle, busy }: { label: st
   );
 }
 
-/** 'Use a freeze for Wed': only for a yesterday with no activity; once used it stays on. */
+/** 'Use a rest token for Wed': only for a yesterday with no activity; once used it stays on. */
 export function FreezeOption({
   label,
   sub,

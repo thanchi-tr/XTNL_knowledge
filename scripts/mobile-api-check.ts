@@ -31,7 +31,10 @@
  *      P19: each reward's Buy state and the purchases; /mall/buy and /mall/undo through actions/mall's cores, the
  *      clientId a purchase requires, a resend once, a refusal in the core's words, an undo inside its ten minutes only;
  *      the rewards in the page's order, the archived kept; an add through actions/mall's core, its rules refused as
- *      conflict with the core's own line, replayed per clientId, never a starter reward);
+ *      conflict with the core's own line, replayed per clientId, never a starter reward); Duty (P22: /check's dutyOn, the
+ *      switch alone, and owed, the board's open debts in the web MakeUpCard's words at ×0.85; /tasks/makeup through
+ *      actions/duty makeUp, doMinimum and acceptLoss, refused while Duty is not live, its clientId required, once per
+ *      debt, the board read again after it, no credit ever taken; the Android app's models, routes, demo and cards);
  *   3. the wiring: each route file hands its request to its handler with the real deps and exports only its method
  *      and dynamic; mobile-api-cores binds each dep to the web's own core (no refresh), and mall-mobile-cores the
  *      Mall's two (the Mall's routes never hold a paying core); the pure modules import no core; the web pages' formulas the app mirrors (pinned in their source); the failure lines the codes key on;
@@ -49,7 +52,12 @@ import { CREDITS_LAUNCH_DAY, CREDITS_LAUNCH_DAY_ENV, type CreditsWallet } from "
 import { normTitleOf } from "../src/lib/life-lexicon";
 import { parseRule } from "../src/lib/recurrence";
 import { buildBoard, statsFor, type BoardData, type BoardInstance, type BoardTemplate, type DayLedger, type PaidRecord } from "../src/lib/today-board";
-import { splitTodayLane, boardClearOf } from "../src/components/today/board-ui";
+import { splitTodayLane, boardClearOf, madeUpLineOf, makeUpViewOf } from "../src/components/today/board-ui";
+// Blueprint P22: the owed cards (the web MakeUpCard's words) and an owed card's actions.
+import type { DutyBoard, OwedCard } from "../src/lib/duty-view";
+import type { MakeUpResult } from "../src/app/actions/duty";
+import { TIMING_FACTOR } from "../src/lib/life-grade";
+import { launchRefusal } from "../src/lib/duty-plan";
 import { seededOrder, queueAfterAnswer, SESSION_RETURNS_MAX, type CardResult, type RunCard } from "../src/components/workspace/review-model";
 import { contentOfAddState } from "../src/lib/idea-edit";
 import { ADD_FORMATS, EMPTY_ADD_CONTENT, type AddContentState } from "../src/lib/idea-handoff";
@@ -112,6 +120,19 @@ import {
   SERVER_LINE,
   SERVER_LINES,
   WORK_MAX,
+  MAKEUP_ACTIONS,
+  MAKEUP_GONE,
+  MAKEUP_UNDO_GONE,
+  MAKEUP_UNDONE_LINE,
+  MAKEUP_NEEDS_CLIENT_ID,
+  MAKEUP_PROOF_FULL_ONLY,
+  MAKEUP_RATE,
+  MAKEUP_REPEAT_LINE,
+  acceptLossLineOf,
+  checkOwedOf,
+  makeUpDutyOffLine,
+  makeUpLineOf,
+  makeUpRequestOf,
   answerOf,
   checkDailyOf,
   checkDecayingOf,
@@ -135,6 +156,7 @@ import {
   statusCapitalOf,
   statusSkillsOf,
   statusTargetsOf,
+  streakOf,
   tickDayOf,
   weightOfUndoToken,
   weightUndoTokenOf,
@@ -158,6 +180,7 @@ import {
   handleReviewQueue,
   handleStatus,
   handleTaskComplete,
+  handleTaskMakeUp,
   handleTaskUndo,
   handleTaskStart,
   handleTaskStop,
@@ -323,6 +346,79 @@ const TEMPLATES = [
 ];
 const HISTORY = [inst("i-plan2", "plan2", "DONE_MVV"), inst("i-hab2", "hab2", "DONE")];
 const DATA = boardData(TEMPLATES, HISTORY, { "i-plan2": paidOf("i-plan2", 2.04), "i-hab2": paidOf("i-hab2", 3.33) }, { hab1: { icon: "dumbbell", color: null } });
+
+// ── Duty fixtures (blueprint P22) ─────────────────────────────────────────
+
+/** A Monday before TODAY (Duty live on the fixtures' Wednesday), and one after it (not yet). */
+const DUTY_LIVE: DayKey = "2026-10-19";
+const DUTY_AHEAD: DayKey = "2026-10-26";
+/** An owed card as duty-plan owedCardOf builds it, with its pricing template so buildBoard re-prices it. */
+const owedCard = (p: Partial<OwedCard> & { instanceId: string; templateId: string; title: string; day: DayKey }): OwedCard => ({
+  archived: false,
+  slot: 0,
+  debtXp: 4.2,
+  restoreBy: addDays(p.day, 2),
+  restoresToday: true,
+  restoresStreak: 12,
+  mvv: null,
+  makeUpXp: 0,
+  minimumXp: null,
+  studyLinked: false,
+  canWriteOff: false,
+  template: {
+    id: p.templateId,
+    title: p.title,
+    normTitle: normTitleOf(p.title),
+    recurrence: "DAILY",
+    dueDay: null,
+    dueKind: null,
+    intrinsic: false,
+    autoMetric: null,
+    mvv: p.mvv ?? null,
+    track: "BODY",
+    band: "STANDARD",
+    bandOverride: 0,
+    estMinutes: 10,
+    machineMinutes: 10,
+    startDay: "2026-10-01",
+    mvvMinutes: null,
+  },
+  ...p,
+});
+/** Monday's Stretch (restores within its two days), and Sorting the tax papers from 15 days ago (written off once allowed). */
+const OWED_STRETCH = owedCard({ instanceId: "o-stretch", templateId: "t-stretch", title: "Stretch", day: ago(2), mvv: "1 stretch", minimumXp: 1 });
+const OWED_TAX = owedCard({ instanceId: "o-tax", templateId: "t-tax", title: "Sort the tax papers", day: ago(15), debtXp: 8.3, restoresToday: false, restoresStreak: null, canWriteOff: true });
+const dutyBoard = (p: Partial<DutyBoard> = {}): DutyBoard => ({
+  live: true,
+  launchDay: DUTY_LIVE,
+  cursor: ago(2),
+  owed: [],
+  rest: { yesterday: null, today: null, tomorrow: null, vacationUntil: null },
+  freezes: { banked: 0, willCover: false },
+  pending: {},
+  settled: [],
+  ...p,
+});
+/** The board with both debts open (in the wrong order: the board sorts them oldest first). */
+const DATA_OWED: BoardData = { ...DATA, duty: dutyBoard({ owed: [OWED_STRETCH, OWED_TAX] }) };
+
+/** A make-up's result as actions/duty makeUp answers it (aroundMakeUp's moments ride on it). */
+const madeUp = (over: Partial<MakeUpResult> = {}): MakeUpResult => ({
+  instanceId: "o-stretch",
+  templateId: "t-stretch",
+  day: ago(2),
+  status: "DONE_LATE",
+  restored: true,
+  receipt: { ...RECEIPT, xp: 3.46 },
+  xp: 3.46,
+  debtXp: 4.2,
+  clearedLast: false,
+  owedLeft: 1,
+  undoUntil: new Date(NOW.getTime() + 10 * 60_000).toISOString(),
+  duplicate: false,
+  celebrations: [EVENT],
+  ...over,
+});
 
 /** The Field tree: two Fields, due and not-due cards of every format, a DIAGRAM among them. */
 const due = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
@@ -651,7 +747,7 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
     loadBoard: async () => DATA,
     loadFieldTree: async () => TREE,
     loadReviewDay: async () => ({ reviews: 4, dayOpenQty: null }),
-    loadStreak: async () => ({ current: 12, last7Days: [true, true, true, true, true, true, true], bankedFreezes: 2 }),
+    loadStreak: async () => ({ current: 12, last7Days: [true, true, true, true, true, true, true], bankedFreezes: 2, restTokens: 2 }),
     loadShell: async () => ({ character: { level: 7, progress: 0.75, title: "Novice" } }),
     loadWork: async () => WORK,
     loadGraceExtra: async () => 0,
@@ -671,6 +767,12 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
       ok: true,
       value: { sessionId, templateId: "hab1", day: TODAY, startedAt: NOW.toISOString(), endedAt: new Date(NOW.getTime() + 34 * 60_000).toISOString(), running: false, priorMinutes: 0 },
     }),
+    // Duty (P22): inert as shipped (DUTY_LAUNCH_DAY null); an owed card's actions as actions/duty answers them.
+    dutyLaunchDay: () => null,
+    makeUp: async (instanceId) => ({ ok: true, value: madeUp({ instanceId }) }),
+    doMinimum: async (instanceId) => ({ ok: true, value: madeUp({ instanceId, status: "DONE_MVV", xp: 1.04, receipt: { ...RECEIPT, xp: 1.04 } }) }),
+    acceptLoss: async (instanceId) => ({ ok: true, value: { instanceId, debtXp: 8.3 } }),
+    undoMakeUp: async (instanceId) => ({ ok: true, value: { instanceId, debtXp: 4.2, xp: -3.5 } }),
     doneScheduled: async (id) => ({ ok: true, value: { id, doneAt: NOW.toISOString(), interactionId: null } }),
     reopenScheduled: async (id) => ({ ok: true, value: { id } }),
     loadVariants: async () => new Map(),
@@ -870,7 +972,8 @@ async function routes() {
     const d = data(g);
     collectKeys(d);
     check("200, ok, no-store", g.status === 200 && g.json.ok === true && g.noStore);
-    eq("the documented keys", keysOf(d), ["auditOn", "credits", "daily", "day", "dayLabel", "fading", "level", "now", "review", "streak", "tasks", "tasksSummary", "week", "work"]);
+    // Re-pinned for P22: Duty's switch (`dutyOn`) and the open debts (`owed`).
+    eq("the documented keys", keysOf(d), ["auditOn", "credits", "daily", "day", "dayLabel", "dutyOn", "fading", "level", "now", "owed", "review", "streak", "tasks", "tasksSummary", "week", "work"]);
     check("now is the server's clock; day the life day; dayLabel 'Wed 21 Oct'", d.now === NOW.toISOString() && d.day === TODAY && d.dayLabel === "Wed 21 Oct");
     check(
       "one wave: the board (personal: three arguments), the tree, the day's counts, streak, shell, work, the grace extension, the week audit and the credits wallet (P16), read once each",
@@ -898,6 +1001,47 @@ async function routes() {
     eq("credits: the documented keys, the wallet's balance and what today earned (whole credits)", [keysOf(cr), cr], [["balance", "today"], { balance: 120, today: 40 }]);
     const noWallet = await got(handleCheck(get("/check"), fakes({ loadWallet: async () => Promise.reject(new Error("wallet exploded")) }).deps));
     check("credits: a failed wallet read reads as none (the check still answers, no message)", noWallet.status === 200 && data(noWallet).credits === null && !/exploded/.test(noWallet.raw));
+
+    // Blueprint P22 (2.3, 3.2b; D18): Duty's switch and the owed cards. Inert as shipped: dutyOn false, nothing owed.
+    check("dutyOn: false as shipped (DUTY_LAUNCH_DAY null): the switch alone, read once, never the board", d.dutyOn === false && same(calls.dutyLaunchDay, [[]]));
+    check("owed: none on a board with no debt (and every board before the launch)", same(d.owed, []));
+    eq(
+      "dutyOn: true from the launch day, false before it (the switch alone, as auditOn)",
+      await Promise.all([DUTY_LIVE, DUTY_AHEAD, TODAY].map(async (l) => data(await got(handleCheck(get("/check"), fakes({ dutyLaunchDay: () => l }).deps))).dutyOn)),
+      [true, false, true]
+    );
+    {
+      const og = data(await got(handleCheck(get("/check"), fakes({ dutyLaunchDay: () => DUTY_LIVE, loadBoard: async () => DATA_OWED }).deps)));
+      const owed = og.owed as Record<string, unknown>[];
+      collectKeys(owed);
+      const board = buildBoard(DATA_OWED, [], NOW.getTime());
+      eq(
+        "owed: the documented keys",
+        keysOf(owed[0]),
+        ["archived", "canAcceptLoss", "day", "dayLabel", "debt", "instanceId", "makeUpXp", "minimum", "proof", "rate", "restoreBy", "restoresStreak", "restoresToday", "studyLinked", "templateId", "text", "title", "when", "window"]
+      );
+      eq("owed: checkOwedOf over the board (Board.owed, oldest first: the tax papers, then Monday's Stretch)", [owed, owed.map((o) => o.instanceId)], [checkOwedOf(board), ["o-tax", "o-stretch"]]);
+      const s = owed[1];
+      const v = makeUpViewOf(board.owed[1], TODAY);
+      check(
+        "owed: each card in the web MakeUpCard's words (makeUpViewOf: when, its line, the window), its day's label",
+        s.when === v.when && s.text === v.text && s.window === v.window && s.dayLabel === "Mon 19 Oct" && s.when === "Stretch · Monday" && /^Monday's Stretch is still open\./.test(String(s.text)) && s.window === "Within Thu 04:00 it brings back its streak of 12.",
+        JSON.stringify([s.when, s.text, s.window])
+      );
+      check(
+        "owed: what is owed, and what a make-up pays now: the board's re-priced makeUpXp at ×0.85 (TIMING_FACTOR.MAKE_UP) with C 1.00, one decimal",
+        s.debt === 4.2 && s.rate === 0.85 && MAKEUP_RATE === TIMING_FACTOR.MAKE_UP && s.makeUpXp === Math.round(board.owed[1].makeUpXp * 10) / 10 && (s.makeUpXp as number) > 0
+      );
+      check(
+        "owed: the window (restoreBy d + 2, restoresToday, the streak it brings back), the minimum's words and price, Accept the loss only where the web offers it, no proof while proof of work is off",
+        s.restoreBy === OWED_STRETCH.restoreBy && s.restoreBy === TODAY && s.restoresToday === true && s.restoresStreak === 12 && same(s.minimum, { label: "1 stretch", xp: Math.round(board.owed[1].minimumXp! * 10) / 10 }) &&
+          s.canAcceptLoss === false && owed[0].canAcceptLoss === true && owed[0].restoresToday === false && owed[0].minimum === null && owed.every((o) => o.proof === null && o.studyLinked === false && o.archived === false)
+      );
+      const proofCard = { ...OWED_STRETCH, proof: { minutes: [5, 10, 15, 20], pages: { target: 30, chips: [10, 20, 30, 40] } } };
+      const pc = checkOwedOf(buildBoard({ ...DATA, duty: dutyBoard({ owed: [proofCard] }) }, [], NOW.getTime()))[0];
+      collectKeys(pc);
+      check("owed: once proof of work is in force, the card's proof as its tick asks (the minute chips; a reading must's page chips and day target)", same(pc.proof, { minutes: [5, 10, 15, 20], pages: { target: 30, chips: [10, 20, 30, 40] } }));
+    }
 
     // The board, as the web board builds and draws it.
     const board = buildBoard(DATA, [], NOW.getTime());
@@ -1094,7 +1238,17 @@ async function routes() {
     eq("work: the Agenda's Overdue then Today (all-day before timed), tomorrow left out", w.map((x) => `${x.id}:${x.overdue}`), ["w-over:true", "w-allday:false", "w-later:false"]);
     eq("a work item's documented keys", keysOf(w[0]), ["allDay", "boardId", "boardName", "channel", "collection", "customer", "dueAt", "id", "overdue", "title"]);
     check("its collection's name and its customer (id, name, number, phone)", w[0].collection === "New NBN service" && same(w[0].customer, { id: "c1", name: "Jordan Lee", number: "1042", phone: "0412 345 678" }) && w[1].customer === null && w[1].channel === "EMAIL");
-    eq("level and streak", [d.level, d.streak], [{ level: 7, title: "Novice", progress: 0.75 }, { days: 12, keptToday: true, freezes: 2 }]);
+    // Re-pinned by blueprint P21: the streak carries restTokens, the one Rest Token bank, and freezes is that same number.
+    eq("level and streak", [d.level, d.streak], [{ level: 7, title: "Novice", progress: 0.75 }, { days: 12, keptToday: true, freezes: 2, restTokens: 2 }]);
+    eq("a streak's documented keys", keysOf(d.streak as Record<string, unknown>), ["days", "freezes", "keptToday", "restTokens"]);
+    // P21: the bank not live (momentum not launched, or its read failed): restTokens null and freezes 0, never a guess.
+    const offBank = fakes({ loadStreak: async () => ({ current: 3, last7Days: [false, false, false, false, false, false, true], bankedFreezes: 0, restTokens: null }) });
+    eq("P21: no bank: restTokens null, freezes 0", (data(await got(handleCheck(get("/check"), offBank.deps))).streak as Record<string, unknown>), { days: 3, keptToday: true, freezes: 0, restTokens: null });
+    eq(
+      "P21: streakOf reads the unified bank for both fields (freezes used to read M2's own balance, always 0); a streak read before P21 keeps bankedFreezes",
+      [streakOf({ current: 5, last7Days: [true], bankedFreezes: 0, restTokens: 1 }), streakOf({ current: 5, last7Days: [true], bankedFreezes: 1 }), streakOf(null)],
+      [{ days: 5, keptToday: true, freezes: 1, restTokens: 1 }, { days: 5, keptToday: true, freezes: 1, restTokens: null }, null]
+    );
 
     check("momentum's lazy writes ran before the reply, once, with the life day and the clock (settleMomentum(userId, day, { now }))", same(calls.settleMomentum, [["u1", TODAY, NOW]]));
     check("after the reply: the day's first open (with the hub's due count) and maintenance are owed; no study task to record; momentum isn't owed again", afters.length === 2);
@@ -1354,6 +1508,137 @@ async function routes() {
     );
     const sgone = await got(handleTaskStop(post("/tasks/stop", { sessionId: "ts9" }), fakes({ stopTimer: async () => ({ ok: false, error: TIMER_GONE }) }).deps));
     check("stop: a timer that is gone → 404; a bad id → 400", isFail(sgone, "gone") && isFail(await got(handleTaskStop(post("/tasks/stop", { sessionId: "" }), deps)), "bad"));
+  }
+
+  section("POST /tasks/makeup (P22: an owed card's actions)");
+  {
+    // Inert as shipped: DUTY_LAUNCH_DAY null, so the phone's make-up is refused before any core runs.
+    const off = fakes();
+    const r0 = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-stretch", clientId: UUID }), off.deps));
+    check(
+      "while Duty is not live (DUTY_LAUNCH_DAY null): 409 with the web's launch line and where else, no core called, no wallet read",
+      isFail(r0, "conflict") && r0.json.error === makeUpDutyOffLine(null) && r0.json.error === "Duty hasn't started yet. Until then, make it up on the web app." &&
+        !off.calls.makeUp && !off.calls.doMinimum && !off.calls.acceptLoss && !off.calls.loadWallet
+    );
+    const ahead = fakes({ dutyLaunchDay: () => DUTY_AHEAD });
+    const r1 = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-stretch", action: "accept", clientId: UUID }), ahead.deps));
+    check("before the launch day: refused the same way, naming it ('Duty starts Mon 26 Oct.')", isFail(r1, "conflict") && r1.json.error === `${launchRefusal(DUTY_AHEAD)} Until then, make it up on the web app.` && !ahead.calls.acceptLoss);
+
+    // Live from Mon 19 Oct: the make-up in full, through actions/duty makeUp, then the board read again.
+    const live = fakes({ dutyLaunchDay: () => DUTY_LIVE, loadBoard: async () => ({ ...DATA, duty: dutyBoard({ owed: [OWED_TAX] }) }) });
+    const m = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-stretch", minutes: 45, clientId: UUID }), live.deps));
+    const md = data(m);
+    collectKeys(md);
+    eq(
+      "make up: the documented keys",
+      keysOf(md),
+      ["action", "allDone", "celebrations", "clearedLast", "credits", "debt", "duplicate", "instanceId", "level", "line", "owed", "owedLeft", "restored", "status", "undoUntil", "xp"]
+    );
+    check("make up: actions/duty makeUp(instanceId, { minutes }) once, with the phone's minutes (P20's proof path)", same(live.calls.makeUp, [["o-stretch", { minutes: 45 }]]) && !live.calls.doMinimum && !live.calls.acceptLoss);
+    eq(
+      "make up: the action's own figures (xp and debt to one decimal), restored, the undo's close, the web card's resolved words and what is still owed",
+      [md.action, md.status, md.restored, md.xp, md.debt, md.owedLeft, md.clearedLast, md.duplicate, md.undoUntil, md.line],
+      ["makeup", "DONE_LATE", true, 3.5, 4.2, 1, false, false, madeUp().undoUntil, `${madeUpLineOf({ xp: 3.46, debtXp: 4.2, restored: true, status: "DONE_LATE" })} 1 still owed.`]
+    );
+    check("make up: the line is 'Repaid 4.2 and paid 3.5 exactly; its streak is back. 1 still owed.'", md.line === "Repaid 4.2 and paid 3.5 exactly; its streak is back. 1 still owed.");
+    check(
+      "make up: then as a tick's: the board read again (the cards left, allDone), the level after, its moments; credits null while off",
+      same(md.owed, checkOwedOf(buildBoard({ ...DATA, duty: dutyBoard({ owed: [OWED_TAX] }) }, [], NOW.getTime()))) &&
+        (md.owed as unknown[]).length === 1 && md.allDone === false && same(md.level, { level: 7, title: "Novice", progress: 0.75 }) &&
+        same(md.celebrations, [{ tier: 2, kind: "streak-milestone", title: "7 days kept" }]) && md.credits === null
+    );
+    const again = await got(handleTaskMakeUp(post("/tasks/makeup", { clientId: UUID, minutes: 45, instanceId: "o-stretch" }), live.deps));
+    check("make up: a retry with the same clientId answers the first; the core runs once", again.raw === m.raw && live.calls.makeUp.length === 1);
+    const clash = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-stretch", clientId: UUID }), live.deps));
+    check("make up: the same clientId with another body is a conflict", isFail(clash, "conflict") && clash.json.error === REPLAY_MISMATCH_LINE);
+    const proof = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-read", sessionId: "ts1", proof: { kind: "PAGES", qty: 30 }, clientId: randomUUID() }), live.deps));
+    check("make up: a timer it names and a reading must's pages go to the core as the tick's own proof", proof.status === 200 && same(live.calls.makeUp[1], ["o-read", { sessionId: "ts1", proof: { kind: "PAGES", qty: 30 } }]));
+    const repeat = data(await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-stretch", clientId: randomUUID() }), fakes({ dutyLaunchDay: () => DUTY_LIVE, makeUp: async () => ({ ok: true, value: madeUp({ duplicate: true, celebrations: [] }) }) }).deps)));
+    check("make up: a repeat the core already recorded (another instance, a double tap) says so: nothing is paid twice", repeat.duplicate === true && repeat.line === MAKEUP_REPEAT_LINE && MAKEUP_REPEAT_LINE === "Already made up. Nothing is paid twice.");
+    const last = data(await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-stretch", clientId: randomUUID() }), fakes({ dutyLaunchDay: () => DUTY_LIVE, makeUp: async () => ({ ok: true, value: madeUp({ owedLeft: 0, clearedLast: true }) }) }).deps)));
+    check("make up: clearing the last debt says 'Nothing is owed.'", last.clearedLast === true && /Nothing is owed\.$/.test(String(last.line)) && makeUpLineOf({ ...madeUp(), owedLeft: 0, clearedLast: true }) === last.line);
+
+    // The minimum version, and Accept the loss.
+    const min = fakes({ dutyLaunchDay: () => DUTY_LIVE });
+    const mm = data(await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-stretch", action: "minimum", clientId: randomUUID() }), min.deps)));
+    check("minimum: actions/duty doMinimum(instanceId) alone; DONE_MVV, its xp, the debt repaid in full", same(min.calls.doMinimum, [["o-stretch"]]) && !min.calls.makeUp && mm.action === "minimum" && mm.status === "DONE_MVV" && mm.xp === 1 && mm.debt === 4.2);
+    const acc = fakes({ dutyLaunchDay: () => DUTY_LIVE, loadBoard: async () => ({ ...DATA, duty: dutyBoard({ owed: [OWED_STRETCH] }) }) });
+    const aa = data(await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-tax", action: "accept", clientId: randomUUID() }), acc.deps)));
+    collectKeys(aa);
+    eq(
+      "accept: actions/duty acceptLoss(instanceId) alone; WRITTEN_OFF, nothing paid or restored, no undo, the web's words, what is left from the board read after it",
+      [acc.calls.acceptLoss, acc.calls.makeUp, aa.action, aa.status, aa.restored, aa.xp, aa.debt, aa.undoUntil, aa.duplicate, aa.owedLeft, aa.clearedLast, aa.line, aa.celebrations],
+      [[["o-tax"]], undefined, "accept", "WRITTEN_OFF", false, 0, 8.3, null, false, 1, false, acceptLossLineOf(8.3), []]
+    );
+    check("accept: its line is the web's ('Its −8.3 stays in Duty XP; nothing more is owed.')", aa.line === "Its −8.3 stays in Duty XP; nothing more is owed.");
+    const lostRead = data(await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-tax", action: "accept", clientId: randomUUID() }), fakes({ dutyLaunchDay: () => DUTY_LIVE, loadBoard: async () => Promise.reject(new Error("b")) }).deps)));
+    check("accept: a failed board read after it reads as unknown (owed, owedLeft and clearedLast null; allDone false), never a failed write", lostRead.owed === null && lostRead.owedLeft === null && lostRead.clearedLast === null && lostRead.allDone === false);
+
+    // Refusals, in the core's words.
+    const gone = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-x", clientId: randomUUID() }), fakes({ dutyLaunchDay: () => DUTY_LIVE, makeUp: async () => ({ ok: false, error: MAKEUP_GONE }) }).deps));
+    const notOwed = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-x", clientId: randomUUID() }), fakes({ dutyLaunchDay: () => DUTY_LIVE, makeUp: async () => ({ ok: false, error: "Nothing is owed there any more." }) }).deps));
+    const tooNew = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-x", action: "accept", clientId: randomUUID() }), fakes({ dutyLaunchDay: () => DUTY_LIVE, acceptLoss: async () => ({ ok: false, error: "Accept the loss opens 14 days after the miss." }) }).deps));
+    const proofNeeded = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-x", clientId: randomUUID() }), fakes({ dutyLaunchDay: () => DUTY_LIVE, makeUp: async () => ({ ok: false, error: PROOF_MINUTES_REFUSAL }) }).deps));
+    check(
+      "refusals: a debt that is gone → 404 (MAKEUP_GONE, duty.ts's own line); no longer owed, too new to accept, a proof must without its minutes → 409 with the core's line",
+      isFail(gone, "gone") && gone.json.error === "That debt no longer exists." && isFail(notOwed, "conflict") && isFail(tooNew, "conflict") && isFail(proofNeeded, "conflict") && proofNeeded.json.error === PROOF_MINUTES_REFUSAL
+    );
+    const bads = await Promise.all(
+      [
+        { instanceId: "o-stretch" },
+        { instanceId: "o-stretch", clientId: "nope" },
+        { instanceId: "../x", clientId: randomUUID() },
+        { instanceId: "o-stretch", action: "skip", clientId: randomUUID() },
+        { instanceId: "o-stretch", action: "minimum", minutes: 10, clientId: randomUUID() },
+        { instanceId: "o-stretch", action: "accept", proof: { kind: "PAGES", qty: 3 }, clientId: randomUUID() },
+        { instanceId: "o-stretch", minutes: 0, clientId: randomUUID() },
+        { instanceId: "o-stretch", mvv: true, clientId: randomUUID() },
+      ].map(async (b) => got(handleTaskMakeUp(post("/tasks/makeup", b), live.deps)))
+    );
+    check(
+      "bad: no clientId (required, its line), a bad clientId, a bad id, an unknown action, proof with the minimum or accept, minutes out of range, an unknown field → 400, no core called",
+      bads.every((b) => isFail(b, "bad")) && bads[0].json.error === MAKEUP_NEEDS_CLIENT_ID && bads[4].json.error === MAKEUP_PROOF_FULL_ONLY && live.calls.makeUp.length === 2
+    );
+    // Re-pinned by the P22 review: a fourth action, the make-up's Undo.
+    check("makeUpRequestOf: the action is 'makeup' when left out; the four actions in order", makeUpRequestOf({ instanceId: "o1", clientId: UUID }).action === "makeup" && same(MAKEUP_ACTIONS, ["makeup", "minimum", "accept", "undo"]));
+    // P22 review: a make-up made on the phone is undone from the phone (the web card's Undo, ten minutes, the same day).
+    const und = fakes({ dutyLaunchDay: () => DUTY_LIVE, loadBoard: async () => ({ ...DATA, duty: dutyBoard({ owed: [OWED_STRETCH] }) }) });
+    const uu = data(await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-stretch", action: "undo", clientId: randomUUID() }), und.deps)));
+    collectKeys(uu);
+    eq(
+      "P22 review: undo: actions/duty undoMakeUp(instanceId) alone; MISSED again, the make-up's XP taken back, the debt open, no undo of it, the web's words, the cards from the board read after it",
+      [und.calls.undoMakeUp, und.calls.makeUp, uu.action, uu.status, uu.restored, uu.xp, uu.debt, uu.undoUntil, uu.duplicate, uu.owedLeft, uu.clearedLast, uu.line, Array.isArray(uu.owed)],
+      [[["o-stretch"]], undefined, "undo", "MISSED", false, -3.5, 4.2, null, false, 1, false, MAKEUP_UNDONE_LINE, true]
+    );
+    const undoGone = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-x", action: "undo", clientId: randomUUID() }), fakes({ dutyLaunchDay: () => DUTY_LIVE, undoMakeUp: async () => ({ ok: false, error: MAKEUP_UNDO_GONE }) }).deps));
+    const undoLate = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-x", action: "undo", clientId: randomUUID() }), fakes({ dutyLaunchDay: () => DUTY_LIVE, undoMakeUp: async () => ({ ok: false, error: "That make-up can't be undone any more." }) }).deps));
+    const undoProof = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-x", action: "undo", minutes: 30, clientId: randomUUID() }), live.deps));
+    check(
+      "P22 review: undo refusals: a make-up that isn't there → 404 (duty.ts's own line, in GONE_LINES); past its window → 409 with the core's line; proof fields with it → 400",
+      isFail(undoGone, "gone") && undoGone.json.error === MAKEUP_UNDO_GONE && GONE_LINES.has(MAKEUP_UNDO_GONE) && isFail(undoLate, "conflict") && isFail(undoProof, "bad") && undoProof.json.error === MAKEUP_PROOF_FULL_ONLY &&
+        /if \(!inst\) return fail\("That make-up no longer exists\."\);/.test(code("src/lib/duty.ts"))
+    );
+    const undoOff = await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-stretch", action: "undo", clientId: randomUUID() }), fakes({ dutyLaunchDay: () => null }).deps));
+    check("P22 review: …and like every action it is refused while Duty is off, before the core runs", isFail(undoOff, "conflict"));
+    {
+      // A make-up is today's work, so it can finish one of Today's three (+10): the wallet read before and fresh after it.
+      const order: string[] = [];
+      const w = steppingWallet(120, 130, order);
+      const deps = fakes({
+        dutyLaunchDay: () => DUTY_LIVE,
+        loadWallet: w.load,
+        readWallet: w.read,
+        makeUp: async (instanceId) => {
+          w.step();
+          return { ok: true, value: madeUp({ instanceId }) };
+        },
+      }).deps;
+      const g = data(await got(handleTaskMakeUp(post("/tasks/makeup", { instanceId: "o-stretch", clientId: randomUUID() }), deps)));
+      check(
+        "credits: the wallet's change across the make-up (read before, fresh after: never a guess), as a tick's; no make-up or accept ever takes credits",
+        same(g.credits, { delta: 10, balance: 130, today: 10 }) && same(order, ["wallet", "write", "fresh wallet"])
+      );
+    }
   }
 
   section("POST /exercise (P27: Health Connect's walks, hikes and weigh-ins)");
@@ -2426,6 +2711,7 @@ const HANDLER_OF: Record<string, string> = {
   "POST /tasks/undo": "handleTaskUndo",
   "POST /tasks/start": "handleTaskStart",
   "POST /tasks/stop": "handleTaskStop",
+  "POST /tasks/makeup": "handleTaskMakeUp",
   "POST /work/done": "handleWorkDone",
   "POST /work/reopen": "handleWorkReopen",
   "GET /review/queue": "handleReviewQueue",
@@ -2503,6 +2789,18 @@ function wiring() {
     /startTimer: \(templateId, clientId\) => startTaskTimer\(templateId, clientId, \{ source: "phone" \}\),\s*stopTimer: \(sessionId\) => stopTaskTimer\(sessionId\),/
   );
   bind(
+    "Duty (P22): duty-economy dutyLaunchDay() (the switch in force: production reads the constant only), and actions/duty makeUp, doMinimum, acceptLoss and undoMakeUp, as Today's MakeUpCard calls them (no refresh)",
+    /import \{ acceptLoss, doMinimum, makeUp, undoMakeUp \} from "\.\.\/app\/actions\/duty";[\s\S]*import \{ dutyLaunchDay \} from "\.\/duty-economy";[\s\S]*dutyLaunchDay: \(\) => dutyLaunchDay\(\),\s*makeUp: \(instanceId, input\) => makeUp\(instanceId, input\),\s*doMinimum: \(instanceId\) => doMinimum\(instanceId\),\s*acceptLoss: \(instanceId\) => acceptLoss\(instanceId\),[\s\S]{0,120}?undoMakeUp: \(instanceId\) => undoMakeUp\(instanceId\),/
+  );
+  check(
+    "Duty (P22): MAKEUP_GONE is duty.ts's own line for a debt that isn't there (makeUpCore and acceptLossCore), so it is a 404",
+    (code("src/lib/duty.ts").match(/return fail\("That debt no longer exists\."\);/g) ?? []).length === 2 && MAKEUP_GONE === "That debt no longer exists." && GONE_LINES.has(MAKEUP_GONE)
+  );
+  check(
+    "Duty (P22): the cores the route reaches gate nothing on launch themselves (decision 2: a debt is made up whenever it exists), so the route's own dutyOn gate is the phone's",
+    /makeUp, doMinimum, undoMakeUp and\s+\* acceptLoss work whenever a debtOpen instance exists, launched or not/.test(read("src/app/actions/duty.ts")) && /if \(!isDutyLaunched\(today, launchDay\)\) return failReply\("conflict", makeUpDutyOffLine\(launchDay\)\);/.test(code("src/lib/mobile-api-server.ts"))
+  );
+  bind(
     "Health Connect (P27): health-ingest-server ingestHealthCore(userId, batch, { now }) at the route's clock (the walk's and the weigh-in's own cores inside it)",
     /import \{ ingestHealthCore \} from "\.\/health-ingest-server";[\s\S]*ingestHealth: \(userId, batch, now\) => ingestHealthCore\(userId, batch, \{ now: \(\) => now \}\),/
   );
@@ -2552,6 +2850,8 @@ function wiring() {
   );
   const imports: [string, string][] = [
     ["completeTask, startTaskTimer, stopTaskTimer, undoCapture, undoCompletion", "../app/actions/tasks"],
+    ["acceptLoss, doMinimum, makeUp, undoMakeUp", "../app/actions/duty"],
+    ["dutyLaunchDay", "./duty-economy"],
     ["doneScheduledTask, reopenScheduledTask", "../app/actions/scheduled-tasks"],
     ["submitReview", "../app/actions/review"],
     ["createFromCapture, undoWeightCapture", "../app/actions/capture"],
@@ -2738,6 +3038,32 @@ function wiring() {
     /where: \{ userId, doneAt: null, archivedAt: null, dueAt: \{ lt: dayEndOf\(day\) \}, \.\.\.OPEN_BOARD, \.\.\.KEPT_CUSTOMER \},/.test(dueRead) && /cached\(`workDue:\$\{userId\}:\$\{day\}`, \["work", "life"\],/.test(dueRead) && /select: \{ \.\.\.TASK_SELECT, board: \{ select: \{ name: true \} \} \},/.test(dueRead) && !/update|\$queryRaw|remindSentAt:/.test(dueRead)
   );
   check("the scheduled writes clear 'life' and 'work' (what that read is cached under)", /function changed\(\) \{\s*invalidate\("life", "work"\);/.test(sched));
+
+  section("the Android app (P22: the owed cards)");
+  const models = read("android/app/src/main/java/com/xtnl/app/data/Models.kt");
+  const http = read("android/app/src/main/java/com/xtnl/app/data/HttpApi.kt");
+  const demo = read("android/app/src/main/java/com/xtnl/app/data/DemoApi.kt");
+  const screen = read("android/app/src/main/java/com/xtnl/app/ui/check/CheckScreen.kt");
+  const gradle = read("android/app/build.gradle");
+  check(
+    "Models.kt: /check's dutyOn (false from an older server) and owed (empty), each owed key the server sends (`when` as whenLine), and the make-up's answer",
+    /val dutyOn: Boolean = false,/.test(models) && /val owed: List<OwedItem> = emptyList\(\),/.test(models) && /@SerialName\("when"\) val whenLine: String = "",/.test(models) &&
+      ["instanceId", "templateId", "title", "archived", "day", "dayLabel", "debt", "restoreBy", "restoresToday", "restoresStreak", "rate", "makeUpXp", "minimum", "studyLinked", "canAcceptLoss", "proof", "text", "window"].every((k) => new RegExp(`\\bval ${k}: `).test(models.slice(models.indexOf("data class OwedItem")))) &&
+      /data class MakeUpResult\(/.test(models)
+  );
+  check(
+    "HttpApi: POST /tasks/makeup with the instance, the action, a full make-up's minutes and pages (as proof { kind: PAGES, qty }) and the clientId",
+    /call\("\/tasks\/makeup", buildJsonObject \{\s*put\("instanceId", instanceId\)\s*put\("action", action\)\s*minutes\?\.let \{ put\("minutes", it\) \}\s*pages\?\.let \{ putJsonObject\("proof"\) \{ put\("kind", "PAGES"\); put\("qty", it\) \} \}\s*put\("clientId", clientId\)/.test(http)
+  );
+  check(
+    "DemoApi: a server with Duty on (dutyOn true) and its demo owed rows, a make-up that answers once per clientId and a gone debt in the server's words",
+    /dutyOn = true,/.test(demo) && /owed = owed\.map \{ owedNow\(it, day\) \},/.test(demo) && /once<MakeUpResult>\(clientId, body\)/.test(demo) && demo.includes(`Outcome.Err("${MAKEUP_GONE}", code = "gone", status = 404)`)
+  );
+  check(
+    "CheckScreen: the Owed card on both displays (the cover screen's one column and the main display's first pane, after the day's rows), its actions 48 dp",
+    (screen.match(/tasks\(ui, rows, motion\)\s*owed\(ui, vm\)/g) ?? []).length === 2 && /private fun OwedTile\(/.test(screen) && (screen.slice(screen.indexOf("private fun OwedRow(")).match(/height = 48\.dp/g) ?? []).length >= 5
+  );
+  check("Android: versionCode 23 (2.11) or later for the owed cards", Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 23);
 }
 
 // ═══ 4. The doc and the package ══════════════════════════════════════════
@@ -2754,6 +3080,19 @@ function docs() {
   check("every key a reply carries is in the doc", undocumented.length === 0 && replyKeys.size > 40, undocumented.join(", "));
   check("the request fields are in the doc", ["templateId", "instanceId", "ideaId", "answer", "combo", "sessionMisses", "text", "section", "clientId", "options", "listItems", "orderItems", "tolerance", "caseSensitive", "variants", "collection", "draftId", "minutes", "sessionId", "proof", "qty"].every((k) => doc.includes(`"${k}"`) || doc.includes(`\`${k}\``)));
   check("the retry rule says at most 3 misses (SESSION_RETURNS_MAX)", SESSION_RETURNS_MAX === 3 && /are at most 3/.test(doc));
+  check(
+    "the one Rest Token bank (P21; D19) is in the doc: streak.restTokens (null while not live), the momentum freezes under one name, at most one a day, a must missed excused once Duty is live, rest days spend none, and freezes the same number",
+    (() => {
+      const flat = doc.replace(/\s+/g, " ");
+      return /"streak": \{ "days": 12, "keptToday": true, "freezes": 2, "restTokens": 2 \| null \} \| null/.test(doc) &&
+        /`restTokens` \(blueprint 3\.2c, P21; decision D19\): the one Rest Token bank/.test(flat) &&
+        /It is the momentum freezes, under one name/.test(flat) &&
+        /A day spends at most one/.test(flat) &&
+        /it excuses that day's missed musts/.test(flat) &&
+        /A rest, sick or vacation day spends none/.test(flat) &&
+        /`freezes`: the same number \(0 while `restTokens` is null\)/.test(flat);
+    })()
+  );
   check(
     "the phone's minutes and proof of work (P7, P23; D20, D34) are in the doc: minutes 1 to 480 with the drawer's clamp (30 reported as 90 counts 60), the timer's sessionId counted once, 'Log the minutes' (409), proof and timer on /check, both switched off until PROOF_LAUNCH_DAY",
     /"minutes"\?: 45/.test(doc) &&
@@ -2943,6 +3282,30 @@ function docs() {
         /Once: a resend with the same `clientId` replays the first reply on the instance that answered it \(`duplicate: false`, `credits\.delta` \+price\)/.test(flat) &&
         /drops it once `GET \/mall` lists that purchase/.test(flat) &&
         !/A repeat, on any server instance, answers the purchase already made/.test(flat);
+    })()
+  );
+  check(
+    "Duty (P22; D18) is in the doc: dutyOn the switch alone, the owed cards (min(20, B × E), 3 open per task, 100 in all, nothing before the launch, never credits), ×0.85 with C 1.00 always and the day kept within two days, POST /tasks/makeup's clientId required, refused while Duty is off, once per debt",
+    (() => {
+      const flat = doc.replace(/\s+/g, " ");
+      return /## POST \/tasks\/makeup|### POST \/tasks\/makeup/.test(doc) &&
+        /"dutyOn": false,/.test(doc) &&
+        /`dutyOn` \(blueprint 2\.3 and 3\.2b, P22; decision D18\): Duty is switched on \(`DUTY_LAUNCH_DAY` in force: false until the user's go\)\. It is the switch alone, never a read/.test(flat) &&
+        /owes min\(20, B × E\): at most 20 for one miss, at most 3 open debts for one task and at most 100 in all/.test(flat) &&
+        /Nothing is owed for a day before Duty's launch day/.test(flat) &&
+        /A debt is life XP on Duty, never credits: no penalty takes credits/.test(flat) &&
+        /at `rate` \(×0\.85, the make-up timing factor\) with no consistency bonus \(C 1\.00\)/.test(flat) &&
+        /Within two days of the missed day \(`restoresToday`/.test(flat) &&
+        /The `clientId` is required \(a UUID, `bad` without it\)/.test(flat) &&
+        flat.includes(makeUpDutyOffLine(null)) &&
+        flat.includes(MAKEUP_REPEAT_LINE) &&
+        flat.includes(MAKEUP_GONE) &&
+        /"action"\?: "makeup" \| "minimum" \| "accept" \| "undo"/.test(doc) &&
+        flat.includes(MAKEUP_UNDONE_LINE) &&
+        flat.includes(MAKEUP_UNDO_GONE) &&
+        !/A make-up is undone on the web/.test(flat) &&
+        /No penalty and no make-up ever takes credits/.test(flat) &&
+        MAKEUP_RATE === 0.85;
     })()
   );
   check("/log's undo may be null (a weigh-in with nothing to take back)", /"undo": \{ "kind": "task" \| "weight" \| "draft", "id": "…" \} \| null/.test(doc) && /`undo` is null for a weigh-in/.test(doc));

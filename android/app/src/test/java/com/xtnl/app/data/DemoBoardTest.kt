@@ -285,6 +285,58 @@ class DemoBoardTest {
         assertEquals("conflict" to "Too late to undo: a purchase can be undone for 10 minutes.", (api.undoBuy(second.id, "u-3") as Outcome.Err).let { it.code to it.message })
     }
 
+    /**
+     * P22: the demo's owed cards, as a server with Duty on sends them (oldest first, the days from the check clock): a
+     * make-up repays the whole debt at the card's price and restores the day inside its window, the same clientId answers
+     * once, Accept the loss only where the card offers it, and a debt already gone is 404 in the server's words.
+     */
+    @Test fun theDemosOwedCardsMakeUpAndAcceptOnce() = runTest {
+        val api = DemoApi { Instant.parse("2026-10-21T00:12:00Z") }
+        val check = (api.check() as Outcome.Ok).value
+        assertTrue(check.dutyOn)
+        assertEquals(listOf("o-bank", "o-stretch"), check.owed.map { it.instanceId })
+        val stretch = check.owed.last()
+        assertEquals(listOf("2026-10-20", "2026-10-22", "Stretch · Yesterday"), listOf(stretch.day, stretch.restoreBy, stretch.whenLine))
+        assertEquals("Within Fri 04:00 it brings back its streak of 6.", stretch.window)
+        fun refusal(r: Outcome<MakeUpResult>) = (r as Outcome.Err).let { it.code to it.message }
+        assertEquals("only where the card offers it", "conflict", refusal(api.makeUp("o-stretch", "accept", "m-0")).first)
+        assertEquals("bad", refusal(api.makeUp("o-stretch", "minimum", "m-00", minutes = 10)).first)
+
+        val made = (api.makeUp("o-stretch", "makeup", "m-1") as Outcome.Ok).value
+        assertEquals(listOf("DONE_LATE", "true", "1.9", "4.2"), listOf(made.status, made.restored.toString(), made.xp.toString(), made.debt.toString()))
+        assertEquals("Repaid 4.2 and paid 1.9 exactly; its streak is back. 1 still owed.", made.line)
+        assertEquals(listOf("o-bank"), made.owed!!.map { it.instanceId })
+        assertEquals("the same clientId answers once", made, (api.makeUp("o-stretch", "makeup", "m-1") as Outcome.Ok).value)
+        assertEquals("gone" to "That debt no longer exists.", refusal(api.makeUp("o-stretch", "makeup", "m-2")))
+
+        val lost = (api.makeUp("o-bank", "accept", "m-3") as Outcome.Ok).value
+        assertEquals(listOf("WRITTEN_OFF", "0.0", "true"), listOf(lost.status, lost.xp.toString(), lost.clearedLast.toString()))
+        assertNull(lost.undoUntil)
+        assertEquals("Its −3.0 stays in Duty XP; nothing more is owed.", lost.line)
+        assertTrue((api.check() as Outcome.Ok).value.owed.isEmpty())
+    }
+
+    /** P22 review: a make-up made here is undone here inside its ten minutes (the web card's Undo): the card comes back. */
+    @Test fun theDemosMakeUpIsUndoneInsideItsTenMinutes() = runTest {
+        var now = Instant.parse("2026-10-21T00:12:00Z")
+        val api = DemoApi { now }
+        fun refusal(r: Outcome<MakeUpResult>) = (r as Outcome.Err).let { it.code to it.message }
+        assertEquals("gone" to "That make-up no longer exists.", refusal(api.makeUp("o-stretch", "undo", "u-0")))
+        val made = (api.makeUp("o-stretch", "makeup", "u-1") as Outcome.Ok).value
+        assertEquals("2026-10-21T00:22:00Z", made.undoUntil)
+        val undone = (api.makeUp("o-stretch", "undo", "u-2") as Outcome.Ok).value
+        assertEquals(listOf("undo", "MISSED", "-1.9", "4.2"), listOf(undone.action, undone.status, undone.xp.toString(), undone.debt.toString()))
+        assertNull(undone.undoUntil)
+        assertEquals("Make-up undone. It is owed again; nothing else changed.", undone.line)
+        assertEquals("oldest first again", listOf("o-bank", "o-stretch"), undone.owed!!.map { it.instanceId })
+        assertEquals("bad", refusal(api.makeUp("o-stretch", "undo", "u-3", minutes = 10)).first)
+        // Past its ten minutes the make-up stands.
+        api.makeUp("o-stretch", "makeup", "u-4")
+        now = now.plusSeconds(601)
+        assertEquals("conflict" to "That make-up can't be undone any more.", refusal(api.makeUp("o-stretch", "undo", "u-5")))
+        assertEquals(listOf("o-bank"), (api.check() as Outcome.Ok).value.owed.map { it.instanceId })
+    }
+
     @Test fun theLastHabitClearsTheBoard() = runTest {
         val api = DemoApi()
         // The study task completes itself from the day's reviews (7 done; the demo starts at 4).

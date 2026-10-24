@@ -5,6 +5,7 @@ import com.xtnl.app.core.IdeaFormat
 import com.xtnl.app.core.LogPreview
 import com.xtnl.app.core.LogSection
 import com.xtnl.app.core.MallLine
+import com.xtnl.app.core.OwedLine
 import com.xtnl.app.core.ProofLine
 import com.xtnl.app.core.ReviewSession
 import com.xtnl.app.core.TimeLabels
@@ -81,13 +82,58 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
 
     // Three ticks from the next level, so the demo shows a character level up (7 Adept → 8 Expert).
     private var level = LevelInfo(7, "Adept", 0.88)
-    private var streak = StreakInfo(12, keptToday = false, freezes = 2)
+    private var streak = StreakInfo(12, keptToday = false, freezes = 2, restTokens = 2)
     private var reviewDone = 4
     private val reviewTarget = 20
     /** P5: the skills' tier Seals already played (once ever a tier, as the server keys them 'competency:<id>:t<n>'). */
     private val skillSeals = mutableSetOf<String>()
     /** P16: the credits earned on the days before today (the demo's wallet, as a server with credits switched on sends it). */
     private val creditsBefore = 185
+
+    /**
+     * P22: the open debts, as a server with Duty switched on sends them (oldest first): a one-off missed 15 days ago that
+     * Accept the loss is offered for (Settings › Days on), and yesterday's Stretch, inside its two-day window. The days are
+     * the check clock's, read on each /check, so the window stays true.
+     */
+    private data class DemoOwed(val item: OwedItem, val daysAgo: Long)
+
+    /** P22 review: a make-up here, until its ten minutes close (the server's undoUntil): its row, what it paid, the instant. */
+    private data class DemoMadeUp(val row: DemoOwed, val xp: Double, val until: Instant)
+    private val madeUp = mutableMapOf<String, DemoMadeUp>()
+
+    private val owed = mutableListOf(
+        DemoOwed(
+            OwedItem(
+                "o-bank", "t-bank", "Call the bank", debt = 3.0, restoresToday = false, makeUpXp = 2.6, canAcceptLoss = true,
+                text = "Call the bank from 15 days ago is still open. 10 min makes it right.",
+                window = "Past the two-day window: a make-up clears the debt; the streak stays as it is.",
+            ),
+            daysAgo = 15,
+        ),
+        DemoOwed(
+            OwedItem(
+                "o-stretch", "t-stretch", "Stretch", debt = 4.2, restoresToday = true, restoresStreak = 6, makeUpXp = 1.9,
+                minimum = OwedMinimum("1 stretch", 0.6),
+                text = "Yesterday's Stretch is still open. 10 min makes it right.",
+            ),
+            daysAgo = 1,
+        ),
+    )
+
+    /** An owed row with its days from the check clock: the missed day, its label, its window (restoreBy = day + 2). */
+    private fun owedNow(o: DemoOwed, today: java.time.LocalDate): OwedItem {
+        val day = today.minusDays(o.daysAgo)
+        val restoreBy = day.plusDays(2)
+        val by = restoreBy.plusDays(1).format(DateTimeFormatter.ofPattern("EEE", Locale.ENGLISH))
+        val name = if (o.daysAgo == 1L) "Yesterday" else day.format(DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH))
+        return o.item.copy(
+            day = day.toString(),
+            dayLabel = day.format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)),
+            restoreBy = restoreBy.toString(),
+            whenLine = "${o.item.title} · $name",
+            window = if (o.item.restoresToday) "Within $by 04:00 it brings back its streak of ${o.item.restoresStreak}." else o.item.window,
+        )
+    }
 
     /** Today's three done (as quests() lists them): the review quest, the gym and the dentist; the minimum is not done. */
     private fun threeDone(): List<Boolean> {
@@ -281,6 +327,9 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                     week = week(now, daily),
                     // As a server with credits switched on sends it (P16): the demo's wallet chip.
                     credits = wallet(),
+                    // As a server with Duty switched on sends it (P22): the make-up cards' actions run.
+                    dutyOn = true,
+                    owed = owed.map { owedNow(it, day) },
                     work = work.filter { !it.done }.map { it.item },
                     level = level,
                     streak = streak,
@@ -769,6 +818,72 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                 // A level once reached stays (as on the server): an undo drains only this level's progress.
                 level = level.copy(progress = (level.progress - xp / 120.0).coerceAtLeast(0.0))
                 Outcome.Ok(UndoTaskResult(-xp, level))
+            }
+        }
+    }
+
+    /**
+     * P22, as the server runs an owed card's action: a make-up repays the whole debt and pays its price now (×0.85, the
+     * row's makeUpXp), restoring the day inside its window; the minimum pays its own; Accept the loss only where the card
+     * offers it, paying nothing; Undo (P22 review) takes a make-up back inside its ten minutes, the debt open again. A
+     * clientId answers once; a debt (or a make-up) already gone is 404 in the server's words.
+     */
+    override suspend fun makeUp(instanceId: String, action: String, clientId: String, minutes: Int?, pages: Int?): Outcome<MakeUpResult> {
+        pause(220)
+        val body = buildJsonObject {
+            put("instanceId", instanceId); put("action", action)
+            minutes?.let { put("minutes", it) }
+            pages?.let { putJsonObject("proof") { put("kind", "PAGES"); put("qty", it) } }
+        }
+        return lock.withLock {
+            once<MakeUpResult>(clientId, body) {
+                if (action !in setOf(OwedLine.MAKEUP, OwedLine.MINIMUM, OwedLine.ACCEPT_LOSS, OwedLine.UNDO)) return@once bad("action must be 'makeup', 'minimum', 'accept' or 'undo'.")
+                if (action != OwedLine.MAKEUP && (minutes != null || pages != null)) return@once bad("minutes, sessionId and proof go with a full make-up only (action 'makeup').")
+                if (action == OwedLine.UNDO) {
+                    val m = madeUp[instanceId] ?: return@once Outcome.Err("That make-up no longer exists.", code = "gone", status = 404)
+                    if (clock() > m.until) return@once Outcome.Err("That make-up can't be undone any more.", code = "conflict", status = 409)
+                    madeUp.remove(instanceId)
+                    owed.add(m.row)
+                    owed.sortByDescending { it.daysAgo }
+                    level = level.copy(progress = (level.progress - m.xp / 120.0).coerceAtLeast(0.0))
+                    val today = TimeLabels.lifeDay(clock())
+                    return@once Outcome.Ok(
+                        MakeUpResult(
+                            instanceId = instanceId, action = OwedLine.UNDO, status = "MISSED", restored = false, xp = -m.xp, debt = m.row.item.debt,
+                            owedLeft = owed.size, clearedLast = false, undoUntil = null, line = "Make-up undone. It is owed again; nothing else changed.",
+                            allDone = board().allDone, owed = owed.map { owedNow(it, today) }, level = level,
+                        )
+                    )
+                }
+                val i = owed.indexOfFirst { it.item.instanceId == instanceId }
+                if (i < 0) return@once Outcome.Err("That debt no longer exists.", code = "gone", status = 404)
+                val o = owed[i].item
+                val oneDp = { v: Double -> String.format(Locale.ENGLISH, "%.1f", v) }
+                when (action) {
+                    OwedLine.ACCEPT_LOSS -> if (!o.canAcceptLoss) return@once Outcome.Err("Accept the loss opens once a debt is 14 days old and Settings › Days allows it.", code = "conflict", status = 409)
+                    OwedLine.MINIMUM -> if (o.minimum == null) return@once Outcome.Err("It has no minimum version yet. Add one first.", code = "conflict", status = 409)
+                }
+                val row = owed.removeAt(i)
+                val walletBefore = wallet()
+                val xp = when (action) { OwedLine.MAKEUP -> o.makeUpXp; OwedLine.MINIMUM -> o.minimum?.xp ?: 0.0; else -> 0.0 }
+                if (action != OwedLine.ACCEPT_LOSS) madeUp[instanceId] = DemoMadeUp(row, xp, clock().plusSeconds(600))
+                if (xp > 0) level = gain(level, xp / 120.0)
+                val left = owed.size
+                val restored = action != OwedLine.ACCEPT_LOSS && o.restoresToday
+                val line = if (action == OwedLine.ACCEPT_LOSS) "Its −${oneDp(o.debt)} stays in Duty XP; nothing more is owed."
+                else "Repaid ${oneDp(o.debt)} and paid ${oneDp(xp)} exactly; ${if (!restored) "its streak stays as it was" else if (action == OwedLine.MINIMUM) "its streak holds" else "its streak is back"}. " +
+                    if (left == 0) "Nothing is owed." else "$left still owed."
+                val today = TimeLabels.lifeDay(clock())
+                Outcome.Ok(
+                    MakeUpResult(
+                        instanceId = o.instanceId, action = action,
+                        status = when { action == OwedLine.ACCEPT_LOSS -> "WRITTEN_OFF"; !restored -> "MADE_UP"; action == OwedLine.MINIMUM -> "DONE_MVV"; else -> "DONE_LATE" },
+                        restored = restored, xp = xp, debt = o.debt, owedLeft = left, clearedLast = left == 0,
+                        undoUntil = if (action == OwedLine.ACCEPT_LOSS) null else clock().plusSeconds(600).toString(),
+                        line = line, allDone = board().allDone, owed = owed.map { owedNow(it, today) }, level = level,
+                        credits = creditsSince(walletBefore),
+                    )
+                )
             }
         }
     }

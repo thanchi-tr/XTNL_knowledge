@@ -159,7 +159,7 @@ The fold is `foldMomentum` (pure; the sim's reference is G8). It walks the days 
 | Other freezes | +1 from a chest FREEZE. +1 per kept BODY week with Recovery, dated that week's Sunday. |
 | Starting bank | 1 freeze on the launch day (`MOMENTUM_START_FREEZES = 1`), so the mechanic shows on day one |
 | Most held | **2**, or 3 with Spare flame. An earn beyond the bank is lost. A chest freeze with a full bank becomes 8 MP. |
-| Automatic use | A past day with no momentum action, while a run is alive and a freeze is banked, is *held*: it bridges the run but doesn't count. One freeze per day. |
+| Automatic use | A past day with no momentum action, while a run is alive and a freeze is banked, is *held*: it bridges the run but doesn't count. One freeze per day. Blueprint P21: a FREEZE_USE row dated d (settlement or 'Use a freeze') is d's one freeze; a declared rest, sick or vacation day holds with none. |
 | Recording yesterday | Yesterday can be recorded until today ends (`RECORD_WINDOW_DAYS`). If it is, the freeze "spent" on it comes back, because the fold is derived. The sheet says "A freeze covers Tue · record Tue's tasks to keep it." |
 | Run milestones | At 7, 30, 100 and 365 days, a T2 `momentum-run` Seal, once ever per threshold (`momentum:<n>`) |
 
@@ -846,5 +846,5 @@ Every read of the two columns is fail-soft.
 3. **Chest undo policy.** An opened chest stays even if a quest is undone. The alternative is voiding with reversal rows, which is more machinery.
 4. **Exercise backdating.** Only today and yesterday pay; older logs are records. Walks can currently be backdated up to a year.
 5. **Chains.** Kept as a small nudge (+1.7%). Dropping them removes factor M and one perk pair (Quick link, Long chain).
-6. **Freezes independent of Duty.** If Duty ever launches, its FREEZE rows and the momentum fold must be unified first.
+6. **Freezes independent of Duty.** If Duty ever launches, its FREEZE rows and the momentum fold must be unified first. *Done by blueprint P21 (decision D19, 2026-10-24): one Rest Token bank, these freezes (src/lib/rest-tokens.ts). Settlement spends from the fold by writing FREEZE_USE and the fold counts that row as its day's one token; Duty's own earn is retired; a declared rest day holds the run with none. P21 review: a FREEZE_USE counts only from the Duty launch day (none while Duty is off), and settlement spends a token on a missed must only while it is still free, so the run comes first and a spend never breaks it after the fact.*
 7. **`MOMENTUM_SEED_SECRET`** must be set identically on every deployment before launch.

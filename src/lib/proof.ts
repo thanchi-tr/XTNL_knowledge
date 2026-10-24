@@ -58,7 +58,7 @@
  *            pagesGated(t, day, launchDay) · pagesRefusalOf(p) · PAGES_REFUSAL_PREFIX · pageChipsOf(target) · pagesLabelOf ·
  *            pagesChipLabelOf · pagesRowNoteOf · TickProofInput · tickPagesOf
  *   Words    PROOF_CHIP_LABEL · PROOF_CHIP_LABEL_LATER · PROOF_CHIP_LABEL_WORK · proofChipLabelOf · pagesCaptureLabelOf ·
- *            PROOF_ROW_NOTE · PROOF_COUNTS_NOTE · proofRuleLines()
+ *            PROOF_ROW_NOTE · PROOF_COUNTS_NOTE · MAKEUP_COUNTS_NOTE · proofRuleLines()
  */
 import { addDays, type DayKey } from "./life-day";
 import { isDayKey } from "./life-economy";
@@ -556,6 +556,13 @@ export const PROOF_ROW_NOTE = "log the minutes";
 
 /** The drawer's note on a proof row that has its minutes (a done one's Again too): what counts, as the server counts it. */
 export const PROOF_COUNTS_NOTE = "Counted as you report it (half to twice its estimate), or as long as its timer ran. A second tick the same day never counts more than the time since the first.";
+
+/**
+ * The owed card's note once its minutes are picked (P20 review): what the server counts for a make-up (duty-plan
+ * planMakeUp → planCompletion, and the clock bound of an Again: tickWallOf from today's own tick). The web card names
+ * no timer, so it says nothing of one.
+ */
+export const MAKEUP_COUNTS_NOTE = "Counted as you report it (half to twice its estimate). After today's own tick, a make-up never counts more than the time since it.";
 
 /** The rules page's lines (rendered only once proof is in force), from the constants above. */
 export function proofRuleLines(): string[] {

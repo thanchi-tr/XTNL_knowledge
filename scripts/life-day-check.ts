@@ -279,13 +279,18 @@ for (const tz of [SYD, BNE]) {
   // effort forward only, the dry run read only) runs right after credits-check, before settle.
   // Blueprint P24 (2026-10-24): proof-pages-check (pages proof: 'pg' or 'pages' never 'p', the target gate, the pages
   // recorded never priced, the proof_qty migration) runs right after proof-check, before settle.
+  // Blueprint P21 (2026-10-24): rest-tokens-check (one Rest Token bank: momentum's fold, one token a day, the fold and
+  // settlement spending one, the chip, the rules entry, the phone) runs right after momentum-server-check.
   // Blueprint P27 (2026-10-24): health-ingest-check (Health Connect walks, hikes and weight: the backfill record-only,
   // one walk once per record, a hand-logged walk matched, an import never replacing a typed weigh-in) runs right after
   // proof-pages-check, before settle.
+  // Blueprint P22 (2026-10-24): spiral-check (the worst week: every must missed for seven days after Duty's launch owes
+  // at most 100, 20 a miss, 3 open a task, nothing before the launch and 0 credits; a make-up within 2 days pays ×0.85;
+  // the weekly review's Owed and rest steps) runs right after duty-check, before duty-actions-check.
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
   const ROADMAP_LIFE_CHECKS = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests", "roadmap-invite", "roadmap-hostile"];
   const STRICT_LIFE_CHECKS = new Set(["today-ui", "roadmap-contract"]);
-  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "balance-horizon", "momentum-sim", "momentum-sim:credits", "status", "credits", "proof", "proof-pages", "health-ingest", "settle", "duty", "duty-actions", "daily-quests", "week-audit", "audit-decay", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
+  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "rest-tokens", "balance-horizon", "momentum-sim", "momentum-sim:credits", "status", "credits", "proof", "proof-pages", "health-ingest", "settle", "duty", "spiral", "duty-actions", "daily-quests", "week-audit", "audit-decay", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
   const PLAIN_LIFE_SCRIPTS = new Set(["balance-horizon", "momentum-sim"]);
   /** A name's arguments past its file: 'momentum-sim:credits' is the sim with --credits (P16). */
   const ARGS_OF: Readonly<Record<string, string>> = { "momentum-sim:credits": " --credits" };
@@ -311,7 +316,7 @@ for (const tz of [SYD, BNE]) {
     "package.json db:backfill-activity runs the backfill script",
     scripts["db:backfill-activity"] === "tsx scripts/backfill-activity.ts" && existsSync(resolve(ROOT, "scripts/backfill-activity.ts"))
   );
-  for (const [name, file] of [["goals-close:check", "goals-close"], ["settle:check", "settle"], ["duty:check", "duty"], ["duty-actions:check", "duty-actions"], ["daily-quests:check", "daily-quests"], ["week-audit:check", "week-audit"], ["audit-decay:check", "audit-decay"], ["rituals:check", "rituals"], ["momentum:check", "momentum"], ["momentum-server:check", "momentum-server"], ["status:check", "status"], ["credits:check", "credits"], ...ROADMAP_LIFE_CHECKS.map((n) => [`${n}:check`, n] as const)] as const) {
+  for (const [name, file] of [["goals-close:check", "goals-close"], ["settle:check", "settle"], ["duty:check", "duty"], ["spiral:check", "spiral"], ["duty-actions:check", "duty-actions"], ["daily-quests:check", "daily-quests"], ["week-audit:check", "week-audit"], ["audit-decay:check", "audit-decay"], ["rituals:check", "rituals"], ["momentum:check", "momentum"], ["momentum-server:check", "momentum-server"], ["status:check", "status"], ["credits:check", "credits"], ...ROADMAP_LIFE_CHECKS.map((n) => [`${n}:check`, n] as const)] as const) {
     check(`package.json ${name} runs scripts/${file}-check.ts on its own too`, scripts[name] === `tsx scripts/${file}-check.ts`, scripts[name] ?? "missing");
   }
 

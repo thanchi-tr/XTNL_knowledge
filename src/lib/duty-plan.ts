@@ -32,8 +32,13 @@
  *               TickDutyFacts · tickRefusalOf · SETTLED_GUARD_EDGE_MS · needsSettledGuard
  *   Make-ups    MakeUpReceipt · MakeUpOutcome · InstanceEventRow · makeUpAttemptsOf · makeUpRowsOf
  *               undoUntilOf · storedMakeUpOf
+ *               MakeUpProofRead · MakeUpInput.proof/.sessionId/.pages · MakeUpPlan.segments/.pagesCols
+ *               (blueprint P20, Stage 7's open item: a make-up passes the proof gate exactly as a tick)
  *   Write-off   AcceptLossInput · planAcceptLoss · minimumOf
  *   Freezes     FreezeSpendState · freezeSpendOf · freezeUseEventOf · freezeBalanceOf
+ *               (blueprint P20: FreezeSpendState.yesterdayRest and restDayFreezeMessage, a declared rest day takes no freeze)
+ *               (blueprint P21: FreezeSpendState.tokens and DutyBoardFacts.restTokens, the one Rest Token bank,
+ *               rest-tokens.ts, replace the EARN − USE counts)
  *   Rule edits  RuleRow · RuleEdit · RuleWrite · RuleEditPlan · ruleStateOf · planRuleEdit
  *               ClarifyChoice · planClarifyRule (F3)
  *   Board (F7)  OwedRow · DutyBoardFacts · dutyBoardOf · yesterdayMustsOf (BoardData.duty and
@@ -42,7 +47,6 @@
 import { addDays, dayEndOf, dayKeyOf, dayStartOf, type DayKey } from "./life-day";
 import {
   DEBT_COMPOSITION_KEY,
-  FREEZE_MAX,
   MAKE_UP_SOURCE,
   akrasiaEffectiveDay,
   canWriteOff,
@@ -55,6 +59,7 @@ import {
   unrepaidKey,
   withinRestoreWindow,
   writeOffKey,
+  type RestKind,
 } from "./duty-economy";
 import {
   appendPrior,
@@ -71,7 +76,7 @@ import {
   type RestRow,
   type RuleState,
 } from "./duty-rule";
-import { EST_MINUTES_MAX } from "./life-grade";
+import { DEBT_OPEN_PER_TEMPLATE, DEBT_OPEN_TOTAL_CAP, EST_MINUTES_MAX, debtFor } from "./life-grade";
 import type { ActivityInput, InstanceStatus, Receipt } from "./life-types";
 import { perDutyStreak, type InstanceLike } from "./habit";
 import {
@@ -96,12 +101,33 @@ import {
   restStateOf,
   type DutyBoard,
   type FreezeState,
+  type MustCover,
   type OwedCard,
   type OwedTemplate,
   type RestState,
   type SettledFact,
 } from "./duty-view";
 import { restLaunchBlockOf } from "./rest-rules";
+import type { RestTokenSummary } from "./rest-tokens";
+import {
+  TIMER_GONE,
+  TIMER_OTHER_DAY,
+  groupMinutesOf,
+  groupTimerOf,
+  pagesGated,
+  pagesQtyOf,
+  pagesRefusalOf,
+  pagesTargetOf,
+  proofGated,
+  proofRefusalOf,
+  segmentsWith,
+  tickWallOf,
+  timerBelongsTo,
+  timerGroupsOf,
+  type ProofFacts,
+  type ProofKind,
+  type SessionRow,
+} from "./proof";
 
 export type DutyPlanResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -286,9 +312,24 @@ export function makeUpStatusOf(day: DayKey, today: DayKey, repairedInLast7: bool
 /** A make-up's receipt: the price's own, plus which day it made up and whether it restored the streak. */
 export type MakeUpReceipt = Receipt & { makeUp: { day: DayKey; restored: boolean } };
 
+/**
+ * What a make-up reads for proof of work (blueprint P23, P24): task-sessions-server readCompletionProof for TODAY (the
+ * make-up's own day: it is today's work, priced today), present only while proof is in force today.
+ */
+export interface MakeUpProofRead {
+  launchDay: DayKey;
+  /** TaskTemplate.proof as a kind ('MINUTES'), or null. */
+  kind: ProofKind | null;
+  /** The template's latest done tick today (an Again's bound, proof.ts tickWallOf); null with none. */
+  prevTickAt: Date | null;
+  /** Its timers not yet counted, from yesterday on. */
+  sessions: readonly SessionRow[];
+}
+
 /** Everything planMakeUp needs, read fresh by makeUpCore. */
 export interface MakeUpInput {
-  template: PricedTemplate;
+  /** The template as the make-up read it (tasks.ts toBoardTemplate): its day target and board ride along for the pages gate. */
+  template: PricedTemplate & { autoTarget?: number | null; boardId?: string | null };
   /** The debtOpen MISSED instance. */
   instance: { id: string; templateId: string; day: DayKey; slot: number; debtXp: number };
   today: DayKey;
@@ -304,6 +345,15 @@ export interface MakeUpInput {
   taskAttempt: number;
   /** n of the repaid key: the 'unrepaid:' rows already on that slot. */
   repaidAttempt: number;
+  /**
+   * Proof of work (blueprint P23, P24; closed in P20): makeUpCore's proof read, only while proof is in force today.
+   * Absent or null: no gate, and the make-up prices exactly as before.
+   */
+  proof?: MakeUpProofRead | null;
+  /** A timer (TaskSession id) the make-up counts: one of the template's own on today's row. Never picked up unnamed. */
+  sessionId?: string | null;
+  /** Pages proof (P24): the pages a reading must's make-up reports. */
+  pages?: number | null;
 }
 
 export interface MakeUpPlan {
@@ -328,6 +378,10 @@ export interface MakeUpPlan {
   };
   /** The TASK row's receipt with the make-up's facts on it. */
   receipt?: MakeUpReceipt;
+  /** Proof of work: the timer segments this make-up counted (makeUpCore counts them once, countSessionOps); none without. */
+  segments: SessionRow[];
+  /** Pages proof (P24): the instance's pages columns, only for a reading must's make-up while proof is in force. */
+  pagesCols?: { proofKind: "PAGES" | null; proofQty: number | null };
 }
 
 /** The TASK row's detail: 'make-up of 2026-10-12 · restored'. */
@@ -348,16 +402,21 @@ export function planMakeUp(input: MakeUpInput): DutyPlanResult<MakeUpPlan> {
   if (inst.templateId !== t.id) return fail("That make-up doesn't match its task.");
   if (inst.day > today) return fail("That day hasn't happened yet.");
   if (input.minimum && !t.mvv) return fail("It has no minimum version yet. Add one first.");
+  // Proof of work (P23, P24): read only while it is in force today; a deep-work must's make-up needs its minutes.
+  const pf = makeUpProofOf(input);
+  if (!pf.ok) return fail(pf.error);
+  const proof = pf.value;
   const plan = planCompletion({
-    template: t,
+    template: proof.template,
     day: today,
     today,
     slot: inst.slot,
-    minutes: input.minutes,
+    minutes: proof.minutes,
     mvv: input.minimum,
     ledger: input.ledger,
     streakDays: 0,
     makeUp: true,
+    ...(proof.facts ? { proof: proof.facts } : {}),
   });
   // A study-linked must has no paid minimum: its make-up is its make-up.
   const minimum = input.minimum && plan.mode === "MVV";
@@ -411,6 +470,62 @@ export function planMakeUp(input: MakeUpInput): DutyPlanResult<MakeUpPlan> {
       minutes: Math.round(plan.receipt.minutes) || null,
     },
     receipt,
+    segments: proof.segments,
+    ...(proof.pagesCols ? { pagesCols: proof.pagesCols } : {}),
+  });
+}
+
+/**
+ * Proof of work for one make-up (blueprint P23, P24, D20, D21; Stage 7's open item, closed in P20), exactly as a
+ * tick's (tasks.ts tickProofOf) on the make-up's own day, today: from PROOF_LAUNCH_DAY a FULL make-up of a MINUTES
+ * template needs its minutes, reported or from a timer it names, else it is refused (proof.ts PROOF_MINUTES_REFUSAL);
+ * the count is bounded by the clock as a tick's is (tickWallOf: a timer by the minutes it ran, a report by the time
+ * since the template's previous tick today). A reading must (autoMetric PAGES) reports its pages, at least its day's
+ * target (pagesRefusalOf); they are recorded on the instance and the receipt, never priced. The minimum version, #play
+ * and a study-linked must are never gated. Two differences from a tick, both so a make-up never takes today's own
+ * occurrence's place: it counts a timer only when it names one (a timer on today's row is today's tick's to count),
+ * and it closes none. Without the read (proof not in force today): the make-up exactly as before.
+ */
+function makeUpProofOf(input: MakeUpInput): DutyPlanResult<{
+  template: MakeUpInput["template"];
+  minutes: number | null | undefined;
+  facts: ProofFacts | null;
+  segments: SessionRow[];
+  pagesCols?: { proofKind: "PAGES" | null; proofQty: number | null };
+}> {
+  const p = input.proof;
+  if (!p) return ok({ template: input.template, minutes: input.minutes, facts: null, segments: [] });
+  const { today, now } = input;
+  const template = p.kind ? { ...input.template, proof: p.kind } : input.template;
+  const gated = proofGated(template, today, p.launchDay);
+  const pays = !template.intrinsic && !(template.autoMetric && STUDY_METRICS.has(template.autoMetric));
+  const reported = typeof input.minutes === "number" && Number.isFinite(input.minutes) && input.minutes > 0 ? input.minutes : null;
+  let segments: SessionRow[] = [];
+  if (input.sessionId && !input.minimum && reported == null) {
+    const named = p.sessions.find((x) => x.id === input.sessionId && x.templateId === template.id) ?? null;
+    if (!named) return fail(TIMER_GONE);
+    const mine = timerGroupsOf(p.sessions.filter((x) => x.templateId === template.id)).filter((g) => timerBelongsTo(groupTimerOf(g), today, today));
+    if (!mine.some((g) => g.some((x) => x.id === named.id))) return fail(TIMER_OTHER_DAY);
+    segments = segmentsWith(p.sessions, named, p.prevTickAt);
+  }
+  const timed = segments.length > 0 ? groupMinutesOf(segments, now) : 0;
+  const fromTimer = reported == null && timed >= 1;
+  const minutes = reported ?? (fromTimer ? timed : null);
+  const refusal = proofRefusalOf({ gated, mvv: input.minimum, pays, minutes });
+  if (refusal) return fail(refusal);
+  const pagesOn = pagesGated(template, today, p.launchDay);
+  const pages = pagesOn && !input.minimum ? pagesQtyOf(input.pages) : null;
+  const pagesRefusal = pagesRefusalOf({ gated: pagesOn, target: pagesTargetOf(template), mvv: input.minimum, pays, pages });
+  if (pagesRefusal) return fail(pagesRefusal);
+  const wall = gated && minutes != null ? tickWallOf({ timed: fromTimer ? timed : null, prevTickAt: p.prevTickAt, day: today, today, now }) : null;
+  const counted = fromTimer ? segments : [];
+  const latest = counted[counted.length - 1] ?? null;
+  return ok({
+    template,
+    minutes: input.minimum ? input.minutes : (minutes ?? input.minutes),
+    facts: { launchDay: p.launchDay, wall, session: latest?.id ?? null, ...(pagesOn ? { pages } : {}) },
+    segments: counted,
+    ...(pagesOn ? { pagesCols: pages != null ? { proofKind: "PAGES" as const, proofQty: pages } : { proofKind: null, proofQty: null } } : {}),
   });
 }
 
@@ -632,7 +747,10 @@ export function minimumOf(text: unknown, minutes: unknown): DutyPlanResult<{ mvv
 
 // ── Freezes (F8, decision 12) ─────────────────────────────────────────────
 
-/** Freezes banked: count(FREEZE_EARN) − count(FREEZE_USE), never below 0 (at most FREEZE_MAX by the earn rule). */
+/**
+ * Freezes banked under M2's own rule: count(FREEZE_EARN) − count(FREEZE_USE), never below 0. Retired by blueprint P21
+ * (one Rest Token bank: rest-tokens.ts, momentum's fold); kept for the launch script's history line only.
+ */
 export function freezeBalanceOf(earned: number, used: number): number {
   return Math.max(0, earned - used);
 }
@@ -646,29 +764,57 @@ export interface FreezeSpendState {
   cursor: DayKey | null;
   /** Yesterday's net streak units (foldStreakDays' rule: countsForStreak +1, UNDO −1). */
   yesterdayUnits: number;
-  earned: number;
-  used: number;
+  /**
+   * Blueprint P21 (D19): the one Rest Token bank (rest-tokens.ts restTokenSummaryOf): a token is spent from the bank
+   * going into yesterday, and `left` is the bank today once it is. Null: no bank (momentum is not live).
+   */
+  tokens: RestTokenSummary | null;
   /** 'freeze-use:<yesterday>' already exists (this spend, or settlement's). */
   alreadyUsed: boolean;
+  /**
+   * Blueprint P20 (M2 leftover 4): yesterday's valid rest declaration (duty-rule validRestDays: REST, SICK or VACATION),
+   * or null. Absent reads as none.
+   */
+  yesterdayRest?: RestKind | null;
 }
 
 /**
  * 'Use a freeze for Wed' (decision 12, F8): only after launch, for an
  * unsettled yesterday on or after the first Duty day, with no activity (net
- * streak units ≤ 0, the automatic spend's own rule) and a freeze banked.
- * Already spent for yesterday: the same answer again (idempotent).
+ * streak units ≤ 0, the automatic spend's own rule), not a declared rest,
+ * sick or vacation day, and a Rest Token banked going into it (blueprint P21:
+ * the one bank, momentum's freezes). Already spent for yesterday: the same
+ * answer again (idempotent).
+ *
+ * A rest day (blueprint P20, M2 leftover 4) already holds the streak and
+ * excuses every must but the 'Even on rest days' ones, and settlement never
+ * spends a freeze on one, so the board never offers it (board-ui
+ * yesterdaySheetOf) and the spend refuses it too. One rule then holds for
+ * the week judge (life-weeks dutyOccurrencesM2 reads its freeze days as the
+ * held days that are not rest days): no day is both.
  */
 export function freezeSpendOf(s: FreezeSpendState): DutyPlanResult<{ day: DayKey; left: number; already: boolean }> {
   if (!isDutyLaunched(s.today, s.launchDay)) return fail(launchRefusal(s.launchDay));
   const day = addDays(s.today, -1);
-  const balance = freezeBalanceOf(s.earned, s.used);
-  if (s.alreadyUsed) return ok({ day, left: balance, already: true });
+  const balance = s.tokens?.yesterday.bank ?? 0;
+  if (s.alreadyUsed) return ok({ day, left: s.tokens?.bank ?? 0, already: true });
   const first = settledFloorOf(s.epochDay, s.launchDay);
   if (!first || day < first) return fail(`${weekdayLong(day)} came before Duty started: there is nothing to cover.`);
   if (settledFor(day, s.cursor, first)) return fail(`${weekdayLong(day)} is settled.`);
   if (s.yesterdayUnits > 0) return fail(`${weekdayLong(day)} has activity: a freeze covers a day with nothing done.`);
+  if (s.yesterdayRest) return fail(restDayFreezeMessage(day, s.yesterdayRest));
   if (balance < 1) return fail("No freeze banked yet.");
-  return ok({ day, left: balance - 1, already: false });
+  return ok({ day, left: s.tokens?.yesterday.leftAfter ?? 0, already: false });
+}
+
+/**
+ * A manual freeze for a declared rest day (P20): 'Wednesday was a rest day: it holds your streaks by itself, so no rest
+ * token is spent on it.' P21 review: it never claims the day owes nothing, since a must marked Even on rest days is
+ * still owed there (settlement spends no token on a rest day), so it says so.
+ */
+export function restDayFreezeMessage(day: DayKey, kind: RestKind): string {
+  const what = kind === "SICK" ? "a sick day" : kind === "VACATION" ? "a vacation day" : "a rest day";
+  return `${weekdayLong(day)} was ${what}: it holds your streaks by itself, so no rest token is spent on it. A must marked Even on rest days is still owed.`;
 }
 
 /** The FREEZE_USE row of a manual spend: the automatic spend's key, so both can never land for one day. */
@@ -906,16 +1052,22 @@ export interface DutyBoardFacts {
   ledger: DayLedger;
   /** RestDay rows in duty-view's read window (today − DUTY_READ_BACK_DAYS … today + DUTY_READ_AHEAD_DAYS). */
   restRows: readonly RestRow[];
-  freezeEarned: number;
-  freezeUsed: number;
+  /**
+   * Blueprint P21 (D19): the one Rest Token bank as today reads it (rest-tokens.ts restTokenSummaryOf; momentum's
+   * freezes). Null: no bank (momentum is not live, or the read failed): nothing banked.
+   */
+  restTokens: RestTokenSummary | null;
   /** Net streak units per day for yesterday and the day before. */
   units: Readonly<Record<DayKey, number>>;
   /** Days held by a FREEZE_USE or REPAIR row (yesterday and the day before). */
   heldByLedger: ReadonlySet<DayKey>;
   /** A FREEZE_USE row exists for yesterday (manual or automatic). */
   freezeUsedYesterday: boolean;
-  /** Live templates, ruled per day (compulsory, compulsoryOnRest, pendingChange). */
-  templates: readonly (DutyTemplate & { id: string })[];
+  /**
+   * Live templates, ruled per day (compulsory, compulsoryOnRest, pendingChange). P21 review: with the columns a miss is
+   * priced from (life-grade debtFor), so the freeze state counts only a must that would owe; absent, a must owes.
+   */
+  templates: readonly (DutyTemplate & { id: string; band?: string; bandOverride?: number; estMinutes?: number; machineMinutes?: number })[];
   /** DEBT, FREEZE_*, FULL_DAY and REPAIR rows dated today − 4 .. today − 1 (the last two settled days and a REPAIR dated d − 1). */
   settledRows: readonly SettledFact[];
   /** The latest REPAIR row's day, any age (the Full-day strip's repair hint); null when there is none. */
@@ -923,26 +1075,57 @@ export interface DutyBoardFacts {
 }
 
 /**
- * The board's freeze state (F8): the real balance, and whether settlement's
- * automatic spend will cover yesterday — unsettled, on or after the first
- * Duty day, nothing done, a freeze banked, not already held by rest, and the
- * spend protects something (a live streak on the day before, or a must due).
- * A spend already made for yesterday covers it too.
+ * The board's freeze state (F8; blueprint P21): the one Rest Token bank as the Momentum card shows it, and what
+ * settlement's step 3 will do with yesterday (unsettled, on or after the first Duty day, not held by rest), by its own
+ * rule (P21 review): the fold spends yesterday's token by itself (no momentum action, a live run: reviews alone do not
+ * count), or a must that would owe a debt is open on it and the token is still free when it is judged, whatever
+ * yesterday's activity (rest-tokens restTokenSummaryOf's yesterday.cover). A spend already made for yesterday covers
+ * it too. `forYesterday` and `leftAfter` are what the freeze switch offers: the token yesterday can take, and the bank
+ * once it is spent.
  */
 function freezeStateOf(f: DutyBoardFacts, rest: RestState): FreezeState {
-  const banked = Math.min(FREEZE_MAX, freezeBalanceOf(f.freezeEarned, f.freezeUsed));
+  const t = f.restTokens;
+  const banked = t?.bank ?? 0;
+  const tokens = { forYesterday: t?.yesterday.bank ?? 0, leftAfter: t?.yesterday.leftAfter ?? 0 };
   const usedYesterday = f.freezeUsedYesterday;
   const yesterday = addDays(f.today, -1);
   const live = isDutyLaunched(f.today, f.launchDay);
   const first = settledFloorOf(f.epochDay, f.launchDay);
   const unsettled = live && !!first && yesterday >= first && !settledFor(yesterday, f.cursor, first);
-  if (!unsettled) return { banked, willCover: false, usedYesterday };
-  if (usedYesterday) return { banked, willCover: true, usedYesterday };
-  const idle = (f.units[yesterday] ?? 0) <= 0;
-  const before = addDays(yesterday, -1);
-  const streakLive = (f.units[before] ?? 0) > 0 || f.heldByLedger.has(before) || validRestDays(f.restRows, before, before).size > 0;
-  const protects = streakLive || mustsDueOn(f.templates, yesterday).length > 0;
-  return { banked, willCover: idle && banked >= 1 && rest.yesterday == null && protects, usedYesterday };
+  if (!unsettled) return { banked, willCover: false, musts: null, usedYesterday, ...tokens };
+  if (usedYesterday) return { banked, willCover: true, musts: null, usedYesterday, ...tokens };
+  if (rest.yesterday != null || !t) return { banked, willCover: false, musts: null, usedYesterday, ...tokens };
+  const owes = owedMustsOn(f, yesterday) > 0;
+  const auto = t.yesterday.autoSpend;
+  const willCover = auto || (owes && t.yesterday.cover === "free");
+  const musts: MustCover | null = !owes ? null : willCover ? "covers" : t.yesterday.cover === "if-today" ? "if-today" : null;
+  // A must spend on yesterday is not in the fold yet (the fold's own spend is): today's musts can count on one less.
+  const pending = !auto && musts != null;
+  return { banked, willCover, musts, usedYesterday, ...tokens, forToday: Math.max(0, banked - (pending ? 1 : 0)) };
+}
+
+/**
+ * Yesterday's open musts whose miss would owe a debt (P21 review: settlement-plan's wouldOwe over the board's facts):
+ * open (no done, excused or written-off instance), priced above 0 and inside the caps (3 open a task, 100 in all,
+ * counted from the open debts as read). A template the facts carry no price for counts as owing.
+ */
+function owedMustsOn(f: DutyBoardFacts, day: DayKey): number {
+  const closed = new Set(
+    f.instances.filter((i) => i.day === day && (isDoneStatus(i.status) || i.status === "EXCUSED" || i.status === "WRITTEN_OFF")).map((i) => i.templateId)
+  );
+  const perTpl = new Map<string, number>();
+  let total = 0;
+  for (const o of f.owed) {
+    perTpl.set(o.template.id, (perTpl.get(o.template.id) ?? 0) + 1);
+    total += o.debtXp;
+  }
+  let n = 0;
+  for (const m of mustsDueOn(f.templates, day)) {
+    if (closed.has(m.id)) continue;
+    const debt = m.band != null && m.estMinutes != null ? debtFor({ band: m.band, bandOverride: m.bandOverride ?? 0, estMinutes: m.estMinutes, machineMinutes: m.machineMinutes ?? m.estMinutes }) : 1;
+    if (debt > 0 && (perTpl.get(m.id) ?? 0) < DEBT_OPEN_PER_TEMPLATE && total + debt <= DEBT_OPEN_TOTAL_CAP + 1e-9) n += 1;
+  }
+  return n;
 }
 
 /**
@@ -970,6 +1153,8 @@ function owedCardOf(f: DutyBoardFacts, o: OwedRow): OwedCard {
     machineMinutes: t.machineMinutes,
     startDay: t.startDay,
     mvvMinutes: t.mvvMinutes ?? null,
+    // Blueprint P20: a reading must's day target, for its make-up's page chips (duty-view owedProofOf).
+    autoTarget: t.autoTarget ?? null,
   };
   const prices = owedPricesOf(pricing, f.ledger, f.today);
   const history = f.instances.filter((i) => i.templateId === t.id);

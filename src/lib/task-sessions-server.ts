@@ -96,7 +96,10 @@ export interface SessionStore {
   openOf(userId: string, templateId: string, since: DayKey): Promise<SessionRow[]>;
   /** Closes these sessions counting nothing (Discard): `minutes` 0, and stopped at `at` if they still ran. Not-yet-counted ones only. */
   close(userId: string, ids: readonly string[], at: Date): Promise<void>;
-  /** The user's live templates carrying a proof kind. */
+  /**
+   * The user's live templates carrying a proof kind, and (blueprint P20) any archived one with an open debt: its owed
+   * card's make-up is gated as the server gates it (duty-plan planMakeUp reads the kind by id, archived or not).
+   */
   proofKinds(userId: string): Promise<{ id: string; proof: string | null }[]>;
   /** One template's proof kind and its latest done tick's instant on life day `day` (an Again's bound; none on other days). */
   tickFacts(userId: string, templateId: string, day: DayKey): Promise<{ proof: string | null; prevTickAt: Date | null }>;
@@ -143,7 +146,11 @@ export const prismaSessionStore: SessionStore = {
     if (ids.length === 0) return;
     await prisma.$transaction(closeSessionOps(userId, ids, at));
   },
-  proofKinds: (userId) => prisma.taskTemplate.findMany({ where: { userId, archivedAt: null, boardId: null, proof: { not: null } }, select: { id: true, proof: true } }),
+  proofKinds: (userId) =>
+    prisma.taskTemplate.findMany({
+      where: { userId, boardId: null, proof: { not: null }, OR: [{ archivedAt: null }, { instances: { some: { debtOpen: true } } }] },
+      select: { id: true, proof: true },
+    }),
   tickFacts: async (userId, templateId, day) => {
     const [t, prev] = await Promise.all([
       prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: { proof: true } }),

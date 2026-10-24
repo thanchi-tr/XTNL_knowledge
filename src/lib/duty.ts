@@ -47,6 +47,9 @@ import {
   type LifeResult,
 } from "./tasks";
 import { WRITES_OFF_REFUSAL, settleLifeDays } from "./settlement";
+import { validRestDays } from "./duty-rule";
+import { readRestTokenSummary } from "./rest-tokens-server";
+import { countSessionOps, readCompletionProof } from "./task-sessions-server";
 
 /**
  * Duty's server cores (M2 lane C: F2 gates, F6, F8's manual spend, F9 and
@@ -62,7 +65,10 @@ import { WRITES_OFF_REFUSAL, settleLifeDays } from "./settlement";
  *                     (decisions 8, 9, 11): TASK dated today keyed on d,
  *                     DEBT_REPAID +debt, the instance DONE_LATE / DONE_MVV
  *                     (repaired) or MADE_UP. The guard holds today's knee rows
- *                     and the instance still owed.
+ *                     and the instance still owed. From PROOF_LAUNCH_DAY a
+ *                     deep-work must's make-up brings its minutes (or names a
+ *                     timer) and a reading must's its pages, exactly as a
+ *                     tick does (duty-plan planMakeUp; blueprint P20).
  *   undoMakeUpCore    within 10 minutes, the same life day (decision 10): the TASK's
  *                     UNDO and a negative DEBT_REPAID 'unrepaid:<id>' — never
  *                     an UNDO for the repayment; the debt is open again.
@@ -165,11 +171,18 @@ async function readForMakeUp(userId: string, instanceId: string, today: DayKey) 
  * occurrence (DONE_LATE / DONE_MVV, repaired) inside the two-day window and
  * the one-a-week budget, else MADE_UP. Idempotent: a repeat returns the
  * stored make-up. Retried when another write moved today's ledger first.
+ *
+ * Proof of work (blueprint P23, P24; Stage 7's open item, closed in P20):
+ * while proof is in force today the make-up reads the template's proof
+ * (readCompletionProof, today: the make-up is today's work), and planMakeUp
+ * gates it as a tick: a deep-work must's full make-up needs `minutes` or a
+ * timer it names (`sessionId`, counted once here), a reading must's its
+ * `pages`. Proof not in force: no read, the make-up exactly as before.
  */
 export async function makeUpCore(
   userId: string,
   instanceId: string,
-  opts: { minimum: boolean; minutes?: number | null },
+  opts: { minimum: boolean; minutes?: number | null; sessionId?: string | null; pages?: number | null },
   now: Date = new Date()
 ): Promise<LifeResult<MakeUpOutcome>> {
   const today = todayKey(now);
@@ -182,6 +195,8 @@ export async function makeUpCore(
     if (inst.status !== "MISSED" || !inst.debtOpen) return fail("Nothing is owed there any more.");
 
     const t = toBoardTemplate(inst.template, now);
+    // Null, with no read, while proof of work is not in force today.
+    const proof = await readCompletionProof(userId, inst.templateId, today);
     const planned = planMakeUp({
       template: t,
       instance: { id: inst.id, templateId: inst.templateId, day: inst.day, slot: inst.slot, debtXp: inst.debtXp },
@@ -192,6 +207,7 @@ export async function makeUpCore(
       ledger: read.ledger,
       repairedInLast7: read.repairedInLast7,
       ...makeUpAttemptsOf(read.rows, inst.id),
+      ...(proof ? { proof, sessionId: opts.sessionId ?? null, pages: opts.pages ?? null } : {}),
     });
     if (!planned.ok) return fail(planned.error);
     const p = planned.value;
@@ -209,6 +225,8 @@ export async function makeUpCore(
           xpPaid: p.instance.xpPaid,
           completedAt: now,
           minutes: p.instance.minutes ?? null,
+          // Pages proof (P24): only a reading must's make-up while proof is in force writes the two columns.
+          ...(p.pagesCols ?? {}),
         },
       }),
       activityOp(userId, p.taskEvent),
@@ -217,6 +235,8 @@ export async function makeUpCore(
       prisma.taskTemplate.updateMany({ where: { id: t.id, gradeFrozenAt: null }, data: { gradeFrozenAt: now } }),
     ];
     if (!t.recurrence) ops.push(prisma.taskTemplate.updateMany({ where: { id: t.id, completedAt: null }, data: { completedAt: now } }));
+    // Proof of work (P23): the timer this make-up named is counted once, as a tick counts one.
+    if (p.segments.length > 0) ops.push(...countSessionOps(userId, p.segments, p.plan.receipt.minutes, now));
 
     try {
       await prisma.$transaction(ops);
@@ -410,15 +430,16 @@ export async function setMinimumCore(
 // ── Freezes ───────────────────────────────────────────────────────────────
 
 /**
- * Fails the transaction (22012) unless a freeze is still banked (EARN − USE
- * ≥ 1) and `day` still has no activity (net streak units ≤ 0: streak.ts's
+ * Fails the transaction (22012) unless no Rest Token has been spent since the
+ * read (the FREEZE_USE count is still `used`: the bank is momentum's fold,
+ * rest-tokens.ts, so the read's balance stands while no spend lands; blueprint
+ * P21) and `day` still has no activity (net streak units ≤ 0: streak.ts's
  * CASE). After the lock, so it sees an automatic spend or a tick that won.
  */
-function freezeGuardOp(userId: string, day: DayKey) {
+function freezeGuardOp(userId: string, day: DayKey, used: number) {
   return prisma.$executeRaw`
     SELECT 1 / (CASE WHEN
-      (SELECT COUNT(*) FILTER (WHERE "source" = 'FREEZE_EARN') - COUNT(*) FILTER (WHERE "source" = 'FREEZE_USE')
-         FROM "ActivityEvent" WHERE "userId" = ${userId} AND "source" IN ('FREEZE_EARN', 'FREEZE_USE')) >= 1
+      (SELECT COUNT(*) FROM "ActivityEvent" WHERE "userId" = ${userId} AND "source" = 'FREEZE_USE') = ${used}::int
       AND (SELECT COALESCE(SUM(CASE WHEN "countsForStreak" THEN 1 WHEN "source" = 'UNDO' THEN -1 ELSE 0 END), 0)
          FROM "ActivityEvent" WHERE "userId" = ${userId} AND "day" = ${day}::date) <= 0
     THEN 1 ELSE 0 END)
@@ -426,23 +447,31 @@ function freezeGuardOp(userId: string, day: DayKey) {
 }
 
 async function readFreezeState(userId: string, yesterday: DayKey) {
-  const [settings, freezeRows, units, spent] = await Promise.all([
+  const today = addDays(yesterday, 1);
+  const [settings, used, units, spent, rest, tokens] = await Promise.all([
     prisma.lifeSettings.findUnique({ where: { userId }, select: { settledThroughDay: true, epochDay: true } }),
-    prisma.activityEvent.groupBy({ by: ["source"], where: { userId, source: { in: ["FREEZE_EARN", "FREEZE_USE"] } }, _count: { _all: true } }),
+    // The guard's count: no spend may land between this read and the write.
+    prisma.activityEvent.count({ where: { userId, source: "FREEZE_USE" } }),
     prisma.$queryRaw<{ units: number }[]>`
       SELECT COALESCE(SUM(CASE WHEN "countsForStreak" THEN 1 WHEN "source" = 'UNDO' THEN -1 ELSE 0 END), 0)::int AS units
       FROM "ActivityEvent" WHERE "userId" = ${userId} AND "day" = ${yesterday}::date
     `,
     prisma.activityEvent.findUnique({ where: { userId_dedupeKey: { userId, dedupeKey: freezeUseKey(yesterday) } }, select: { id: true } }),
+    // Blueprint P20 (M2 leftover 4): a declared rest day takes no freeze. No guard statement holds it at write time: a
+    // row for yesterday declared now is never valid (REST before its day starts, SICK before it ends), so none can land.
+    prisma.restDay.findMany({ where: { userId, day: dateColumn(yesterday) }, select: { day: true, kind: true, declaredAt: true, cancelledAt: true } }),
+    // Blueprint P21 (D19): the one Rest Token bank (momentum's freezes) as today reads it.
+    readRestTokenSummary(prisma, userId, today),
   ]);
-  const count = (source: string) => freezeRows.find((r) => r.source === source)?._count._all ?? 0;
+  const restRows = rest.map((r) => ({ day: keyOfDateColumn(r.day), kind: r.kind, declaredAt: r.declaredAt, cancelledAt: r.cancelledAt }));
   return {
     cursor: settings?.settledThroughDay ? keyOfDateColumn(settings.settledThroughDay) : null,
     epochDay: settings?.epochDay ? keyOfDateColumn(settings.epochDay) : null,
-    earned: count("FREEZE_EARN"),
-    used: count("FREEZE_USE"),
+    used,
+    tokens,
     yesterdayUnits: units[0]?.units ?? 0,
     alreadyUsed: !!spent,
+    yesterdayRest: validRestDays(restRows, yesterday, yesterday).get(yesterday) ?? null,
   };
 }
 
@@ -451,7 +480,11 @@ async function readFreezeState(userId: string, yesterday: DayKey) {
  * (sink NONE, countsForStreak false) — the automatic spend's own key, so
  * both can never land for one day. Settlement then excuses all of that day's
  * musts, 'Even on rest days' ones included. Refused before launch, for a
- * settled or active yesterday, or with nothing banked.
+ * settled or active yesterday, for a declared rest, sick or vacation day
+ * (it needs none; blueprint P20), or with nothing banked. Blueprint P21: the
+ * token comes from the one Rest Token bank (momentum's freezes), which counts
+ * this row: when the fold already spends yesterday's token by itself, this
+ * records that same token and `left` is unchanged.
  */
 export async function spendFreezeCore(userId: string, now: Date = new Date()): Promise<LifeResult<{ day: DayKey; left: number }>> {
   const today = todayKey(now);
@@ -469,7 +502,7 @@ export async function spendFreezeCore(userId: string, now: Date = new Date()): P
         lifeLockOp(userId),
         // The one settled-day rule (settledFor), floored at the first Duty day like every tick's.
         settledDayGuardOp(userId, yesterday, launchDay),
-        freezeGuardOp(userId, yesterday),
+        freezeGuardOp(userId, yesterday, state.used),
         activityOp(userId, freezeUseEventOf(yesterday, now)),
       ]);
     } catch (err) {

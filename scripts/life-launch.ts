@@ -6,8 +6,14 @@
  *   npx tsx scripts/life-launch.ts            # dry run: reads, prints, writes nothing
  *   npx tsx scripts/life-launch.ts --apply    # writes (after the user's go-ahead)
  *
+ * The database guard (settlement.ts launchTargetOf and launchDaysFor, the Duty launch script's own; M2
+ * leftover 9, blueprint P20), before anything is read: it reads and writes only the xtnl-idea project
+ * or the rehearsal mirror (localhost:55432); anything else is refused. XTNL_LIFE_LAUNCH_DAY and
+ * XTNL_DUTY_LAUNCH_DAY are for the rehearsal mirror only: against xtnl-idea an override that would
+ * change a launch day stops the run (the judge it calls reads the environment itself), so unset it.
+ *
  * The dry run prints:
- *   - the datasource host (check the project ref before any --apply) and the launch day;
+ *   - the target (the matched project ref, or the rehearsal mirror) and the launch day;
  *   - the WEEK plan judgeClosedWeeks({dryRun, maxWeeks}) would write: every remaining week
  *     (up to DRY_RUN_MAX_WEEKS, with a warning if more remain), backfill or not, each
  *     track's verdict and reason, and its mints (none for a week before the launch day);
@@ -40,7 +46,7 @@ import { getCurrentUserId } from "../src/lib/user";
 import { computeAttributeScores, ATTRIBUTES, ATTRIBUTE_META, type AttributeScores } from "../src/lib/attributes";
 import { characterLevel } from "../src/lib/character";
 import { todayKey, weekStartKeyOf } from "../src/lib/life-day";
-import { DECAY_GRACE_REASON, isLaunched, lifeLaunchDay, statedGoalMp, withoutBackfill } from "../src/lib/life-economy";
+import { DECAY_GRACE_REASON, isLaunched, statedGoalMp, withoutBackfill } from "../src/lib/life-economy";
 import { readLifeLedger, loadLifeTracks } from "../src/lib/life-tracks-server";
 import { judgedWeekKeys, lifeContributionRows, lifeTracksView, trackStateAt, DISPLAY_ORDER, TRACK_NAME } from "../src/lib/life-tracks";
 import { ledgerWithPlans } from "../src/lib/life-weeks";
@@ -52,6 +58,7 @@ import { unlockBlockers } from "../src/lib/skill-gates";
 import { SKILL_POOL, getSkill } from "../src/lib/skill-pool";
 import { computeTitle } from "../src/lib/titles";
 import { captureSnapshot, detectCelebrations } from "../src/lib/celebrations";
+import { launchDaysFor, launchTargetOf } from "../src/lib/settlement";
 import type { ProgressSnapshot } from "../src/lib/celebration-types";
 import type { Horizon } from "../src/lib/life-types";
 
@@ -61,16 +68,6 @@ const HORIZONS: readonly Horizon[] = ["SHORT", "MID", "LONG"];
 const DRY_RUN_MAX_WEEKS = 520;
 /** --apply's judge passes (12 weeks each) before it gives up and asks for a rerun. */
 const APPLY_MAX_PASSES = 100;
-
-function datasource(): string {
-  const raw = process.env.DATABASE_URL ?? "";
-  try {
-    const u = new URL(raw);
-    return `${u.hostname}:${u.port || "5432"}${u.pathname} (user ${u.username || "?"})`;
-  } catch {
-    return "(DATABASE_URL not set or unreadable)";
-  }
-}
 
 const fmt = (n: number, dp = 2) => (Math.round(n * 10 ** dp) / 10 ** dp).toLocaleString("en-GB");
 
@@ -99,10 +96,24 @@ async function main() {
   const userId = getCurrentUserId();
   const now = new Date();
   const today = todayKey(now);
-  const launchDay = lifeLaunchDay();
-
-  console.log(`Datasource: ${datasource()}`);
+  // Where this would read and write, and which launch days apply there (before any read).
+  const target = launchTargetOf({ DATABASE_URL: process.env.DATABASE_URL, DIRECT_URL: process.env.DIRECT_URL });
+  console.log(`Target: ${target.kind === "refused" ? "REFUSED" : target.kind} · ${target.label}`);
+  for (const p of target.problems) console.log(`  !! ${p}`);
   console.log(`Mode: ${APPLY ? "APPLY (writes)" : "dry run (writes nothing)"}`);
+  if (target.kind === "refused") {
+    console.log("\nRefused: this reads and writes only the xtnl-idea project or the rehearsal mirror (localhost:55432). Nothing read, nothing written.");
+    process.exitCode = 1;
+    return;
+  }
+  const days = launchDaysFor(target);
+  if (days.ignored.length > 0) {
+    for (const line of days.ignored) console.log(`  !! ${line}`);
+    console.log("\nRefused: unset the override first (the week judge reads the environment itself). Nothing read, nothing written.");
+    process.exitCode = 1;
+    return;
+  }
+  const launchDay = days.life;
   if (!launchDay) {
     console.log("LIFE_LAUNCH_DAY is not set (nor a valid XTNL_LIFE_LAUNCH_DAY outside production). Nothing to do.");
     process.exitCode = 1;

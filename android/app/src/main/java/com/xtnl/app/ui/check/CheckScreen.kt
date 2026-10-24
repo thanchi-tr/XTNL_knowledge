@@ -23,6 +23,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -44,6 +46,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,6 +63,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -101,8 +105,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.FadingLine
 import com.xtnl.app.core.Fmt
+import com.xtnl.app.core.OwedLine
 import com.xtnl.app.core.ProofLine
 import com.xtnl.app.core.QuestLine
+import com.xtnl.app.core.RestTokenLine
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.core.WalletLine
@@ -111,6 +117,7 @@ import com.xtnl.app.data.CheckData
 import com.xtnl.app.data.DailyQuests
 import com.xtnl.app.data.Fading
 import com.xtnl.app.data.LevelInfo
+import com.xtnl.app.data.OwedItem
 import com.xtnl.app.data.QuestsData
 import com.xtnl.app.data.ReviewSummary
 import com.xtnl.app.data.TaskItem
@@ -134,6 +141,7 @@ import com.xtnl.app.ui.components.SealState
 import com.xtnl.app.ui.components.StampSpec
 import com.xtnl.app.ui.components.XButton
 import com.xtnl.app.ui.components.XCard
+import com.xtnl.app.ui.components.XChip
 import com.xtnl.app.ui.components.XIconButton
 import com.xtnl.app.ui.motion.BoardMoment
 import com.xtnl.app.ui.motion.Dur
@@ -290,6 +298,12 @@ fun CheckEvents(vm: CheckViewModel, spots: CheckSpots) {
                     snacks.error(e.message, e.retry)
                 }
                 is CheckViewModel.Event.Note -> snacks.show(e.message)
+                // P22: an owed card's action: the server's line (a make-up in the kept tone; Accept the loss and an undo
+                // plainly), with Undo while the make-up's ten minutes are open (P22 review: the web card's own Undo).
+                is CheckViewModel.Event.MadeUp ->
+                    if (e.undo != null) snacks.show(e.line, OwedLine.UNDO_LABEL, if (e.repaid) SnackTone.KEPT else SnackTone.PLAIN) { feel?.untick(ladder = false); e.undo.invoke() }
+                    else snacks.show(e.line, tone = if (e.repaid) SnackTone.KEPT else SnackTone.PLAIN)
+                is CheckViewModel.Event.MakeUpFailed -> { feel?.error(); snacks.error(e.message, e.retry) }
                 // The board-clear moment, once per clear (an event, so coming back to Check doesn't play it again).
                 is CheckViewModel.Event.BoardClear -> scope.launch { boardClear(spots, vm, fx, feel, c, motion, e.templateId, density.density) }
             }
@@ -576,6 +590,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
             ) {
                 header(data, ui, vm, spots, onOpenSettings)
                 tasks(ui, rows, motion)
+                owed(ui, vm)
                 review(data.review, data.fading, data.now, onStartReview)
                 week(data.week)
                 quests(ui, rows)
@@ -591,6 +606,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                     ) {
                         header(data, ui, vm, spots, onOpenSettings)
                         tasks(ui, rows, motion)
+                        owed(ui, vm)
                     }
                 },
                 second = {
@@ -731,6 +747,23 @@ private fun DailyQuestsStrip(d: DailyQuests, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * The owed cards (P22), on both displays: on the cover screen in the one column after the day's rows, on the main
+ * display at the end of the first pane, under the rows they belong to. Only while the server sends a debt.
+ */
+private fun LazyListScope.owed(ui: CheckViewModel.Ui, vm: CheckViewModel) {
+    val owed = ui.owed
+    if (owed.isEmpty()) return
+    item(key = "owed", contentType = "owed") {
+        OwedTile(
+            owed, ui.dutyOn, ui.owedBusy, ui.owedPicks,
+            onPick = { o, minutes, pages -> vm.pickOwed(o.instanceId, minutes, pages) },
+            onAction = { o, action, minutes, pages -> vm.makeUp(o, action, minutes, pages) },
+            modifier = Modifier.padding(top = 12.dp),
+        )
+    }
+}
+
 private fun LazyListScope.review(r: ReviewSummary?, fading: Fading?, now: String?, onStart: () -> Unit) {
     item(key = "review", contentType = "review") {
         ReviewTile(r, fading, now, onStart, Modifier.padding(top = 12.dp))
@@ -801,6 +834,12 @@ private fun Header(data: CheckData, ui: CheckViewModel.Ui, vm: CheckViewModel, s
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 data.streak?.let { s -> Streak(s.days, s.keptToday || ui.kept.isNotEmpty(), spots) }
+            }
+            // The one Rest Token bank (blueprint P21): only while the server sends it; on both displays (the header is
+            // the cover screen's first item and the main screen's first pane's).
+            RestTokenLine.tokens(data.streak)?.let { n ->
+                Spacer(Modifier.height(6.dp))
+                RestTokensChip(n)
             }
             // The credits wallet (blueprint P16): only while the server sends one (credits switched on, read).
             ui.wallet?.let { w ->
@@ -945,6 +984,28 @@ private fun WalletChip(w: Wallet) {
     ) {
         Text(WalletLine.balance(w), color = c.ink0, style = MaterialTheme.typography.labelLarge, maxLines = 1)
         Text(" · " + WalletLine.today(w), color = c.ink2, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+    }
+}
+
+/**
+ * The one Rest Token bank (blueprint 3.2c, P21; decision D19: the momentum freezes): the server's count in the web's
+ * words ("Rest tokens 2"), the freeze glyph in the held colour beside the words, never colour alone. A record, never a
+ * button: the server spends a token, the app never does. One line, so it fits the cover screen too.
+ */
+@Composable
+private fun RestTokensChip(n: Int) {
+    val c = X.c
+    Row(
+        Modifier
+            .clip(PillShape)
+            .border(BorderStroke(1.dp, c.line2), PillShape)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .semantics(mergeDescendants = true) { contentDescription = RestTokenLine.describe(n) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Glyphs.Freeze, null, tint = c.held, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(RestTokenLine.chip(n), color = c.ink0, style = MaterialTheme.typography.labelLarge, maxLines = 1)
     }
 }
 
@@ -1388,6 +1449,113 @@ private fun WeekTile(w: WeekAudit, modifier: Modifier = Modifier) {
                 }
                 WeekLine.decayNote(w)?.let { Text(it, style = meta, color = c.ink2, modifier = Modifier.padding(top = 4.dp)) }
             }
+        }
+    }
+}
+
+// ── Owed cards ──────────────────────────────────────────────────────────────
+
+/**
+ * The owed cards (docs/mobile-api.md `owed` and POST /tasks/makeup; blueprint 2.3 and 3.2b, P22, decision D18): the web
+ * MakeUpCard in its words, every open debt in one card, oldest first. Each says when it was missed beside its owed chip
+ * ("−4.2 owed": the owed hue in words on a quiet chip, never a red wall), its line, its window and what a make-up does
+ * (×0.85, the whole debt repaid). Its actions are 48 dp: Make up (the server's price now), Do minimum (with its words) and
+ * Accept the loss only where the server offers it. A proof must's chips come first (the minutes it took, a reading
+ * must's pages), and Make up waits for them, as its tick does. While the server has Duty off the card shows without its
+ * actions. Every line may wrap, so it reads the same on the cover screen and in the main display's first pane. The
+ * picks are the view model's (P22 review: a fold or an unfold switches the list's branch, so a row's own state would
+ * be dropped), and each row is keyed by its debt, so a card made up above never hands its picks to the next.
+ */
+@Composable
+private fun OwedTile(
+    owed: List<OwedItem>,
+    dutyOn: Boolean,
+    busy: Set<String>,
+    picks: Map<String, CheckViewModel.OwedPick>,
+    onPick: (OwedItem, Int?, Int?) -> Unit,
+    onAction: (OwedItem, String, Int?, Int?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = X.c
+    XCard(modifier.fillMaxWidth()) {
+        Column {
+            Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(c.owed))
+                Spacer(Modifier.width(8.dp))
+                Eyebrow(OwedLine.TITLE)
+                Spacer(Modifier.width(8.dp))
+                Text(OwedLine.header(owed).removePrefix("${OwedLine.TITLE}: "), color = c.ink2, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            owed.forEachIndexed { i, o ->
+                Spacer(Modifier.height(if (i == 0) 8.dp else 12.dp))
+                if (i > 0) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(c.line2))
+                    Spacer(Modifier.height(12.dp))
+                }
+                key(o.instanceId) { OwedRow(o, dutyOn, o.instanceId in busy, picks[o.instanceId], onPick, onAction) }
+            }
+        }
+    }
+}
+
+/** One debt of the Owed card: its words, a proof must's chips, and its actions (none while Duty is off on the server). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OwedRow(o: OwedItem, dutyOn: Boolean, busy: Boolean, pick: CheckViewModel.OwedPick?, onPick: (OwedItem, Int?, Int?) -> Unit, onAction: (OwedItem, String, Int?, Int?) -> Unit) {
+    val c = X.c
+    val meta = MaterialTheme.typography.labelMedium
+    val minutes = pick?.minutes
+    // A reading must's day target is picked to start with, as the minutes sheet picks it.
+    val pages = if (pick != null) pick.pages else o.proof?.pages?.target
+    Column {
+        Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = OwedLine.describe(o) }) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(o.whenLine.ifBlank { o.title }, style = MaterialTheme.typography.titleSmall, color = c.ink0, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    OwedLine.debtChip(o), color = c.owed, style = MaterialTheme.typography.labelLarge.figures(), maxLines = 1,
+                    modifier = Modifier.clip(PillShape).border(BorderStroke(1.dp, c.line2), PillShape).padding(horizontal = 10.dp, vertical = 4.dp),
+                )
+            }
+            if (o.text.isNotBlank()) Text(o.text, style = MaterialTheme.typography.bodyMedium, color = c.ink1, modifier = Modifier.padding(top = 4.dp))
+            if (o.window.isNotBlank()) Text(o.window, style = meta, color = c.ink2, modifier = Modifier.padding(top = 2.dp))
+            Text(OwedLine.rateLine(o), style = meta, color = c.ink2)
+        }
+        if (!dutyOn) {
+            Text(OwedLine.ON_THE_WEB, style = meta, color = c.ink2, modifier = Modifier.padding(top = 6.dp))
+        } else {
+            val mins = OwedLine.minuteChips(o)
+            if (mins.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Eyebrow("Minutes it took")
+                Spacer(Modifier.height(6.dp))
+                FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (m in mins) XChip("$m min", selected = minutes == m, onClick = { onPick(o, if (minutes == m) null else m, pages) }, height = 48.dp)
+                }
+            }
+            val pgs = OwedLine.pageChips(o)
+            if (pgs.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Eyebrow("Pages read")
+                Spacer(Modifier.height(6.dp))
+                FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (n in pgs) XChip(ProofLine.pagesLabel(n), selected = pages == n, onClick = { onPick(o, minutes, if (pages == n) null else n) }, height = 48.dp)
+                }
+            }
+            OwedLine.needs(o, minutes, pages)?.let { Text(it, style = meta, color = c.ink2, modifier = Modifier.padding(top = 6.dp)) }
+            Spacer(Modifier.height(10.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                XButton(
+                    OwedLine.makeUpLabel(o),
+                    onClick = { onAction(o, OwedLine.MAKEUP, minutes.takeIf { o.proof?.minutes != null }, pages.takeIf { o.proof?.pages != null }) },
+                    enabled = !busy && OwedLine.canMakeUp(o, dutyOn, minutes, pages), busy = busy, height = 48.dp,
+                )
+                OwedLine.minimumLabel(o)?.let { label ->
+                    XButton(label, onClick = { onAction(o, OwedLine.MINIMUM, null, null) }, kind = ButtonKind.QUIET, enabled = !busy, height = 48.dp)
+                }
+                if (o.canAcceptLoss) XButton(OwedLine.ACCEPT, onClick = { onAction(o, OwedLine.ACCEPT_LOSS, null, null) }, kind = ButtonKind.QUIET, enabled = !busy, height = 48.dp)
+            }
+            OwedLine.minimumWords(o)?.let { Text("Minimum: $it", style = meta, color = c.ink2, modifier = Modifier.padding(top = 6.dp)) }
         }
     }
 }

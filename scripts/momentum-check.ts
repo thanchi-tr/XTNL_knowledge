@@ -6,6 +6,8 @@
  *
  *   §1 G1–G10: src/lib/momentum.ts against the sim's goldens. They are restated from
  *      `npx tsx scripts/momentum-sim.ts` (importing the sim would run its year-long Monte Carlo).
+ *      Blueprint P21 re-pins G6 and G8 (one Rest Token bank): the fold's FREEZE_USE and rest-day options, and the
+ *      chest's "bank full" read from that bank; every golden without them is unchanged.
  *   §2 the launch gate: MOMENTUM_LAUNCH_DAY is 2026-10-12, the override, the null gate (an explicit
  *      null launch day: nothing live), and the pre-launch model is
  *      exactly today's constants (so every reader of them is unchanged)
@@ -116,6 +118,7 @@ import {
   workoutRowKey,
   type Intensity,
 } from "../src/lib/momentum";
+import { restTokenFold, restTokenInputsOf } from "../src/lib/rest-tokens";
 
 let passed = 0;
 let failed = 0;
@@ -169,6 +172,20 @@ console.log("§1 goldens G1–G10");
   check("G6 u1 0.95, u2 0.20 → RARE FREEZE; with the bank full → +8 MP", d3.tier === "RARE" && d3.item === "FREEZE" && d3.freeze && d4.item === "FREEZE" && !d4.freeze && d4.mp === 8);
   check("G6 9 chests without a rare → the 10th is RARE (pity) HOARD, +40 XP +12 MP", d5.tier === "RARE" && d5.pity && d5.item === "HOARD" && d5.xp === 40 && d5.mp === 12);
   check("G6 every cosmetic owned → +8 MP", d6.item === "COSMETIC" && d6.cosmetic === null && d6.mp === 8);
+  // Re-pinned by blueprint P21: "the bank full" is the one Rest Token bank's (rest-tokens.ts, the fold openChestCore reads
+  // through runOf): 13 momentum days from a start of 1 fill it (2 of 2), and a FREEZE_USE settlement wrote on day 11
+  // leaves room, so the same roll then gives the freeze itself.
+  const g6Days = Array.from({ length: 13 }, (_, i) => addDays("2026-10-19", i));
+  const g6Inputs = restTokenInputsOf({ launch: g6Days[0], through: g6Days[12], units: new Map(g6Days.map((d) => [d, 1])), chests: [], perkRows: [], bodyKept: new Set() });
+  const full = restTokenFold(g6Inputs, g6Days[12]);
+  const spent = restTokenFold({ ...g6Inputs, spent: new Set([g6Days[10]]) }, g6Days[12]);
+  const g6Full = chestDrop(0.95, 0.2, { sinceRare: 0, freezeBankFull: full.bank >= 2, owned: none });
+  const g6Room = chestDrop(0.95, 0.2, { sinceRare: 0, freezeBankFull: spent.bank >= 2, owned: none });
+  check(
+    "G6 P21: the bank full is the one bank's: 2 of 2 → FREEZE becomes +8 MP; after a written spend (1 of 2) the same roll is +1 freeze",
+    full.bank === 2 && spent.bank === 1 && g6Full.item === "FREEZE" && !g6Full.freeze && g6Full.mp === 8 && g6Room.freeze && g6Room.mp === 0,
+    JSON.stringify({ full: full.bank, spent: spent.bank })
+  );
 
   eq("G7 lspThreshold(D, 1..5) = 90, 270, 540, 900, 1350", [1, 2, 3, 4, 5].map((n) => lspThreshold("DISCIPLINE", n)), [90, 270, 540, 900, 1350]);
   eq("G7 lspOf(D, 899) = 3, lspOf(D, 900) = 4", [lspOf("DISCIPLINE", 899), lspOf("DISCIPLINE", 900)], [3, 4]);
@@ -185,6 +202,43 @@ console.log("§1 goldens G1–G10");
   check("G8 today empty → run 12 (today never breaks)", fz3.current === 12 && fz3.breaks === 0, JSON.stringify(fz3));
   const fzStart = foldMomentum(days13, days13[12], (d) => d !== days13[3], () => 0, two, { startBank: MOMENTUM_START_FREEZES });
   check("G8+ with the launch day's start freeze (1), day 4 empty is held: run 12, no break, a freeze earned at 10", MOMENTUM_START_FREEZES === 1 && fzStart.current === 12 && fzStart.breaks === 0 && fzStart.used === 1 && fzStart.earned === 1 && fzStart.bank === 1, JSON.stringify(fzStart));
+
+  // Re-pinned by blueprint P21 (D19, one Rest Token bank): the fold counts a FREEZE_USE row as its day's one token and
+  // holds a declared rest day with none. Without either option (every golden above) it is byte for byte the sim's fold.
+  const at = (i: number) => (d: string) => d === days13[i];
+  const fzRow = foldMomentum(days13, days13[12], (d) => d !== days13[10], () => 0, two, { spent: at(10) });
+  check(
+    "G8 P21: a FREEZE_USE row on the day the fold would hold by itself is that one token, never two (the G8 fold exactly)",
+    JSON.stringify(fzRow) === JSON.stringify(fz),
+    `${JSON.stringify(fzRow)} vs ${JSON.stringify(fz)}`
+  );
+  const allActive = (d: string) => d <= days13[12];
+  const fzActiveSpend = foldMomentum(days13, days13[12], allActive, () => 0, two, { startBank: 1, spent: at(4) });
+  const fzActiveNone = foldMomentum(days13, days13[12], allActive, () => 0, two, { startBank: 1 });
+  check(
+    "G8 P21: a token spent on an active day (a must excused) costs one and holds nothing: run 13, used 1, bank 1 (2 without it)",
+    fzActiveSpend.current === 13 && fzActiveSpend.used === 1 && fzActiveSpend.bank === 1 && fzActiveSpend.heldDays.length === 0 && fzActiveNone.bank === 2 && fzActiveNone.used === 0,
+    JSON.stringify(fzActiveSpend)
+  );
+  const fzDead = foldMomentum(days13, days13[12], (d) => d !== days13[0], () => 0, two, { startBank: 1, spent: at(0) });
+  check(
+    "G8 P21: a token spent on a day with no run to carry (its musts excused) is spent and covers the day (coveredDays, never a held run day); the run starts after it",
+    fzDead.used === 1 && fzDead.heldDays.length === 0 && fzDead.coveredDays.join() === days13[0] && fzDead.heldInRun === 0 && fzDead.current === 12 && fzDead.breaks === 0,
+    JSON.stringify(fzDead)
+  );
+  const fzEmpty = foldMomentum(days13, days13[12], (d) => d !== days13[4], () => 0, two, { spent: at(4) });
+  check(
+    "G8 P21: a FREEZE_USE row with the bank empty still holds its day and takes nothing (used 0; the earn at 10 is the run's own)",
+    fzEmpty.current === 12 && fzEmpty.used === 0 && fzEmpty.heldDays.join() === days13[4] && fzEmpty.earned === 1 && fzEmpty.bank === 1,
+    JSON.stringify(fzEmpty)
+  );
+  const fzRest = foldMomentum(days13, days13[12], (d) => d !== days13[3], () => 0, two, { rest: at(3) });
+  check(
+    "G8 P21: a declared rest day holds the run with no token (the G8 break gone): run 12, no break, nothing used, the day in restDays",
+    fzRest.current === 12 && fzRest.breaks === 0 && fzRest.used === 0 && fzRest.heldDays.length === 0 && fzRest.restDays.join() === days13[3],
+    JSON.stringify(fzRest)
+  );
+  check("G8 P21: without spent or rest the fold's new fields are empty (restDays [], coveredDays [])", [fz, fz2, fzStart].every((f) => f.restDays.length === 0 && f.coveredDays.length === 0));
 
   const perBranch = BRANCHES.map((b) => PERKS.filter((p) => p.branch === b));
   check("G9 27 perks, 9 per branch, 20 LSP each, unique codes", PERKS.length === 27 && perBranch.every((ps) => ps.length === 9 && ps.reduce((s, p) => s + p.cost, 0) === 20) && new Set(PERKS.map((p) => p.code)).size === 27);

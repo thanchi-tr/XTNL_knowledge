@@ -361,11 +361,13 @@ async function readMomentum(userId: string, now: Date): Promise<MomentumPart | n
   if (launch == null) return null;
   const m = await import("./momentum-server");
   const store = m.prismaMomentumStore;
-  const [units, rows, weeks, questRows] = await Promise.all([
+  const [units, rows, weeks, questRows, rest] = await Promise.all([
     store.units(userId, launch, today),
-    store.events(userId, { sources: ["CHEST", "PERK", "RESPEC"], from: launch }),
+    // FREEZE_USE and the rest days (blueprint P21): the one Rest Token bank, as momentum-server's own fold reads it.
+    store.events(userId, { sources: ["CHEST", "PERK", "RESPEC", "FREEZE_USE"], from: launch }),
     store.events(userId, { sources: ["WEEK"], from: launch, to: today, keyPrefixes: ["week:BODY:"] }),
     store.events(userId, { sources: ["QUEST_SET"], from: today, to: today }),
+    m.readRestHeld(store, userId, launch, today),
   ]);
   const L: MomentumLedger = {
     launch,
@@ -375,6 +377,8 @@ async function readMomentum(userId: string, now: Date): Promise<MomentumPart | n
     paid: [],
     bodyKept: new Set(weeks.filter((w) => (w.qty ?? 0) > 0).map((w) => w.day)),
     mints: [],
+    spent: m.spentDaysOf(rows, launch),
+    rest,
   };
   const fold = m.runOf(L, today);
   const { inForce } = m.questRowsOf(questRows, today);

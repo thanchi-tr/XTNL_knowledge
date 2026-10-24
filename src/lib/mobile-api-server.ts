@@ -5,11 +5,12 @@
  * file never reaches Prisma or a model by itself. A route file only hands its request here with the real deps (a
  * route file may export only its methods and segment config).
  *
- *   GET  /check            handleCheck          the Today board and its daily quests, the Review hub's counts and the ideas fading, the due work, level, streak, the week audit, the credits wallet (P16)
+ *   GET  /check            handleCheck          the Today board and its daily quests, the Review hub's counts and the ideas fading, the due work, level, streak, the week audit, the credits wallet (P16), the owed cards (P22)
  *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick, with its minutes and timer: P7, P23; a reading task's pages: P24), and the skill it fed (P5), its credits (P16)
  *   POST /tasks/undo       handleTaskUndo       actions/tasks undoCompletion
  *   POST /tasks/start      handleTaskStart      actions/tasks startTaskTimer (a proof task's timer; P23)
  *   POST /tasks/stop       handleTaskStop       actions/tasks stopTaskTimer (P23)
+ *   POST /tasks/makeup     handleTaskMakeUp     actions/duty makeUp, doMinimum, acceptLoss, undoMakeUp (an owed card's actions; refused while Duty is not live; P22)
  *   POST /work/done        handleWorkDone       actions/scheduled-tasks doneScheduledTask (no history log)
  *   POST /work/reopen      handleWorkReopen     actions/scheduled-tasks reopenScheduledTask
  *   GET  /review/queue     handleReviewQueue    the review hub's due cards in the runner's order
@@ -60,8 +61,16 @@ import {
   checkDailyOf,
   checkFadingOf,
   checkCreditsOf,
+  checkOwedOf,
   checkTasksOf,
   checkWeekOf,
+  MAKEUP_KEYS,
+  acceptLossReplyOf,
+  makeUpDutyOffLine,
+  makeUpReplyOf,
+  makeUpRequestOf,
+  undoMakeUpReplyOf,
+  type MobileOwed,
   clientIdOf,
   dayLabelOf,
   dueCardsOf,
@@ -154,6 +163,8 @@ import type { CelebrationEvent } from "./celebration-types";
 import { TIMER_CLIENT_ID, type TickProofInput, type TimerView } from "./proof";
 import type { HcBatch, IngestSummary } from "./health-ingest";
 import type { IngestResult } from "./health-ingest-server";
+import { isDutyLaunched } from "./duty-economy";
+import type { DutyActionResult, MakeUpResult } from "../app/actions/duty";
 
 // ── The cores ───────────────────────────────────────────────────────────────
 
@@ -172,7 +183,7 @@ export interface MobileDeps {
   loadBoard: (userId: string, day: DayKey, now: Date) => Promise<BoardData>;
   loadFieldTree: () => Promise<readonly ReviewTreeField[]>;
   loadReviewDay: (userId: string, day: DayKey) => Promise<Pick<ReviewDay, "reviews" | "dayOpenQty">>;
-  loadStreak: (userId: string) => Promise<{ current: number; last7Days: readonly boolean[]; bankedFreezes: number }>;
+  loadStreak: (userId: string) => Promise<{ current: number; last7Days: readonly boolean[]; bankedFreezes: number; restTokens?: number | null }>;
   loadShell: (userId: string) => Promise<{ character: { level: number | null; progress: number | null; title: string | null } } | null>;
   loadWork: (userId: string, now: Date) => Promise<readonly DueWorkTask[]>;
   /** The GRACE_EXTENSION days in force (the loadout's modifiers), as the bell's fading line reads them. */
@@ -209,6 +220,18 @@ export interface MobileDeps {
   startTimer: (templateId: string, clientId: string) => Promise<TaskActionResult<TimerView>>;
   /** Its stop (actions/tasks stopTaskTimer): its minutes wait for the tick. */
   stopTimer: (sessionId: string) => Promise<TaskActionResult<TimerView>>;
+
+  // Duty (blueprint P22; decision D18): the owed cards' actions, the web's own (actions/duty), and the switch.
+  /** DUTY_LAUNCH_DAY in force (duty-economy dutyLaunchDay): /check's `dutyOn` and the make-up route's gate. */
+  dutyLaunchDay: () => DayKey | null;
+  /** A make-up in full (actions/duty makeUp: ×0.85, C 1.00), with a proof must's minutes, timer or pages once proof is in force. */
+  makeUp: (instanceId: string, input: { minutes?: number; sessionId?: string; proof?: TickProofInput }) => Promise<DutyActionResult<MakeUpResult>>;
+  /** Its minimum version (actions/duty doMinimum): repays the debt in full. */
+  doMinimum: (instanceId: string) => Promise<DutyActionResult<MakeUpResult>>;
+  /** Accept the loss (actions/duty acceptLoss): only with Settings › Days on and the debt 14 days old; the miss stays on the ledger. */
+  acceptLoss: (instanceId: string) => Promise<DutyActionResult<{ instanceId: string; debtXp: number }>>;
+  /** P22 review: a make-up's Undo (actions/duty undoMakeUp: ten minutes, the same life day): the debt opens again. */
+  undoMakeUp: (instanceId: string) => Promise<DutyActionResult<{ instanceId: string; debtXp: number; xp: number }>>;
 
   // Work
   doneScheduled: (id: string) => Promise<ScheduledResult<{ id: string; doneAt: string; interactionId: string | null }>>;
@@ -398,7 +421,8 @@ function owe(deps: MobileDeps, what: string, task: () => Promise<unknown>): void
  * read), so the phone arms its Sunday reminder from it, never from a `week` that is null before the first audited
  * Sunday's 18:00 or after a failed read. After the reply it runs what
  * opening Today and the Review hub owe (the day's first open fixes the quest target; study tasks met by the day's
- * reviews are recorded; life maintenance).
+ * reviews are recorded; life maintenance). P22: `dutyOn` is Duty's switch alone (isDutyLaunched on DUTY_LAUNCH_DAY, no
+ * read), and `owed` the board's open debts (Board.owed, re-priced against today's ledger) in the web MakeUpCard's words.
  */
 export async function handleCheck(request: Request, deps: MobileDeps): Promise<Response> {
   return read("check", request, deps, [], async () => {
@@ -438,6 +462,9 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       auditOn: isAuditLaunched(day),
       week: checkWeekOf(audit),
       credits: checkCreditsOf(wallet),
+      // Duty (P22): the switch alone (as auditOn), and the board's open debts in its MakeUpCards' words.
+      dutyOn: isDutyLaunched(day, deps.dutyLaunchDay()),
+      owed: checkOwedOf(board),
       work: workItemsOf(work, now),
       level: levelOf(shell),
       streak: streakOf(streak),
@@ -675,6 +702,76 @@ export async function handleTaskStop(request: Request, deps: MobileDeps): Promis
     const res = await deps.stopTimer(idOf(body.sessionId, "sessionId"));
     if (!res.ok) return refusalReply(res.error);
     return okReply({ timer: timerOf(res.value), line: timerStoppedLineOf(res.value) });
+  });
+}
+
+// ── POST /tasks/makeup (blueprint P22; decision D18) ───────────────────────
+
+/**
+ * An owed card's action, as Today's MakeUpCard runs it: `makeup` (actions/duty makeUp: ×0.85 with C 1.00, the whole debt
+ * repaid, the day kept again within its two days), its `minimum` (doMinimum) or `accept` the loss (acceptLoss: Settings ›
+ * Days on and the debt 14 days old; the miss stays on the ledger), or `undo` a make-up (undoMakeUp, P22 review: the web
+ * card's Undo, ten minutes, the same life day; the debt opens again). Refused while Duty is not live (DUTY_LAUNCH_DAY not in
+ * force: `conflict` with the web's launch line), before any core runs; the web keeps its own make-ups then. The clientId
+ * is required and keys the replay; across instances the cores' own repeats hold (a make-up already recorded answers
+ * `duplicate`, nothing paid twice; a written-off debt answers as written off). Then, as a tick's: the board read again
+ * (`owed`, the cards left, and `allDone`), the level after, and the credits across it (a make-up is today's work, so it
+ * can finish one of Today's three; null while credits are off). No credit is ever taken: a penalty never debits credits.
+ */
+export async function handleTaskMakeUp(request: Request, deps: MobileDeps): Promise<Response> {
+  return write("tasks/makeup", request, deps, MAKEUP_KEYS, async (body) => {
+    const req = makeUpRequestOf(body);
+    const now = deps.now();
+    const today = todayKey(now);
+    const launchDay = deps.dutyLaunchDay();
+    if (!isDutyLaunched(today, launchDay)) return failReply("conflict", makeUpDutyOffLine(launchDay));
+    const before = await walletBefore(deps, "tasks/makeup");
+    let made: MakeUpResult | null = null;
+    let lost: { instanceId: string; debtXp: number } = { instanceId: req.instanceId, debtXp: 0 };
+    let undone: { instanceId: string; debtXp: number; xp: number } | null = null;
+    if (req.action === "accept") {
+      const res = await deps.acceptLoss(req.instanceId);
+      if (!res.ok) return refusalReply(res.error);
+      lost = res.value;
+    } else if (req.action === "undo") {
+      const res = await deps.undoMakeUp(req.instanceId);
+      if (!res.ok) return refusalReply(res.error);
+      undone = res.value;
+    } else {
+      const res =
+        req.action === "minimum"
+          ? await deps.doMinimum(req.instanceId)
+          : await deps.makeUp(req.instanceId, {
+              ...(req.minutes !== undefined ? { minutes: req.minutes } : {}),
+              ...(req.sessionId !== undefined ? { sessionId: req.sessionId } : {}),
+              ...(req.proof !== undefined ? { proof: req.proof } : {}),
+            });
+      if (!res.ok) return refusalReply(res.error);
+      made = res.value;
+    }
+    const userId = deps.userId();
+    const at = deps.now();
+    const day = todayKey(at);
+    const [after, shell, wallet] = await Promise.all([
+      deps
+        .loadBoard(userId, day, at)
+        .then((data) => {
+          const board = buildBoard(data, [], at.getTime());
+          return { owed: checkOwedOf(board), allDone: checkTasksOf(board, data).tasksSummary.allDone };
+        })
+        .catch(soft<{ owed: MobileOwed[]; allDone: boolean } | null>("the board after a make-up", null, "tasks/makeup")),
+      deps.loadShell(userId).catch(soft("the level after a make-up", null, "tasks/makeup")),
+      walletAfter(deps, before, "tasks/makeup"),
+    ]);
+    const owed = after?.owed ?? null;
+    return okReply({
+      ...(made ? makeUpReplyOf(req.action === "minimum" ? "minimum" : "makeup", made) : undone ? undoMakeUpReplyOf(undone, owed) : acceptLossReplyOf(lost, owed)),
+      celebrations: celebrationsOf(made?.celebrations),
+      allDone: after?.allDone ?? false,
+      owed,
+      level: levelOf(shell),
+      credits: writeCreditsOf(before, wallet),
+    });
   });
 }
 

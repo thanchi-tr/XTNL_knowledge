@@ -447,6 +447,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       live: dutyLive,
       owed,
       yesterdayMusts: today?.yesterdayMusts ?? 0,
+      yesterdayCover: today?.yesterdayCover ?? null,
       reviewDue: review && reviewDue ? review : null,
     })
   );

@@ -79,7 +79,8 @@ import {
   type RuleRow,
   type RuleWrite,
 } from "./duty-plan";
-import { DUTY_READ_AHEAD_DAYS, DUTY_READ_BACK_DAYS, type DutyBoard, type SettledFact } from "./duty-view";
+import { DUTY_READ_AHEAD_DAYS, DUTY_READ_BACK_DAYS, withOwedProof, type DutyBoard, type MustCover, type SettledFact } from "./duty-view";
+import { readRestTokenSummary } from "./rest-tokens-server";
 import { isMissingRestDayTable } from "./rest-rules";
 import { loadRoadmapGoalSeries } from "./roadmap-readings";
 import { loadTaskStyles } from "./task-style-server";
@@ -371,10 +372,14 @@ export function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
   };
 }
 
-/** A template row as duty-rule.ts reads its rule (ruleOn, expectedOn, mustsDueOn). */
-function dutyTemplateOf(r: TemplateRow): DutyTemplate & { id: string } {
+/** A template row as duty-rule.ts reads its rule (ruleOn, expectedOn, mustsDueOn), with what a miss is priced from (P21 review: the freeze state's 'would owe'). */
+function dutyTemplateOf(r: TemplateRow): DutyTemplate & { id: string; band: string; bandOverride: number; estMinutes: number; machineMinutes: number } {
   return {
     id: r.id,
+    band: r.band,
+    bandOverride: r.bandOverride,
+    estMinutes: r.estMinutes,
+    machineMinutes: r.machineMinutes,
     kind: r.kind,
     recurrence: r.recurrence,
     startDay: keyOfDateColumn(r.startDay),
@@ -649,7 +654,7 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
   const restoreFrom = dayStartOf(addDays(today, -(MAKEUP_RESTORE_EVERY_DAYS - 1)));
   // Momentum (lane A): the perks and today's frog, read only once momentum is live today (BoardData.momentum).
   const momentumOn = momentumLive(today);
-  const [settings, templateRows, instanceRows, totals, events, goalQtyRows, debtRows, restRows, dutyRows, momentumFacts, decisions] = await Promise.all([
+  const [settings, templateRows, instanceRows, totals, events, goalQtyRows, debtRows, restRows, dutyRows, momentumFacts, decisions, restTokens] = await Promise.all([
     prisma.lifeSettings.findUnique({
       where: { userId },
       select: { dailyCapacityMin: true, capacitySetAt: true, settledThroughDay: true, epochDay: true, debtWriteOff: true },
@@ -712,9 +717,10 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
             return [];
           })
       : Promise.resolve([]),
-    // M2, one query: every freeze and repair row (the balance is all
-    // history, the repair hint the latest; a few a month at most) and the
-    // settlement rows of the last settled days.
+    // M2, one query: every freeze and repair row (the freeze days the habit
+    // reads hold, the repair hint the latest; a few a month at most) and the
+    // settlement rows of the last settled days. The balance is the Rest Token
+    // bank's (blueprint P21, below).
     dutyOn
       ? prisma.activityEvent.findMany({
           where: {
@@ -731,6 +737,14 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
     momentumOn ? readMomentumFacts(userId, today, now) : Promise.resolve(null),
     // Defer and abort (task-decisions.ts): each open task's defers and its latest decision (fails soft: none).
     readBoardDecisions(userId, null),
+    // Blueprint P21 (D19): the one Rest Token bank (momentum's freezes), once Duty has a launch day; a failed read
+    // shows none banked rather than failing the board.
+    dutyOn
+      ? readRestTokenSummary(prisma, userId, today).catch((err: unknown) => {
+          console.error("Today board: the rest token bank couldn't be read; showing none banked.", err);
+          return null;
+        })
+      : Promise.resolve(null),
   ]);
 
   const templates = templateRows.map((r) => toBoardTemplate(r, now));
@@ -745,7 +759,6 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
 
   // ── Duty (M2): BoardData.duty and yesterday's open musts ──
   const cursor = settings?.settledThroughDay ? keyOfDateColumn(settings.settledThroughDay) : null;
-  const countOf = (source: string) => dutyRows.filter((r) => r.source === source).length;
   const settledFrom = addDays(today, -4);
   const settledRows = dutyRows.filter((r) => {
     const d = keyOfDateColumn(r.day);
@@ -781,8 +794,7 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
     repairedRecently: new Set(debtRows.filter((r) => r.repaired && r.completedAt && r.completedAt >= restoreFrom).map((r) => r.templateId)),
     ledger: ledgerToday,
     restRows: restRows.map((r): RestRow => ({ day: keyOfDateColumn(r.day), kind: r.kind, declaredAt: r.declaredAt, cancelledAt: r.cancelledAt })),
-    freezeEarned: countOf("FREEZE_EARN"),
-    freezeUsed: countOf("FREEZE_USE"),
+    restTokens,
     units,
     heldByLedger,
     freezeUsedYesterday: settledRows.some((r) => r.source === "FREEZE_USE" && keyOfDateColumn(r.day) === yesterday),
@@ -939,7 +951,9 @@ export async function loadTodayBoard(userId: string, day: DayKey, now: Date = ne
     const roadmapGoals = await loadBoardRoadmapGoals(userId, read.core.templates, day);
     if (!proof) return { ...read.core, dueNow, duty: read.duty, roadmapGoals, styles, subtasks };
     const templates = withProofKinds(read.core.templates, proof.kinds);
-    return { ...read.core, templates, dueNow, duty: read.duty, roadmapGoals, styles, subtasks, proof: proof.proof };
+    // Blueprint P20: an owed card's make-up brings its minutes or pages as the task's own tick does (duty-view owedProofOf).
+    const duty = read.duty ? withOwedProof(read.duty, proof.kinds, proof.proof.launchDay, day, read.core.ledger.today) : read.duty;
+    return { ...read.core, templates, dueNow, duty, roadmapGoals, styles, subtasks, proof: proof.proof };
   });
 }
 
@@ -982,6 +996,8 @@ export interface TodayCounts {
    * 'Even on rest days' musts.
    */
   yesterdayMusts: number;
+  /** P21 review (D19): what a Rest Token does for them (BoardData.duty.freezes.musts), for the bell's line; null: they are owed. */
+  yesterdayCover: MustCover | null;
 }
 
 /**
@@ -992,7 +1008,7 @@ export interface TodayCounts {
  * it). Without `duty` buildBoard is the pre-M2 board, so the part must be
  * passed.
  */
-export function todayCountsOf(data: BoardData): Omit<TodayCounts, "yesterdayMusts"> {
+export function todayCountsOf(data: BoardData): Omit<TodayCounts, "yesterdayMusts" | "yesterdayCover"> {
   return buildBoard(data).counts;
 }
 
@@ -1006,7 +1022,7 @@ export async function loadTodayCounts(userId: string, now: Date = new Date()): P
   const day = todayKey(now);
   return cached(`todayCount:${userId}:${day}`, ["life", "activity", "ideas"], async () => {
     const [read, dueNow] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now)]);
-    return { ...todayCountsOf({ ...read.core, dueNow, duty: read.duty }), yesterdayMusts: read.yesterdayMusts };
+    return { ...todayCountsOf({ ...read.core, dueNow, duty: read.duty }), yesterdayMusts: read.yesterdayMusts, yesterdayCover: read.duty.freezes.musts ?? null };
   });
 }
 

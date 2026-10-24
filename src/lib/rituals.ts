@@ -16,7 +16,7 @@
  *   Reflection     REFLECTION_NOTE_MAX · MOOD_MIN · MOOD_MAX · isMood(x) · normaliseReflectionNote(note)
  *                  reflectionDayAllowed(day, today) · reflectionNonce(now, opId?)
  *                  reflectionEventInput(input) · weekReviewEventInput(input)
- *   Shell notices  owedNotice(owed) · yesterdayMustsNotice(n, today) · weekReviewNotice(week)
+ *   Shell notices  owedNotice(owed) · yesterdayMustsNotice(n, today, cover?) · weekReviewNotice(week)
  *                  dutyNoticesOf(input) · OwedTotals · formatDebt(xp)
  *
  * The weekly review (decision 26) is keyed by reviewedWeek(today), on life
@@ -55,6 +55,7 @@ import { foldStreakDays } from "./streak-curve";
 import type { ActivityInput } from "./life-types";
 import type { Notice } from "./notifications";
 import { OWED_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID } from "../components/shell/shell-types";
+import { RECORD_YESTERDAY_HREF } from "./shortcuts";
 
 // ── Labels ─────────────────────────────────────────────────────────────────
 
@@ -635,17 +636,28 @@ export function owedNotice(owed: OwedTotals | null): Notice | null {
   };
 }
 
-/** 'Yesterday: 2 musts open': tone info, listed in the bell, never counted. Null at 0. */
-export function yesterdayMustsNotice(n: number, today: DayKey): Notice | null {
+/**
+ * 'Yesterday: 2 musts open': tone info, listed in the bell, never counted. Null at 0. P21 review (D19): `cover` is the
+ * board's forecast (FreezeState.musts): a Rest Token covers what is left open ('covers'), or will once today has a
+ * task done ('if-today'); absent or null, anything left open is owed.
+ */
+export function yesterdayMustsNotice(n: number, today: DayKey, cover: "covers" | "if-today" | null = null): Notice | null {
   if (!(n > 0)) return null;
   const yesterday = addDays(today, -1);
+  const by = `Tick what you did by ${owedFromLine(yesterday)}`;
   return {
     id: YESTERDAY_MUSTS_NOTICE_ID,
     group: "Due",
     tone: "info",
     title: `Yesterday: ${plural(n, "must")} open`,
-    detail: `Tick what you did by ${owedFromLine(yesterday)}; anything left open is owed from then.`,
-    href: "/today?sheet=yesterday",
+    detail:
+      cover === "covers"
+        ? `${by}; a rest token covers anything left open, so nothing is owed.`
+        : cover === "if-today"
+          ? `${by}. A rest token covers anything left open if today has a task done; if not, it keeps your run instead and those are owed.`
+          : `${by}; anything left open is owed from then.`,
+    // The one Record yesterday deep link (shortcuts.ts; M2 leftover 7, blueprint P20).
+    href: RECORD_YESTERDAY_HREF,
     action: "Record",
   };
 }
@@ -673,6 +685,8 @@ export function dutyNoticesOf(input: {
   live: boolean;
   owed: OwedTotals | null;
   yesterdayMusts: number;
+  /** P21 review: what a Rest Token does for them (FreezeState.musts); absent: nothing (owed). */
+  yesterdayCover?: "covers" | "if-today" | null;
   /** reviewedWeek(today) when its marker is known to be missing; null otherwise. */
   reviewDue: ReviewedWeek | null;
 }): Notice[] {
@@ -680,7 +694,7 @@ export function dutyNoticesOf(input: {
   const owed = owedNotice(input.owed);
   if (owed) out.push(owed);
   if (input.live) {
-    const y = yesterdayMustsNotice(input.yesterdayMusts, input.today);
+    const y = yesterdayMustsNotice(input.yesterdayMusts, input.today, input.yesterdayCover ?? null);
     if (y) out.push(y);
     if (input.reviewDue) out.push(weekReviewNotice(input.reviewDue));
   }

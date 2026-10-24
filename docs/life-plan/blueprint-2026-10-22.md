@@ -81,3 +81,25 @@ Recorded as the user decides each conflict with the existing app. Decision ids (
 - **A timer never bounds picked minutes.** A timer bounds only its own count. Picked minutes are bounded only by an earlier tick of the same task that day, because a running timer would only cut honest corrections (a timer started late). Picking minutes closes the row's timer at 0.
 - **Health Connect and hand-logged walks.** Train › Exercise refuses a walk that Health Connect already imported ("Already here from Health Connect: …"). Both orders are pinned in health-ingest-check.
 - **The default proof set (dry run, read only, 2026-10-24).** Against the live data the default rule would mark 2 templates: "Play guitar for at least" (CREATIVE habit, self-rated Demanding) and "Read" (STUDY habit, self-rated Demanding). It would leave out 1: "Idea: complete ALM finance reconcilliation…" (WORK, Intro). Nothing is marked until the user approves the list, and PROOF_LAUNCH_DAY stays null until their go.
+
+**2026-10-24: Stage 6 build decisions (taken by the coordinator; the user may revisit them). DUTY_LAUNCH_DAY stays null until the user's go.**
+- **Rest tokens on active days (D19).**
+  - *What happens:* a token may excuse a settled day's missed musts even when other things were done that day. This overrides M2 decision 12 ("a freeze is never a skip-a-must token").
+  - *The run comes first:* a token goes to a day's musts only if it is still free when that day settles. Spending it must not break the momentum run or a later held day.
+  - *What that means:* when the day after a missed must is also empty, the token keeps the run and the must is owed.
+  - *To restrict tokens to empty days instead:* revert step 3's `owed && before.bank >= 1` branch in src/lib/settlement-plan.ts and the settle-check pins marked P21.
+- **One bank.** Duty's own 7-active-day earn is retired (no FREEZE_EARN is written). Tokens come only from momentum:
+  - you start with 1;
+  - you earn one every 10 momentum days;
+  - a rare chest or a kept Body week with Recovery adds one.
+  
+  At most 2 are banked, or 3 with Spare flame. A declared rest, sick or vacation day holds without a token, and a manual freeze on such a day is refused. FREEZE_USE rows count only from the Duty launch day.
+- **Naming.** "Rest token" is used next to the chip, on /you, in the spend messages and in the Momentum sheet ("A rest token (a freeze)"). The chest's "+1 freeze" lines and the glyph labels still say "freeze". Renaming those is the user's call.
+- **Make-ups.** From PROOF_LAUNCH_DAY a make-up passes the same proof gate as a tick:
+  - a minutes task needs its minutes, or a timer it names;
+  - a pages task needs at least its pages.
+  
+  A make-up never picks up or closes today's timer. A deadline one-off whose miss was capped (no debt) takes an ordinary late tick.
+- **Phone.** POST /tasks/makeup carries make up, minimum and accept the loss through `action`. Undoing a make-up stays on the web card (10 minutes). While Duty is off, the phone lists any debt without its actions.
+- **The worst first week (spiral-check).** If every must is missed for 7 days after the launch, the caps hold the debt to at most 96.7. That is under the 100 total cap, because the cap refuses the miss that would cross it, and no credits are ever debited.
+

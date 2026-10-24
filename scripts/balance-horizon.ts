@@ -69,6 +69,10 @@
  * the basket's deep-work row (the default rule's: Craft at Demanding) is a proof task, logged at its 90 minutes and
  * priced through the proof rule ('life-3'), and the committed player reports the walk's and the gym's minutes, so
  * BODY's kept weeks stand; 4p pins that the logged row prices exactly as the basket row, so 4 and 4b re-pin unchanged.
+ *
+ * Duty (blueprint P22, D18): nothing here reads DUTY_LAUNCH_DAY, so the output is byte for byte the same with it null.
+ * With it in force (`XTNL_DUTY_LAUNCH_DAY=2026-10-26 npx tsx scripts/balance-horizon.ts`, or the constant once set) one
+ * line under 3b-m says so: settlement then records the full days that 3b-m prices and the cap trims (92.5 > 91).
  */
 import "./_no-model";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -95,6 +99,7 @@ import {
 } from "../src/lib/life-economy";
 import { TRACK_CURVE_BASE, TRACK_CURVE_EXPONENT, trackCurveLaunchDay, type TrackCurve } from "../src/lib/life-economy";
 import { proofLaunchDay } from "../src/lib/proof";
+import { dutyLaunchDay } from "../src/lib/duty-economy";
 import { emptyLifeLedger, trackShareCap, trackStateAt } from "../src/lib/life-tracks";
 import { effectiveFieldComposition } from "../src/lib/attribute-inference";
 import { TRACK_LABEL, kneeG, priceTask } from "../src/lib/life-grade";
@@ -891,6 +896,11 @@ function momentumBlock(pool: number, knowledgePerDay: number): number {
     `${most} + 7 × ${M.mp.FULL_DAY} = ${askedMost} > cap ${M.weekCap}; ` +
       byShorts.map((r) => `${r.shorts} Shorts → tracks whole, second plan week ${r.ms.find((m) => m.key === "planweek:2")?.paid} of ${all.planWeekMp}, full days ${r.ms.filter((m) => m.key.startsWith("fullday:") && m.paid > 0).length} of 7`).join(" · "),
   );
+
+  // Blueprint P22 (D18): Duty live (XTNL_DUTY_LAUNCH_DAY, or DUTY_LAUNCH_DAY once set) is what records the full days 3b-m
+  // prices. Nothing here reads the switch, so 3b-m and every figure stand as they are; one line says so when it is in force.
+  const dutyDay = dutyLaunchDay();
+  if (dutyDay != null) console.log(`  Duty is live from ${dutyDay}: settlement records the full days 3b-m prices, so the cap trims them (92.5 > 91), never a kept track`);
 
   // 3c-m. Settlement holds DUTY back: BODY, CRAFT and CARE mint first, then DUTY, the plan weeks and the full days.
   const ledger = (ms: readonly { key: string; paid: number }[]) => ms.map((m) => `${m.key}=${m.paid}`).sort().join(",");

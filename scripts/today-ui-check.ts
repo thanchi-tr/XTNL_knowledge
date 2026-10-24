@@ -2375,7 +2375,21 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
       /const daily = isWork \? null : dailyQuestsOf\(board\);/.test(tb) &&
         /title=\{daily \? DAILY_QUESTS_TITLE : "Must"\}/.test(tb) &&
         /strip=\{daily \? <DailyStrip daily=\{daily\} \/> : undefined\}/.test(tb) &&
-        /deferred: board\.deferred, \.\.\.\(daily \? \{ daily \} : \{\}\) \}\);/.test(tb)
+        /deferred: board\.deferred, \.\.\.\(daily \? \{ daily \} : \{\}\), restTokens \}\);/.test(tb)
+    );
+    // Blueprint P21 (D19): the one Rest Token bank as the Daily quests' held chip, the Momentum card's own number.
+    const tokens = mustLaneOf({ must: [], owed: [stretch], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, restTokens: 2 });
+    check(
+      "P21 must lane: 'Rest tokens 2' is the last chip, held, with the freeze glyph (the word and the glyph, never colour alone); 0 is said as it is",
+      JSON.stringify(tokens.chips[tokens.chips.length - 1]) === JSON.stringify({ tone: "held", held: "freeze", text: "Rest tokens 2" }) &&
+        mustLaneOf({ must: [], owed: [stretch], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, restTokens: 0 }).chips.some((c) => c.text === "Rest tokens 0"),
+      JSON.stringify(tokens.chips)
+    );
+    check(
+      "P21 must lane: no chip without a live bank (null or absent), and the board passes momentum's run.bank on the personal Board only",
+      !mustLaneOf({ must: [], owed: [stretch], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, restTokens: null }).chips.some((c) => /Rest tokens/.test(c.text)) &&
+        !lane.chips.some((c) => /Rest tokens/.test(c.text)) &&
+        /const restTokens = !isWork && momentum\?\.live \? momentum\.run\.bank : null;/.test(tb)
     );
     const laneHtml = renderToStaticMarkup(createElement(Lane, { id: "must", title: "Daily quests", must: true, count: "1 of 2 kept", strip: createElement("ol", { className: "dq-strip" }), badge: createElement("span", null, "chip") }));
     check(
@@ -2539,7 +2553,8 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   const dutyY = dutyOf({ freezes: { banked: 1, willCover: true } });
   const idle = yesterdaySheetOf({ yesterday: WED, recordBy: "record by 04:00 tomorrow", duty: dutyY, yesterdayActive: false });
   const busy = yesterdaySheetOf({ yesterday: WED, recordBy: "record by 04:00 tomorrow", duty: dutyY, yesterdayActive: true });
-  check("record yesterday: the freeze switch for an idle yesterday with a freeze banked", idle.freeze?.label === "Use a freeze for Wed" && idle.freeze.sub === "Covers all of Wednesday's musts · 0 left after" && !idle.freeze.checked);
+  // Re-pinned by the P21 review (one bank, one word beside the 'Rest tokens' chip): 'Use a rest token for Wed'.
+  check("record yesterday: the freeze switch for an idle yesterday with a freeze banked", idle.freeze?.label === "Use a rest token for Wed" && idle.freeze.sub === "Covers all of Wednesday's musts · 0 left after" && !idle.freeze.checked);
   check("record yesterday: the freeze switch is hidden for an active yesterday", busy.freeze === null);
   check("record yesterday: no freeze banked, no switch", yesterdaySheetOf({ yesterday: WED, recordBy: "", duty: dutyOf(), yesterdayActive: false }).freeze === null);
   check("record yesterday: a freeze already used shows on, and stays on", yesterdaySheetOf({ yesterday: WED, recordBy: "", duty: dutyOf({ freezes: { banked: 0, willCover: true, usedYesterday: true } }), yesterdayActive: false }).freeze?.checked === true);
@@ -2550,6 +2565,24 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
       idle.settle?.label === "Settle Wednesday now" &&
       idle.settle.until === "Or leave it: it settles on its own at Fri 04:00." &&
       idle.settle.lock === "Settling locks Wednesday."
+  );
+  // P21 review (D19): a must that would owe is open on yesterday and a token is banked: settling spends it, so the
+  // sheet says so instead of promising a make-up; left alone, 'if-today' says the token covers it only after a task.
+  const tokenSheet = (musts: "covers" | "if-today") =>
+    yesterdaySheetOf({ yesterday: WED, recordBy: "", duty: dutyOf({ freezes: { banked: 1, willCover: musts === "covers", musts, forYesterday: 1, leftAfter: 0 } }), yesterdayActive: true });
+  const covers = tokenSheet("covers");
+  const ifToday = tokenSheet("if-today");
+  check(
+    "P21 review: record yesterday with a token for its open musts: settling spends it ('0 left after'), nothing owed, no make-up promised",
+    covers.honesty === "Tick only what you did on Wednesday. Settling Wednesday spends a rest token on its open musts (0 left after): nothing owed, nothing to make up." &&
+      covers.settle?.until === "Or leave it: it settles on its own at Fri 04:00." &&
+      !/×0\.85/.test(covers.honesty ?? ""),
+    covers.honesty ?? ""
+  );
+  check(
+    "P21 review: …'if-today': the same honesty line, and the footer says the token covers it then only if today has a task done",
+    ifToday.honesty === covers.honesty && ifToday.settle?.until === "Or leave it: it settles on its own at Fri 04:00. A rest token covers its open musts then only if today has a task done.",
+    ifToday.settle?.until ?? ""
   );
   const early = yesterdaySheetOf({ yesterday: WED, recordBy: "", duty: dutyOf({ cursor: WED, freezes: { banked: 1, willCover: false } }), yesterdayActive: false });
   check("record yesterday: settled early, no footer and no switch", early.settle === null && early.freeze === null && early.honesty === null);
@@ -2594,7 +2627,7 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   const frozen = yesterdaySheetOf({ yesterday: WED, recordBy: "", duty: dutyOf({ freezes: { banked: 0, willCover: true, usedYesterday: true } }), yesterdayActive: false });
   check(
     "record yesterday: a freeze used, no honesty line to tick by, and it says the freeze covers the day",
-    frozen.honesty === null && frozen.description === "A freeze covers Wednesday, so nothing more is recorded on it." && frozen.freeze?.checked === true && !!frozen.settle,
+    frozen.honesty === null && frozen.description === "A rest token covers Wednesday, so nothing more is recorded on it." && frozen.freeze?.checked === true && !!frozen.settle,
     frozen.description
   );
   check("record yesterday: its deep link and the 'y' event", RECORD_YESTERDAY_HREF === "/today?sheet=yesterday" && RECORD_YESTERDAY_EVENT === "xtnl:today:record-yesterday");
@@ -2642,7 +2675,19 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   const pre2 = dayLedgerDutyOf({ duty: null, streak: streakOf({ bankedFreezes: 1 }), kept: false, full: false, today: TODAY, yesterdayActive: false });
   check("day ledger: before launch, the pre-M2 tile exactly", !pre2.settles && pre2.freezes?.banked === 1 && !pre2.caption && !pre2.heldNote && !pre2.fullNote && !pre2.broken);
   const cover = dayLedgerDutyOf({ duty: dutyOf({ freezes: { banked: 2, willCover: true } }), streak: streakOf(), kept: false, full: false, today: TODAY, yesterdayActive: false });
-  check("day ledger: 'A freeze will cover Wed' and the real balance", cover.heldNote === "A freeze will cover Wed" && cover.freezes?.banked === 2 && cover.settles);
+  check("day ledger: 'A rest token will cover Wed' and the real balance", cover.heldNote === "A rest token will cover Wed" && cover.freezes?.banked === 2 && cover.settles);
+  // P21 review (D19): an active yesterday whose open musts a token will take, or will once today has a task done.
+  const activeCover = (musts: "covers" | "if-today" | null) =>
+    dayLedgerDutyOf({ duty: dutyOf({ freezes: { banked: 1, willCover: musts === "covers", musts } }), streak: streakOf({ last7Days: [true, true, true, true, true, true, false] }), kept: false, full: false, today: TODAY, yesterdayActive: true }).heldNote;
+  check(
+    "P21 review: day ledger, an active yesterday: 'A rest token will cover Wed's open musts', or 'A task today, and a rest token covers…', or nothing",
+    activeCover("covers") === "A rest token will cover Wed's open musts" && activeCover("if-today") === "A task today, and a rest token covers Wed's open musts" && activeCover(null) === null,
+    String(activeCover("if-today"))
+  );
+  // P21 review: once Duty is live the chip still says 0 as it is (as before Duty, Today's chip and the phone's).
+  const zeroLive = dayLedgerDutyOf({ duty: dutyOf({ freezes: { banked: 0, willCover: false } }), streak: streakOf({ restTokens: 0 }), kept: false, full: false, today: TODAY, yesterdayActive: false });
+  const zeroOld = dayLedgerDutyOf({ duty: dutyOf({ freezes: { banked: 0, willCover: false } }), streak: streakOf(), kept: false, full: false, today: TODAY, yesterdayActive: false });
+  check("P21 review: day ledger with Duty live: 'Rest tokens 0' while the bank is live; a pre-P21 streak still hides 0", zeroLive.freezes?.banked === 0 && zeroOld.freezes === null, JSON.stringify(zeroLive.freezes));
   const warn = dayLedgerDutyOf({ duty: dutyOf(), streak: streakOf(), kept: false, full: false, today: TODAY, yesterdayActive: false });
   check("day ledger: without a freeze, when yesterday must be recorded by", warn.caption === "Wednesday had nothing yet; record it by Fri 04:00 or the streak ends." && warn.heldNote === null, warn.caption ?? "");
   const ended = dayLedgerDutyOf({ duty: dutyOf(), streak: streakOf({ current: 0, endedOn: TUE, endedAfter: 23 }), kept: false, full: false, today: TODAY, yesterdayActive: false });
@@ -2656,9 +2701,9 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     `${endedOld.caption} | ${endedY.caption}`
   );
   // The board is typed with lib/streak.ts DailyStreak: its M2 fields fit the ledger's, by lane B's names (a compile-time check).
-  const serverStreak: ServerDailyStreak = { current: 0, last7Days: [], held7Days: [], bankedFreezes: 0, endedOn: TUE, endedAfter: 23, freezeWillCover: false, heldInRun: 0 };
+  const serverStreak: ServerDailyStreak = { current: 0, last7Days: [], held7Days: [], bankedFreezes: 0, endedOn: TUE, endedAfter: 23, freezeWillCover: false, heldInRun: 0, restTokens: 2 };
   const asLedger: StreakDutyFields = serverStreak;
-  check("day ledger: the server's DailyStreak is read as it is (endedAfter, not a field lane B never writes)", asLedger.endedAfter === 23);
+  check("day ledger: the server's DailyStreak is read as it is (endedAfter, not a field lane B never writes; P21: restTokens)", asLedger.endedAfter === 23 && asLedger.restTokens === 2);
   // Launch Monday: yesterday (Sunday) is below the floor — no 'record it by … or the streak ends', no repair hint for it.
   const launchLedger = dayLedgerDutyOf({
     duty: dutyOf({ launchDay: "2026-10-12", floor: "2026-10-12", cursor: "2026-10-11", lastRepairDay: null }),
@@ -2689,6 +2734,14 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     "close: a must without one is listed with the honest line and no choice",
     byId("cb")?.choices.length === 0 && byId("cb")?.meta === `Left open, Thursday is judged Sat 04:00: −${debtFor(cBare).toFixed(1)} owed, made up at ×0.85`,
     byId("cb")?.meta
+  );
+  // P21 review (D19): with a token today's musts can count on, the line says it covers them if still banked then.
+  const tokenClose = closeItemsOf({ must: cb.must, todayRows: cb.todayRows, today: TODAY, live: true, tokens: 1 }).find((i) => i.key.startsWith("cb:"));
+  check(
+    "P21 review: close, a token banked: 'a rest token covers it if one is still banked then, else −X owed'; none banked: the debt line",
+    tokenClose?.meta === `Left open, Thursday is judged Sat 04:00: a rest token covers it if one is still banked then, else −${debtFor(cBare).toFixed(1)} owed` &&
+      closeItemsOf({ must: cb.must, todayRows: cb.todayRows, today: TODAY, live: true, tokens: 0 }).find((i) => i.key.startsWith("cb:"))?.meta === byId("cb")?.meta,
+    tokenClose?.meta
   );
   check("close: a planned one-off gets Tomorrow, Anytime and Drop", byId("pl")?.choices.map((c) => c.id).join() === "tomorrow,anytime,drop");
   check("close: a deadline keeps it (no Anytime) and Roll all skips it", byId("dl")?.choices.map((c) => c.id).join() === "tomorrow,drop" && !byId("dl")?.roll);
@@ -3369,7 +3422,7 @@ asyncChecks.push(
   check(
     "aim line: Today builds no second board for it (no buildBoard or closeItemsOf in the page); the board's Close the day list is closeItemsOf over its own board",
     !/buildBoard\(|closeItemsOf\(|closeDue/.test(todayPage) &&
-      /const closeItems = closeItemsOf\(\{ must: board\.must, todayRows: board\.todayRows, today: current\.today, live \}\);/.test(boardSrc) &&
+      /const closeItems = closeItemsOf\(\{ must: board\.must, todayRows: board\.todayRows, today: current\.today, live, tokens: live \? \(duty\?\.freezes\.forToday \?\? duty\?\.freezes\.banked \?\? 0\) : null \}\);/.test(boardSrc) &&
       /const live = board\.dutyLive;/.test(boardSrc)
   );
   {

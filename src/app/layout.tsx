@@ -7,6 +7,7 @@ import { ShellDataSlot } from "@/components/shell/ShellDataSlot";
 import { PREPAINT_SCRIPT } from "@/components/shell/prepaint";
 import { IconSprite } from "@/components/ui/Icon";
 import { QuickCapture } from "@/components/capture/QuickCapture";
+import { dutyLaunchDay } from "@/lib/duty-economy";
 import { Shortcuts } from "@/components/shell/Shortcuts";
 import { Tour } from "@/components/tour/Tour";
 import { WorkReminders } from "@/components/work/WorkReminders";
@@ -91,8 +92,11 @@ export default function RootLayout({
         </AppShell>
         {/* The one capture sheet (L1). Outside <main>: its fixed layers must
             not sit under the @container. The tab bar's +, the rail and
-            sidebar Capture, 'c' and Alt+N all open this instance. */}
-        <QuickCapture />
+            sidebar Capture, 'c' and Alt+N all open this instance. Its Must
+            chip reads the server's Duty launch day (M2 leftover 7): the
+            browser sees only the constant, so a rehearsal server's override
+            reaches it only from here. */}
+        <QuickCapture dutyLaunchDay={dutyLaunchDay()} />
         {/* The global keys (src/lib/shortcuts.ts) and the '?' sheet; the first-run tour. */}
         <Shortcuts />
         <Tour />

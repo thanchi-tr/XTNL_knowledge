@@ -26,6 +26,7 @@
  *                               a chunk's ops grouped for statement count, and the statements it issues
  *   SettleGuard · settleGuardSql(userId, guard) · chunkGuardOf(read, chunk, group, ctx)
  *   chargedOneOffsOf(group, state) · guardOfSql(sql)   the guard, and the checks' seam to evaluate it
+ *                               (P22 review: SettleGuard.openDebts and ChunkGroup.newDebts, the caps' open-debt set)
  *   settlementWritesEnabled(env)  lifeWritesEnabled, and never on a Vercel Preview/development deployment
  *   cronAuthorized(header, secret) · LifeCronDeps · runLifeCron(request, deps?) · lifeLaunchFinished(userId, day)
  *                               the /api/cron/life handler (route.ts may export only GET)
@@ -59,6 +60,12 @@
  *                               readings: today's COMPUTED reading of each measured target (avatar-server
  *                               recordAvatarReadings). Gated by settlementWritesEnabled; never throws; pays nothing.
  *
+ * Added by blueprint P21 (one Rest Token bank, decision D19; compatible):
+ *   readSettlementState reads SettlementState.tokens (rest-tokens-server readRestTokens, through the same client, from
+ *   the momentum launch day in force: SettleEnv gains XTNL_MOMENTUM_LAUNCH_DAY, read through momentumLaunchDay(env)).
+ *   Step 3 spends from it; nothing earns here any more (no FREEZE_EARN is planned). The guard's FREEZE_* count is
+ *   unchanged: a manual spend or another run landing between the read and the write still re-plans the chunk.
+ *
  * Shared-database safety (decision 2): dev and prod share one Supabase
  * database, so nothing here writes unless settlementWritesEnabled()
  * (production, or XTNL_LIFE_JUDGE=1 on the rehearsal server; never a Vercel
@@ -86,6 +93,7 @@ import { cached, invalidate } from "./cache";
 import { activityData, isDuplicateActivity } from "./activity";
 import { addDays, dateColumn, dayKeyOf, dayStartOf, keyOfDateColumn, todayKey, type DayKey } from "./life-day";
 import {
+  DUTY_REHEARSAL_PORT,
   SETTLE_CHUNK_DAYS,
   SETTLE_LAG_DAYS,
   dutyLagging,
@@ -124,6 +132,8 @@ import type { ActivityInput, ActivitySource, AutoMetric, InstanceSource, Instanc
 import { recordRoadmapReadings, type ReadingsCaller } from "./roadmap-readings";
 import { recordAvatarReadings, type AvatarReadingsRun } from "./avatar-server";
 import { auditLaunchDay, isAuditLaunched, type AuditEnv } from "./week-audit";
+import { momentumLaunchDay, type MomentumEnv } from "./momentum";
+import { readRestTokens } from "./rest-tokens-server";
 import { freezeWeekAudit, type AuditFreezeRun } from "./week-audit-server";
 import { finalizeQuestWeeks, freezeWeekQuests } from "./roadmap-quests-server";
 import { roadmapStepErrorsOf, type QuestFinalizeRun, type QuestFreezeRun, type ReadingsRun, type RoadmapStepReport, type RoadmapWriteOpts, type WeekQuestSource } from "./roadmap-types";
@@ -133,7 +143,7 @@ import { roadmapStepErrorsOf, type QuestFinalizeRun, type QuestFreezeRun, type R
  * VERCEL_ENV: a Vercel Preview or development deployment ('preview', 'development') never settles,
  * even with NODE_ENV production, because it shares the live database (settlementWritesEnabled).
  */
-export type SettleEnv = LifeEnv & DutyEnv & AuditEnv & { CRON_SECRET?: string; VERCEL_ENV?: string };
+export type SettleEnv = LifeEnv & DutyEnv & AuditEnv & MomentumEnv & { CRON_SECRET?: string; VERCEL_ENV?: string };
 
 /** The Prisma surface settlement uses: the real client, or the checks' recording stub. */
 export type SettlementClient = Pick<
@@ -151,7 +161,7 @@ export interface SettleOptions {
   /** Write even when lifeWritesEnabled() is false (the launch and rehearsal scripts only). */
   force?: boolean;
   /** The variables the gates read; defaults to process.env (the checks inject their own). */
-  env?: LifeEnv & DutyEnv & { VERCEL_ENV?: string };
+  env?: LifeEnv & DutyEnv & MomentumEnv & { VERCEL_ENV?: string };
   /** Lane A: the client to read and write with; defaults to the app's Prisma client. */
   client?: SettlementClient;
 }
@@ -186,7 +196,11 @@ function processEnv(): SettleEnv {
     XTNL_LIFE_LAUNCH_DAY: process.env.XTNL_LIFE_LAUNCH_DAY,
     XTNL_LIFE_JUDGE: process.env.XTNL_LIFE_JUDGE,
     XTNL_DUTY_LAUNCH_DAY: process.env.XTNL_DUTY_LAUNCH_DAY,
+    // Blueprint P20: the Duty override is honoured only with no database named or the rehearsal mirror (duty-economy dutyOverrideScoped).
+    DATABASE_URL: process.env.DATABASE_URL,
     XTNL_AUDIT_LAUNCH_DAY: process.env.XTNL_AUDIT_LAUNCH_DAY,
+    // Blueprint P21: the Rest Token bank is momentum's fold, from the momentum launch day in force.
+    XTNL_MOMENTUM_LAUNCH_DAY: process.env.XTNL_MOMENTUM_LAUNCH_DAY,
     CRON_SECRET: process.env.CRON_SECRET,
     VERCEL_ENV: process.env.VERCEL_ENV,
   };
@@ -268,19 +282,85 @@ function receiptOf(v: Prisma.JsonValue): Receipt | null {
   return v && typeof v === "object" && !Array.isArray(v) && Array.isArray((v as { factors?: unknown }).factors) ? (v as unknown as Receipt) : null;
 }
 
+/** The TaskTemplate columns settlement reads a template from (readSettlementState's select, and the launch dry run's). */
+export interface SettlementTemplateRow {
+  id: string;
+  kind: string;
+  title: string;
+  normTitle: string;
+  track: string | null;
+  band: string;
+  bandOverride: number;
+  estMinutes: number;
+  machineMinutes: number;
+  intrinsic: boolean;
+  mvv: string | null;
+  mvvMinutes: number | null;
+  autoMetric: string | null;
+  autoTarget: number | null;
+  createdAt: Date;
+  recurrence: string | null;
+  startDay: Date;
+  dueDay: Date | null;
+  dueKind: string | null;
+  compulsory: boolean;
+  compulsoryOnRest: boolean;
+  inbox: boolean;
+  archivedAt: Date | null;
+  pendingChange: Prisma.JsonValue | null;
+}
+
+/**
+ * A template row as settlement plans it (readSettlementState). Blueprint P22: scripts/duty-launch.ts reads its musts
+ * through it too, so the dry run's worst first week (settlement-plan worstWeekOf) prices exactly what settlement will.
+ */
+export function settlementTemplateOf(t: SettlementTemplateRow): SettlementTemplate {
+  return {
+    id: t.id,
+    kind: t.kind as TaskKind,
+    title: t.title,
+    normTitle: t.normTitle,
+    track: isTrack(t.track) ? t.track : "DUTY",
+    band: toBand(t.band),
+    bandOverride: t.bandOverride,
+    estMinutes: t.estMinutes,
+    machineMinutes: t.machineMinutes,
+    intrinsic: t.intrinsic,
+    mvv: t.mvv,
+    mvvMinutes: t.mvvMinutes,
+    autoMetric: asAutoMetric(t.autoMetric),
+    autoTarget: t.autoTarget,
+    createdAt: t.createdAt,
+    recurrence: t.recurrence,
+    startDay: dayOf(t.startDay),
+    dueDay: t.dueDay ? dayOf(t.dueDay) : null,
+    dueKind: t.dueKind,
+    compulsory: t.compulsory,
+    compulsoryOnRest: t.compulsoryOnRest,
+    inbox: t.inbox,
+    archivedDay: t.archivedAt ? dayKeyOf(t.archivedAt) : null,
+    pendingChange: parsePendingChange(t.pendingChange),
+  };
+}
+
 /**
  * Read 1 (LifeSettings: cursor and epoch) and, when there is anything to
  * settle, Read 2: one Promise.all of everything in SettlementState for the
  * range settleRange gives. Read-only. `cursor` overrides the stored one (the
  * launch script's dry run plans as if the cursor were already set);
  * `through` caps the range (an early settle passes yesterday). Null when
- * the user has no LifeSettings.
+ * the user has no LifeSettings. Blueprint P21: the Rest Token bank is read
+ * beside the rest (rest-tokens-server readRestTokens, through the same
+ * client), from `momentumLaunch` (default momentumLaunchDay()) through
+ * yesterday, past the range's last day (P21 review): step 3 spends a token on
+ * a must only while it is still free, and the fold already judges every day
+ * before today, so a token it gave a later day is seen and left there.
  */
 export async function readSettlementState(
   client: SettlementClient,
   userId: string,
   now: Date,
-  opts: { launchDay: DayKey | null; through?: DayKey; cursor?: DayKey | null }
+  opts: { launchDay: DayKey | null; through?: DayKey; cursor?: DayKey | null; momentumLaunch?: DayKey | null }
 ): Promise<SettlementRead | null> {
   const today = todayKey(now);
   const settings = await client.lifeSettings.findUnique({ where: { userId }, select: { epochDay: true, settledThroughDay: true } });
@@ -300,17 +380,16 @@ export async function readSettlementState(
     days: [],
     freezeEarned: 0,
     freezeUsed: 0,
-    lastFreezeEarnDay: null,
     openDebts: [],
     restRows: [],
     judgedDutyWeeks: new Set<string>(),
   };
   const range = settleRange(base);
   if (!range) return { state: base, rawPending: new Map(), dayRows: new Map() };
-  const { from, to, floor } = range;
+  const { from, to } = range;
   const { periodFloor, rowsFrom } = settleReadWindow(range);
 
-  const [templates, instances, rows, facts, freezes, before, debts, rest, dutyWeeks] = await Promise.all([
+  const [templates, instances, rows, facts, freezes, debts, rest, dutyWeeks, tokens] = await Promise.all([
     client.taskTemplate.findMany({
       where: {
         userId,
@@ -389,26 +468,12 @@ export async function readSettlementState(
       WHERE "userId" = ${userId} AND "day" >= ${rowsFrom}::date AND "day" <= ${to}::date
       GROUP BY "day"
     `),
+    // The guard's freeze-row count (all history). Blueprint P21: the bank itself is the Rest Token fold below.
     client.activityEvent.groupBy({
       by: ["source"],
       where: { userId, source: { in: ["FREEZE_EARN", "FREEZE_USE"] } },
       _count: { _all: true },
-      _max: { day: true },
     }),
-    // Active days before the facts read, since the last earn (and never before firstDutyDay): the freeze count's tail.
-    floor < rowsFrom
-      ? client.$queryRaw<{ n: number | null }[]>(Prisma.sql`
-          SELECT COUNT(*)::int AS "n" FROM (
-            SELECT "day" FROM "ActivityEvent"
-            WHERE "userId" = ${userId} AND "day" >= ${floor}::date AND "day" < ${rowsFrom}::date
-              AND "day" > COALESCE(
-                (SELECT MAX("day") FROM "ActivityEvent" WHERE "userId" = ${userId} AND "source" = 'FREEZE_EARN'),
-                DATE '0001-01-01')
-            GROUP BY "day"
-            HAVING SUM(CASE WHEN "countsForStreak" THEN 1 WHEN "source" = 'UNDO' THEN -1 ELSE 0 END) > 0
-          ) AS "active"
-        `)
-      : Promise.resolve([{ n: 0 }]),
     client.taskInstance.findMany({
       where: { userId, debtOpen: true, template: PERSONAL_BOARD },
       select: { id: true, templateId: true, day: true, slot: true, debtXp: true },
@@ -421,37 +486,15 @@ export async function readSettlementState(
       where: { userId, source: "WEEK", track: "DUTY", dedupeKey: { not: null } },
       select: { dedupeKey: true },
     }),
+    // Blueprint P21 (D19): the one Rest Token bank, momentum's freeze fold, which step 3 spends from. Through
+    // yesterday (P21 review): the days after the range are past to the fold, and a token it spent there is not free.
+    readRestTokens(client, userId, addDays(today, -1), { launch: opts.momentumLaunch === undefined ? momentumLaunchDay() : opts.momentumLaunch, dutyLaunch: opts.launchDay }),
   ]);
 
   const rawPending = new Map<string, Prisma.JsonValue | null>();
   const tpls: SettlementTemplate[] = templates.map((t) => {
     rawPending.set(t.id, t.pendingChange ?? null);
-    return {
-      id: t.id,
-      kind: t.kind as TaskKind,
-      title: t.title,
-      normTitle: t.normTitle,
-      track: isTrack(t.track) ? t.track : "DUTY",
-      band: toBand(t.band),
-      bandOverride: t.bandOverride,
-      estMinutes: t.estMinutes,
-      machineMinutes: t.machineMinutes,
-      intrinsic: t.intrinsic,
-      mvv: t.mvv,
-      mvvMinutes: t.mvvMinutes,
-      autoMetric: asAutoMetric(t.autoMetric),
-      autoTarget: t.autoTarget,
-      createdAt: t.createdAt,
-      recurrence: t.recurrence,
-      startDay: dayOf(t.startDay),
-      dueDay: t.dueDay ? dayOf(t.dueDay) : null,
-      dueKind: t.dueKind,
-      compulsory: t.compulsory,
-      compulsoryOnRest: t.compulsoryOnRest,
-      inbox: t.inbox,
-      archivedDay: t.archivedAt ? dayKeyOf(t.archivedAt) : null,
-      pendingChange: parsePendingChange(t.pendingChange),
-    };
+    return settlementTemplateOf(t);
   });
 
   const insts: SettlementInstance[] = instances.map((i) => ({
@@ -502,13 +545,10 @@ export async function readSettlementState(
 
   let freezeEarned = 0;
   let freezeUsed = 0;
-  let lastFreezeEarnDay: DayKey | null = null;
   for (const g of freezes) {
     const n = num(g._count?._all);
-    if (g.source === "FREEZE_EARN") {
-      freezeEarned = n;
-      lastFreezeEarnDay = g._max?.day ? dayOf(g._max.day) : null;
-    } else if (g.source === "FREEZE_USE") freezeUsed = n;
+    if (g.source === "FREEZE_EARN") freezeEarned = n;
+    else if (g.source === "FREEZE_USE") freezeUsed = n;
   }
 
   const restRows: RestRow[] = rest.map((r) => ({ day: dayOf(r.day), kind: r.kind, declaredAt: new Date(r.declaredAt), cancelledAt: r.cancelledAt ? new Date(r.cancelledAt) : null }));
@@ -527,11 +567,10 @@ export async function readSettlementState(
       days,
       freezeEarned,
       freezeUsed,
-      lastFreezeEarnDay,
+      tokens,
       openDebts: debts.map((d) => ({ instanceId: d.id, templateId: d.templateId, day: dayOf(d.day), slot: d.slot, debtXp: d.debtXp })),
       restRows,
       judgedDutyWeeks,
-      activeDaysBefore: num(before[0]?.n),
     },
     rawPending,
     dayRows,
@@ -553,6 +592,8 @@ export interface ChunkGroup {
   cursor: DayKey;
   /** FREEZE_EARN and FREEZE_USE rows the chunk writes (the next chunk's guard expects them). */
   freezeRows: number;
+  /** P22 review: the debts the chunk opens (MISSED with debtOpen), their count and Σ debtXp (the next chunk's guard expects them). */
+  newDebts: { count: number; sum: number };
 }
 
 /** A chunk's ops grouped for statement count (F5): creates, updates, events, template housekeeping, the cursor. */
@@ -583,13 +624,16 @@ export function groupChunk(plans: readonly DayPlan[]): ChunkGroup {
       }
     }
   }
+  const updated = [...updates].map(([id, data]) => ({ id, data }));
+  const opened = [...creates, ...updated.map((u) => u.data)].filter((x) => x.debtOpen);
   return {
     creates,
-    updates: [...updates].map(([id, data]) => ({ id, data })),
+    updates: updated,
     events,
     templates: [...templates].map(([templateId, data]) => ({ templateId, data })),
     cursor,
     freezeRows: events.filter((e) => e.source === "FREEZE_EARN" || e.source === "FREEZE_USE").length,
+    newDebts: { count: opened.length, sum: opened.reduce((t, x) => t + x.debtXp, 0) },
   };
 }
 
@@ -660,6 +704,12 @@ export interface SettleGuard {
    * Null when the chunk has no such day.
    */
   fresh: { from: DayKey; to: DayKey; events: number; instances: number; rest: number } | null;
+  /**
+   * The open debts (debtOpen instances on the personal Board) the chunk's caps were planned against: their count and
+   * Σ debtXp must still be these (P22 review). A make-up, its undo or an accept-the-loss landing after the read
+   * changes them, so the chunk re-plans and the caps (3 open a task, 100 in all) hold against what is really open.
+   */
+  openDebts: { count: number; sum: number };
   /** Instances this chunk moves must all still be UNDONE. */
   undone: string[];
   /**
@@ -667,7 +717,13 @@ export interface SettleGuard {
    * done instance (DONE, DONE_LATE, DONE_MVV) on any day. A late tick that
    * committed after the read then fails the chunk and the re-plan charges
    * nothing (decision 18: one path only). The opposite order is the tick's
-   * guard (tasks.ts freshnessGuardOp refuses once the one-off is MISSED).
+   * guard: tasks.ts freshnessGuardOp refuses once the one-off carries an
+   * open debt, and the re-read answers 'Make it up from its card'. A miss
+   * the caps left without debt ('debt capped': MISSED, debtXp 0, debtOpen
+   * false) has no card and owes nothing, so its late tick stands as an
+   * ordinary late tick (blueprint P20, M2 leftover 3, decided): refusing it
+   * would leave a late row on Today that can never be ticked. The due day
+   * stays MISSED; nothing is repaid, because nothing was charged.
    */
   oneOffs: string[];
 }
@@ -695,6 +751,10 @@ export function settleGuardSql(userId: string, g: SettleGuard): Prisma.Sql {
       Prisma.sql`(SELECT COUNT(*) FROM "RestDay" WHERE "userId" = ${userId} AND "day" >= ${f.from}::date AND "day" <= ${f.to}::date AND "cancelledAt" IS NULL) = ${f.rest}::int`
     );
   }
+  // The caps' open-debt set, on the personal Board as the read counts it (the sum within a rounding hair: debtXp is a float).
+  clauses.push(
+    Prisma.sql`(SELECT COUNT(*) = ${g.openDebts.count}::int AND ABS(COALESCE(SUM("debtXp"), 0) - ${g.openDebts.sum}::float8) < 0.001 FROM "TaskInstance" WHERE "userId" = ${userId} AND "debtOpen" AND "templateId" NOT IN (SELECT "id" FROM "TaskTemplate" WHERE "userId" = ${userId} AND "boardId" IS NOT NULL))`
+  );
   if (g.undone.length > 0) {
     clauses.push(
       Prisma.sql`(SELECT COUNT(*) FROM "TaskInstance" WHERE "userId" = ${userId} AND "id" IN (${Prisma.join(g.undone)}) AND "status" = 'UNDONE') = ${g.undone.length}::int`
@@ -724,17 +784,18 @@ export function chargedOneOffsOf(g: Pick<ChunkGroup, "creates" | "updates">, sta
 }
 
 /**
- * The guard for one chunk of a run: `cursor` and `freezeRows` are what the
- * chunk before it left (the read's for the first); the fresh-day counts come
- * from the read (an earlier chunk of the same run never writes a row dated
- * in a later chunk: its rows are dated on its own days, a REPAIR on the day
- * before one of them).
+ * The guard for one chunk of a run: `cursor`, `freezeRows` and `openDebts`
+ * are what the chunk before it left (the read's for the first; `openDebts`
+ * defaults to the read's); the fresh-day counts come from the read (an
+ * earlier chunk of the same run never writes a row dated in a later chunk:
+ * its rows are dated on its own days, a REPAIR on the day before one of
+ * them).
  */
 export function chunkGuardOf(
   read: Pick<SettlementRead, "state" | "dayRows">,
   chunk: readonly DayPlan[],
   g: ChunkGroup,
-  ctx: { cursor: DayKey; freezeRows: number; today: DayKey }
+  ctx: { cursor: DayKey; freezeRows: number; today: DayKey; openDebts?: { count: number; sum: number } }
 ): SettleGuard {
   const first = chunk[0].day;
   const last = chunk[chunk.length - 1].day;
@@ -759,9 +820,15 @@ export function chunkGuardOf(
     epochDay: read.state.epochDay,
     freezeRows: ctx.freezeRows,
     fresh,
+    openDebts: ctx.openDebts ?? openDebtsOf(read.state),
     undone: g.updates.map((u) => u.id),
     oneOffs: chargedOneOffsOf(g, read.state),
   };
+}
+
+/** The read's open debts as the guard asserts them: their count and Σ debtXp. */
+function openDebtsOf(state: Pick<SettlementState, "openDebts">): { count: number; sum: number } {
+  return { count: state.openDebts.length, sum: state.openDebts.reduce((t, x) => t + x.debtXp, 0) };
 }
 
 /** The completion paths' own lock (tasks.ts lifeLockOp: 'life-complete:<user>'), so settlement and a tick never interleave. Settlement never mints, so it never takes life-mint. */
@@ -861,15 +928,17 @@ async function commitPlans(
 ): Promise<void> {
   let cursor = read.state.cursor as DayKey;
   let freezeRows = read.state.freezeEarned + read.state.freezeUsed;
+  let openDebts = openDebtsOf(read.state);
   const rawPending = new Map(read.rawPending);
   for (let i = 0; i < plans.length; i += SETTLE_CHUNK_DAYS) {
     const chunk = plans.slice(i, i + SETTLE_CHUNK_DAYS);
     const g = groupChunk(chunk);
-    const guard = chunkGuardOf(read, chunk, g, { cursor, freezeRows, today: ctx.today });
+    const guard = chunkGuardOf(read, chunk, g, { cursor, freezeRows, today: ctx.today, openDebts });
     await client.$transaction(chunkOps(client, userId, g, guard, rawPending));
     invalidate("life", "activity", "progress");
     cursor = g.cursor;
     freezeRows += g.freezeRows;
+    openDebts = { count: openDebts.count + g.newDebts.count, sum: openDebts.sum + g.newDebts.sum };
     for (const t of g.templates) rawPending.set(t.templateId, (t.data.pendingChange as unknown as Prisma.JsonValue) ?? null);
     committed(chunk);
   }
@@ -910,7 +979,7 @@ export async function settleLifeDays(userId: string, now: Date, opts: SettleOpti
   let tries = 0;
   let passes = 0;
   for (;;) {
-    const read = await readSettlementState(client, userId, now, { launchDay, through });
+    const read = await readSettlementState(client, userId, now, { launchDay, through, momentumLaunch: momentumLaunchDay(env) });
     if (!read) return { ...result, refused: NO_SETTINGS_REFUSAL };
     if (first) {
       result.cursorBefore = read.state.cursor;
@@ -1332,7 +1401,7 @@ export async function runLifeCron(request: Request, deps: LifeCronDeps = {}): Pr
 /** The xtnl-idea Supabase project: the one database dev and production share. Never XTNL_thesis. */
 export const XTNL_IDEA_PROJECT_REF = "xvlkujmtdcpaoxdftgpl";
 /** The local rehearsal mirror (xtnl-rehearsal): a localhost database on this port, and only that. */
-export const REHEARSAL_DB_PORT = 55432;
+export const REHEARSAL_DB_PORT = DUTY_REHEARSAL_PORT;
 
 /** Where a script's writes would land: xtnl-idea, the rehearsal mirror, or somewhere a write is refused. */
 export interface DatasourceTarget {

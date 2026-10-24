@@ -5,8 +5,10 @@ import { cached } from "./cache";
 import { getCurrentUserId } from "./user";
 import { addDays, dateColumn, keyOfDateColumn, todayKey, type DayKey } from "./life-day";
 import { computeStreak, streakWindowStart, HELD_SOURCES, STREAK_WINDOW_DAYS, type DailyStreak as CurveDailyStreak } from "./streak-curve";
-import { FREEZE_MAX, dutyLaunchDay, firstDutyDay, isDutyLaunched, settledFor } from "./duty-economy";
+import { dutyLaunchDay, firstDutyDay, isDutyLaunched, settledFor } from "./duty-economy";
 import { heldDaysOf, type RestRow } from "./duty-rule";
+import type { RestTokenSummary } from "./rest-tokens";
+import { readRestTokenSummary } from "./rest-tokens-server";
 
 // The pure half lives in streak-curve.ts so the browser can import it; these
 // re-exports are for server callers. Client code imports streak-curve.ts.
@@ -36,8 +38,10 @@ export { computeStreak, foldStreakDays, streakUnitsOf, STREAK_WINDOW_DAYS } from
  *     (RestDay rows read through duty-rule heldDaysOf, so a row declared too
  *     late or cancelled holds nothing). Only days up to today are read, so a
  *     future rest day bridges nothing.
- *   - Freezes: bankedFreezes = min(2, FREEZE_EARN − FREEZE_USE) over all
- *     history, counted in the same raw query.
+ *   - Freezes (blueprint P21, decision D19): bankedFreezes is the one Rest
+ *     Token bank, momentum's freeze fold (rest-tokens.ts), read beside the
+ *     raw query (rest-tokens-server readRestTokenSummary); M2's own
+ *     balance (earns minus spends) is retired.
  *   - While Duty is live, a day settlement has not judged yet with nothing in
  *     it is pending: it neither counts nor breaks the run, since a freeze or a
  *     repair may still hold it. A break is only ever a judged one. "Judged" is
@@ -65,8 +69,16 @@ export interface DailyStreak extends CurveDailyStreak {
   /**
    * An unsettled yesterday with nothing in it, a freeze banked and a run it
    * would carry (settlement's automatic spend will cover it). Display only.
+   * Blueprint P21: the token the fold spends there by itself (a live
+   * momentum run going into it, a token banked); the board adds the must case.
    */
   freezeWillCover: boolean;
+  /**
+   * Blueprint P21: the one Rest Token bank now (the Momentum card's number,
+   * and bankedFreezes); null when the bank is not live (momentum not launched,
+   * or the read failed).
+   */
+  restTokens: number | null;
   /** Held days (freeze, repair, rest) inside the current run. */
   heldInRun: number;
 }
@@ -86,9 +98,8 @@ export interface StreakFacts {
   /** Days read, today included (STREAK_WINDOW_DAYS for the board, 400 for the snapshot). */
   windowDays: number;
   rows: readonly StreakDayRow[];
-  /** All-history counts of FREEZE_EARN and FREEZE_USE rows. */
-  freezeEarned: number;
-  freezeUsed: number;
+  /** Blueprint P21: the one Rest Token bank as today reads it (rest-tokens.ts restTokenSummaryOf); null: not live. */
+  restTokens: RestTokenSummary | null;
   /** RestDay rows in the window (heldDaysOf decides which hold). */
   restRows: readonly RestRow[];
   /** LifeSettings.settledThroughDay. */
@@ -131,7 +142,7 @@ export function dailyStreakOf(f: StreakFacts): DailyStreak {
       if (!active.has(d) && !held.has(d)) pending.add(d);
     }
   }
-  const bankedFreezes = Math.min(FREEZE_MAX, Math.max(0, Math.floor(f.freezeEarned) - Math.floor(f.freezeUsed)));
+  const bankedFreezes = Math.max(0, Math.floor(f.restTokens?.bank ?? 0));
   const bridged = pending.size > 0 ? new Set<DayKey>([...held, ...pending]) : held;
   const base = computeStreak(active, bridged, f.today, { windowDays, bankedFreezes });
   // held7Days shows real holds only: a pending day is an empty slot, not a held one.
@@ -171,40 +182,34 @@ export function dailyStreakOf(f: StreakFacts): DailyStreak {
   }
 
   const yesterday = addDays(f.today, -1);
-  // pending.has(yesterday): Duty live, yesterday not settled, nothing in it and nothing holding it.
-  const freezeWillCover = pending.has(yesterday) && bankedFreezes >= 1 && base.current > 0;
+  // pending.has(yesterday): Duty live, yesterday not settled, nothing in it and nothing holding it. The token is the one
+  // the fold spends there by itself (blueprint P21): banked going into yesterday, with a live momentum run to carry.
+  const ty = f.restTokens?.yesterday;
+  const freezeWillCover = pending.has(yesterday) && (ty?.bank ?? 0) >= 1 && (ty?.run ?? 0) > 0 && base.current > 0;
 
-  return { ...base, held7Days, endedOn, endedAfter, freezeWillCover, heldInRun };
+  return { ...base, held7Days, endedOn, endedAfter, freezeWillCover, heldInRun, restTokens: f.restTokens ? bankedFreezes : null };
 }
 
 /**
  * The streak's facts for a window ending today, in one round trip: the raw
- * query (each day's net units and held rows, plus a UNION ALL row with the
- * all-history FREEZE_EARN and FREEZE_USE counts) and, only once a Duty
- * launch day is set, the RestDay rows up to today and the settlement cursor
- * and epoch (settledFor's floor) from LifeSettings.
+ * query (each day's net units and held rows), the Rest Token bank (blueprint
+ * P21: rest-tokens-server; a failed read is no bank, never a failed streak)
+ * and, only once a Duty launch day is set, the RestDay rows up to today and
+ * the settlement cursor and epoch (settledFor's floor) from LifeSettings.
  */
 export async function readStreakFacts(userId: string, now: Date = new Date(), windowDays: number = STREAK_WINDOW_DAYS): Promise<StreakFacts> {
   const today = todayKey(now);
   const start = streakWindowStart(today, windowDays);
   const launch = dutyLaunchDay();
-  const [rows, restRows, settings] = await Promise.all([
-    // The same CASE as `streakUnitsOf`, which the checks test. The second SELECT is one row.
-    prisma.$queryRaw<{ day: Date | null; units: number; held: number; earned: number; used: number }[]>`
+  const [rows, restRows, settings, restTokens] = await Promise.all([
+    // The same CASE as `streakUnitsOf`, which the checks test.
+    prisma.$queryRaw<{ day: Date; units: number; held: number }[]>`
       SELECT "day",
              SUM(CASE WHEN "countsForStreak" THEN 1 WHEN "source" = 'UNDO' THEN -1 ELSE 0 END)::int AS units,
-             SUM(CASE WHEN "source" IN (${Prisma.join([...HELD_SOURCES])}) THEN 1 ELSE 0 END)::int AS held,
-             0::int AS earned,
-             0::int AS used
+             SUM(CASE WHEN "source" IN (${Prisma.join([...HELD_SOURCES])}) THEN 1 ELSE 0 END)::int AS held
       FROM "ActivityEvent"
       WHERE "userId" = ${userId} AND "day" >= ${start}::date
       GROUP BY "day"
-      UNION ALL
-      SELECT NULL::date AS "day", 0::int AS units, 0::int AS held,
-             (COUNT(*) FILTER (WHERE "source" = 'FREEZE_EARN'))::int AS earned,
-             (COUNT(*) FILTER (WHERE "source" = 'FREEZE_USE'))::int AS used
-      FROM "ActivityEvent"
-      WHERE "userId" = ${userId} AND "source" IN ('FREEZE_EARN', 'FREEZE_USE')
     `,
     launch != null && today >= launch
       ? prisma.restDay.findMany({
@@ -213,25 +218,18 @@ export async function readStreakFacts(userId: string, now: Date = new Date(), wi
         })
       : Promise.resolve([] as { day: Date; kind: string; declaredAt: Date; cancelledAt: Date | null }[]),
     launch != null ? prisma.lifeSettings.findUnique({ where: { userId }, select: { settledThroughDay: true, epochDay: true } }) : Promise.resolve(null),
+    readRestTokenSummary(prisma, userId, today, { dutyLaunch: launch }).catch((err: unknown) => {
+      console.error("[streak] the rest token bank couldn't be read; it reads as none.", err);
+      return null;
+    }),
   ]);
 
-  const days: StreakDayRow[] = [];
-  let freezeEarned = 0;
-  let freezeUsed = 0;
-  for (const r of rows) {
-    if (r.day == null) {
-      freezeEarned += Number(r.earned) || 0;
-      freezeUsed += Number(r.used) || 0;
-      continue;
-    }
-    days.push({ day: keyOfDateColumn(new Date(r.day)), units: Number(r.units) || 0, held: Number(r.held) || 0 });
-  }
+  const days: StreakDayRow[] = rows.map((r) => ({ day: keyOfDateColumn(new Date(r.day)), units: Number(r.units) || 0, held: Number(r.held) || 0 }));
   return {
     today,
     windowDays,
     rows: days,
-    freezeEarned,
-    freezeUsed,
+    restTokens,
     restRows: restRows.map((r) => ({ day: keyOfDateColumn(r.day), kind: r.kind, declaredAt: r.declaredAt, cancelledAt: r.cancelledAt })),
     settledThroughDay: settings?.settledThroughDay ? keyOfDateColumn(settings.settledThroughDay) : null,
     dutyLaunchDay: launch,

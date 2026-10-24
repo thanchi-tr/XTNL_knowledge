@@ -374,7 +374,7 @@ function exclusion() {
   // Readers of TaskTemplate / TaskInstance in the game: the personal Board only.
   const settle = code("src/lib/settlement.ts");
   check("settlement: judges the personal Board's templates and instances only, and its open debts", /\.\.\.PERSONAL_BOARD,\s*kind: \{ in: \["TASK", "HABIT"\] \}/.test(settle) && /userId,\s*template: PERSONAL_BOARD,\s*OR:/.test(settle) && /where: \{ userId, debtOpen: true, template: PERSONAL_BOARD \}/.test(settle));
-  const guard = settleGuardSql("u", { cursor: "2026-10-09", epochDay: "2026-10-01", freezeRows: 0, fresh: { from: "2026-10-10", to: "2026-10-10", events: 1, instances: 2, rest: 0 }, undone: [], oneOffs: [] }).strings.join("?");
+  const guard = settleGuardSql("u", { cursor: "2026-10-09", epochDay: "2026-10-01", freezeRows: 0, fresh: { from: "2026-10-10", to: "2026-10-10", events: 1, instances: 2, rest: 0 }, openDebts: { count: 0, sum: 0 }, undone: [], oneOffs: [] }).strings.join("?");
   check("settlement: its freshness guard counts the same instances its read does (a work tick never stales a settle)", /FROM "TaskInstance" WHERE "userId" = \? AND "day" >= \?::date AND "day" <= \?::date AND "templateId" NOT IN \(SELECT "id" FROM "TaskTemplate" WHERE "userId" = \? AND "boardId" IS NOT NULL\)\) = \?::int/.test(guard), guard);
   check("kept weeks (the week judge): Duty's templates and instances are the personal Board's", /const DUTY_TEMPLATES = \{\s*kind: \{ in: \["TASK", "HABIT"\] \},\s*boardId: null,/.test(code("src/lib/life-weeks-server.ts")));
   check("weekly review: the week's musts are the personal Board's", /const DUTY_TEMPLATES: Prisma\.TaskTemplateWhereInput = \{\s*kind: \{ in: \["TASK", "HABIT"\] \},\s*boardId: null,/.test(code("src/app/today/week/page.tsx")));

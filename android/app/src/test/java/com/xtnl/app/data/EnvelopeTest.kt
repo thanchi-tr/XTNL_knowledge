@@ -70,6 +70,59 @@ class EnvelopeTest {
         assertEquals(20, d.review!!.target)
         assertNull(d.level)
         assertEquals("0412 345 678", d.work.single().customer!!.phone)
+        // P21: a server before the one bank sends no restTokens: no chip.
+        assertNull(d.streak!!.restTokens)
+        assertEquals(2, d.streak!!.freezes)
+    }
+
+    /** P22: /check's dutyOn and owed decode (the web card's words, `when` as whenLine); an older server's check reads as Duty off, nothing owed. */
+    @Test fun theOwedCardsDecode() {
+        val json = """{"ok":true,"data":{"dutyOn":true,"owed":[
+          {"instanceId":"o1","templateId":"t1","title":"Stretch","archived":false,"day":"2026-10-19","dayLabel":"Mon 19 Oct","debt":4.2,
+            "restoreBy":"2026-10-21","restoresToday":true,"restoresStreak":12,"rate":0.85,"makeUpXp":3.5,"minimum":{"label":"1 stretch","xp":1.1},
+            "studyLinked":false,"canAcceptLoss":false,"proof":{"minutes":[15,30],"pages":null},"when":"Stretch · Monday",
+            "text":"Monday's Stretch is still open. 10 min makes it right.","window":"Within Thu 04:00 it brings back its streak of 12.","later":1}
+        ]}}"""
+        val d = (HttpApi.parse(200, json, CheckData.serializer()) as Outcome.Ok).value
+        assertTrue(d.dutyOn)
+        val o = d.owed.single()
+        assertEquals("Stretch · Monday", o.whenLine)
+        assertEquals(4.2, o.debt, 1e-9)
+        assertEquals(0.85, o.rate, 1e-9)
+        assertEquals(OwedMinimum("1 stretch", 1.1), o.minimum)
+        assertEquals(listOf(15, 30), o.proof!!.minutes)
+        assertNull(o.proof!!.pages)
+        assertEquals(12, o.restoresStreak)
+        val older = (HttpApi.parse(200, """{"ok":true,"data":{}}""", CheckData.serializer()) as Outcome.Ok).value
+        assertFalse(older.dutyOn)
+        assertTrue(older.owed.isEmpty())
+    }
+
+    /** P22: POST /tasks/makeup's answer decodes (the cards left, or null when that read failed); a refusal keeps the server's line. */
+    @Test fun aMakeUpAnswerDecodes() {
+        val json = """{"ok":true,"data":{"instanceId":"o1","action":"makeup","status":"DONE_LATE","restored":true,"xp":3.5,"debt":4.2,"owedLeft":0,
+          "clearedLast":true,"undoUntil":"2026-10-21T00:22:00.000Z","duplicate":false,"line":"Repaid 4.2 and paid 3.5 exactly; its streak is back. Nothing is owed.",
+          "celebrations":[],"allDone":false,"owed":[],"level":{"level":7,"title":"Adept","progress":0.81},"credits":null}}"""
+        val v = (HttpApi.parse(200, json, MakeUpResult.serializer()) as Outcome.Ok).value
+        assertEquals("DONE_LATE", v.status)
+        assertEquals(true, v.clearedLast)
+        assertEquals(emptyList<OwedItem>(), v.owed)
+        assertEquals(7, v.level!!.level)
+        val accept = (HttpApi.parse(200, """{"ok":true,"data":{"instanceId":"o2","action":"accept","status":"WRITTEN_OFF","xp":0,"debt":8.3,"owedLeft":null,"clearedLast":null,"undoUntil":null,"owed":null}}""", MakeUpResult.serializer()) as Outcome.Ok).value
+        assertNull(accept.owed)
+        assertNull(accept.owedLeft)
+        val off = HttpApi.parse(409, """{"ok":false,"error":"Duty hasn't started yet. Until then, make it up on the web app.","code":"conflict"}""", MakeUpResult.serializer()) as Outcome.Err
+        assertEquals("conflict", off.code)
+        assertTrue(off.message.startsWith("Duty hasn't started yet."))
+    }
+
+    /** P21: the streak's restTokens (the one Rest Token bank) decodes, a number or null. */
+    @Test fun theRestTokensDecode() {
+        val live = """{"ok":true,"data":{"streak":{"days":12,"keptToday":true,"freezes":2,"restTokens":2}}}"""
+        val d = (HttpApi.parse(200, live, CheckData.serializer()) as Outcome.Ok).value
+        assertEquals(2, d.streak!!.restTokens)
+        val off = """{"ok":true,"data":{"streak":{"days":3,"keptToday":false,"freezes":0,"restTokens":null}}}"""
+        assertNull((HttpApi.parse(200, off, CheckData.serializer()) as Outcome.Ok).value.streak!!.restTokens)
     }
 
     /** P23: a row's proof and timer decode; an older server's row (neither sent) reads as no proof and no timer; the timer routes' answer. */

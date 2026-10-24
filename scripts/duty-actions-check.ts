@@ -24,6 +24,9 @@
 // roadmap-contract-check): first, so no check can reach a model whatever .env holds.
 import "./_no-model";
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import Module from "node:module";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { resolve } from "node:path";
 import { Prisma } from "@prisma/client";
 import { addDays, dayEndOf, dayStartOf, type DayKey } from "../src/lib/life-day";
@@ -49,6 +52,7 @@ import {
   planMakeUp,
   planRuleEdit,
   planUndoMakeUp,
+  restDayFreezeMessage,
   settledFloorOf,
   settledTickMessage,
   settledUndoMessage,
@@ -88,8 +92,24 @@ import {
 } from "../src/lib/reset-scopes";
 import { countsForStreakOf, foldStreakDays } from "../src/lib/streak-curve";
 import type { ActivityInput } from "../src/lib/life-types";
-import type { DutyBoard } from "../src/lib/duty-view";
-import { planCompletion, type BoardData, type BoardTemplate, type DayLedger, type PricedTemplate } from "../src/lib/today-board";
+import { owedProofOf, withOwedProof, type DutyBoard } from "../src/lib/duty-view";
+import type { RestTokenSummary } from "../src/lib/rest-tokens";
+
+/**
+ * Blueprint P21 (D19): the one Rest Token bank as the server reads it (rest-tokens.ts restTokenSummaryOf): `now` banked
+ * today, `y` banked going into yesterday with a momentum run of `run` (the fold spends there by itself with a run and a
+ * token), and `left` the bank today once yesterday's token is spent.
+ */
+const tok = (now: number, y: number, run = 0, left = Math.max(0, y - 1), cover: RestTokenSummary["yesterday"]["cover"] = y > 0 ? "free" : "none"): RestTokenSummary => ({
+  bank: now,
+  max: 2,
+  yesterday: { bank: y, run, autoSpend: run > 0 && y > 0, spent: false, leftAfter: left, cover },
+});
+import { MAKEUP_COUNTS_NOTE, PAGES_REFUSAL_PREFIX, PROOF_MINUTES_REFUSAL, TIMER_GONE, TIMER_OTHER_DAY, pageChipsOf, proofMinuteChipsOf, type SessionRow } from "../src/lib/proof";
+import { RECORD_YESTERDAY_HREF } from "../src/lib/shortcuts";
+import { yesterdayMustsNotice } from "../src/lib/rituals";
+import { makeUpOptsOf } from "../src/components/today/board-ui";
+import { makeUpPricesOf, planCompletion, type BoardData, type BoardTemplate, type DayLedger, type PricedTemplate } from "../src/lib/today-board";
 import { freshnessGuardSql, isSettledDay, isStaleRead, planSafetyPause, settledDayGuardSql, todayCountsOf } from "../src/lib/tasks";
 import { SETTLE_WRITES_OFF, settleYesterdayCore } from "../src/lib/duty";
 import { WRITES_OFF_REFUSAL, type SettleResult } from "../src/lib/settlement";
@@ -696,7 +716,7 @@ console.log("— F7 settledFor: the launch floor —");
     /settledDayGuardOp\(userId, yesterday, launchDay\)/.test(code(read("src/lib/duty.ts")))
   );
   check("freezeSpendOf: the launch Tuesday may cover the launch Monday under the launch script's cursor", (() => {
-    const r = freezeSpendOf({ today: addDays(LAUNCH, 1), launchDay: LAUNCH, epochDay: EPOCH, cursor: CURSOR, yesterdayUnits: 0, earned: 1, used: 0, alreadyUsed: false });
+    const r = freezeSpendOf({ today: addDays(LAUNCH, 1), launchDay: LAUNCH, epochDay: EPOCH, cursor: CURSOR, yesterdayUnits: 0, tokens: tok(1, 1), alreadyUsed: false });
     return r.ok && r.value.day === LAUNCH;
   })());
   const musts = [
@@ -715,8 +735,7 @@ console.log("— F7 settledFor: the launch floor —");
     repairedRecently: new Set<string>(),
     ledger: ledger(LAUNCH),
     restRows: [],
-    freezeEarned: 0,
-    freezeUsed: 0,
+    restTokens: null,
     units: {},
     heldByLedger: new Set<DayKey>(),
     freezeUsedYesterday: false,
@@ -832,8 +851,7 @@ console.log("— F7 the nav and bell counts agree with the board —");
     repairedRecently: new Set(),
     ledger: ledger(TODAY),
     restRows: [],
-    freezeEarned: 0,
-    freezeUsed: 0,
+    restTokens: null,
     units: {},
     heldByLedger: new Set(),
     freezeUsedYesterday: false,
@@ -920,8 +938,7 @@ console.log("— F8 spend a freeze —");
     epochDay: "2026-09-01",
     cursor: addDays(TODAY, -2),
     yesterdayUnits: 0,
-    earned: 2,
-    used: 0,
+    tokens: tok(2, 2),
     alreadyUsed: false,
     ...over,
   });
@@ -931,10 +948,16 @@ console.log("— F8 spend a freeze —");
   check("freeze: refused for an active yesterday", !active.ok && /has activity/.test(active.error), active.ok ? "" : active.error);
   check("freeze: an undone tick nets to no activity (units 0): allowed", freezeSpendOf(s({ yesterdayUnits: 0 })).ok);
   check("freeze: refused for a settled yesterday", !freezeSpendOf(s({ cursor: YESTERDAY })).ok);
-  check("freeze: refused with nothing banked", !freezeSpendOf(s({ earned: 1, used: 1 })).ok);
+  check("freeze: refused with nothing banked", !freezeSpendOf(s({ tokens: tok(0, 0) })).ok);
+  // Blueprint P21 (D19): the token comes from the one Rest Token bank, momentum's freezes.
+  check("P21: refused with no bank at all (momentum not live)", (() => { const r = freezeSpendOf(s({ tokens: null })); return !r.ok && r.error === "No freeze banked yet."; })());
+  check(
+    "P21: when the fold already spends yesterday's token by itself (a live run), the spend records that same token: left is the bank as it stands",
+    (() => { const r = freezeSpendOf(s({ tokens: tok(1, 2, 3, 1) })); return r.ok && r.value.left === 1 && !r.value.already; })()
+  );
   check("freeze: refused before launch", !freezeSpendOf(s({ launchDay: addDays(TODAY, 3) })).ok);
   check("freeze: refused for a day before the first Duty day", !freezeSpendOf(s({ launchDay: TODAY })).ok && !freezeSpendOf(s({ epochDay: TODAY })).ok);
-  const twice = freezeSpendOf(s({ alreadyUsed: true, used: 1 }));
+  const twice = freezeSpendOf(s({ alreadyUsed: true, tokens: tok(1, 2) }));
   check("freeze: already spent for yesterday → the same answer (idempotent)", twice.ok && twice.value.already && twice.value.left === 1);
   const ev = freezeUseEventOf(YESTERDAY, NOW);
   check(
@@ -944,11 +967,21 @@ console.log("— F8 spend a freeze —");
   const duty = code(read("src/lib/duty.ts"));
   const spend = duty.slice(duty.indexOf("export async function spendFreezeCore"), duty.indexOf("export async function settleYesterdayCore"));
   check(
-    "freeze: one array — lock, the settled-day guard (with its launch floor), the balance guard, the row",
-    /lifeLockOp\(userId\),\s*settledDayGuardOp\(userId, yesterday, launchDay\),\s*freezeGuardOp\(userId, yesterday\),\s*activityOp\(userId, freezeUseEventOf\(yesterday, now\)\)/.test(spend)
+    "freeze: one array — lock, the settled-day guard (with its launch floor), the bank guard, the row",
+    /lifeLockOp\(userId\),\s*settledDayGuardOp\(userId, yesterday, launchDay\),\s*freezeGuardOp\(userId, yesterday, state\.used\),\s*activityOp\(userId, freezeUseEventOf\(yesterday, now\)\)/.test(spend)
   );
   const fg = duty.slice(duty.indexOf("function freezeGuardOp"), duty.indexOf("async function readFreezeState"));
-  check("freeze: the balance guard is EARN − USE ≥ 1 and no activity, by division by zero (22012)", /SELECT 1 \/ \(CASE WHEN/.test(fg) && />= 1/.test(fg) && /<= 0/.test(fg));
+  // Re-pinned by blueprint P21: the bank is momentum's fold (no EARN − USE in SQL), so the guard holds the read's
+  // balance by holding its FREEZE_USE count: a spend landing in between re-reads.
+  check(
+    "freeze: the bank guard is 'no FREEZE_USE since the read' and no activity, by division by zero (22012)",
+    /SELECT 1 \/ \(CASE WHEN/.test(fg) && /"source" = 'FREEZE_USE'\) = \$\{used\}::int/.test(fg) && /<= 0/.test(fg) && !/FREEZE_EARN/.test(fg)
+  );
+  const rf0 = duty.slice(duty.indexOf("async function readFreezeState"), duty.indexOf("export async function spendFreezeCore"));
+  check(
+    "P21: readFreezeState reads the one Rest Token bank (rest-tokens-server) and the FREEZE_USE count, no EARN − USE",
+    /readRestTokenSummary\(prisma, userId, today\)/.test(rf0) && /prisma\.activityEvent\.count\(\{ where: \{ userId, source: "FREEZE_USE" \} \}\)/.test(rf0) && !/FREEZE_EARN/.test(rf0)
+  );
 }
 
 // ═══ F9 Rest, sick and vacation ═══════════════════════════════════════════
@@ -1041,8 +1074,8 @@ console.log("— the board's Duty read —");
     repairedRecently: new Set(),
     ledger: ledger(TODAY),
     restRows: [],
-    freezeEarned: 1,
-    freezeUsed: 0,
+    // P21: going into yesterday 2 banked and a live momentum run, so the fold spends one there by itself: 1 now.
+    restTokens: tok(1, 2, 3, 1),
     units: { [YESTERDAY]: 0, [addDays(TODAY, -2)]: 2 },
     heldByLedger: new Set(),
     freezeUsedYesterday: false,
@@ -1078,11 +1111,52 @@ console.log("— the board's Duty read —");
   const pre = dutyBoardOf(facts({ launchDay: null, cursor: null }));
   check("board: before launch (or after a rollback) the debts still show", !pre.live && pre.owed.length === 1 && !pre.freezes.willCover);
   check("freezes: the real balance, and a freeze will cover an empty yesterday after a live day", b.freezes.banked === 1 && b.freezes.willCover);
-  check("freezes: no cover for an active yesterday", !dutyBoardOf(facts({ units: { [YESTERDAY]: 1 } })).freezes.willCover);
-  check("freezes: no cover with nothing banked", !dutyBoardOf(facts({ freezeEarned: 0 })).freezes.willCover);
-  check("freezes: no cover for a dead streak with no must due (the freeze is kept)", !dutyBoardOf(facts({ units: {} })).freezes.willCover);
-  check("freezes: a spend already made covers it", dutyBoardOf(facts({ units: {}, freezeEarned: 1, freezeUsed: 1, freezeUsedYesterday: true })).freezes.willCover);
-  check("freezes: banked shows at most 2", dutyBoardOf(facts({ freezeEarned: 5, freezeUsed: 0 })).freezes.banked === 2);
+  // Re-pinned by the P21 review: 'active' is the fold's own reading (a momentum action, so it spends nothing there by
+  // itself: autoSpend false), not the streak's units, which count reviews too.
+  const momentumDay = (t: RestTokenSummary): RestTokenSummary => ({ ...t, yesterday: { ...t.yesterday, autoSpend: false } });
+  check("freezes: no cover for an active yesterday (a momentum action) with no must open", !dutyBoardOf(facts({ units: { [YESTERDAY]: 1 }, restTokens: momentumDay(tok(1, 2, 3, 1)) })).freezes.willCover);
+  check(
+    "P21 review: a yesterday with reviews only (streak units, no momentum action) is covered: the fold spends its token there by itself",
+    dutyBoardOf(facts({ units: { [YESTERDAY]: 2 }, restTokens: tok(1, 2, 3, 1) })).freezes.willCover
+  );
+  {
+    // P21 review (D19): an active yesterday with a must that would owe still open, and settlement's forecast.
+    const must = { id: "m", kind: "HABIT", recurrence: "DAILY", startDay: "2026-09-01", dueDay: null, dueKind: null, compulsory: true, compulsoryOnRest: false, inbox: false, archivedDay: null, pendingChange: null, band: "STANDARD", bandOverride: 0, estMinutes: 15, machineMinutes: 15 };
+    const withMust = (t: RestTokenSummary, over: Partial<DutyBoardFacts> = {}) => dutyBoardOf(facts({ units: { [YESTERDAY]: 1 }, restTokens: momentumDay(t), templates: [must], ...over })).freezes;
+    const free = withMust(tok(1, 1, 3, 0, "free"));
+    check("P21 review: an active yesterday with a must open and a free token: willCover, musts 'covers', and today's musts count on one less", free.willCover && free.musts === "covers" && free.forToday === 0, JSON.stringify(free));
+    const ifToday = withMust(tok(1, 1, 3, 0, "if-today"));
+    check("P21 review: …only once today has a task ('if-today'): no willCover, musts 'if-today'", !ifToday.willCover && ifToday.musts === "if-today" && ifToday.forToday === 0, JSON.stringify(ifToday));
+    const none = withMust(tok(0, 0, 3, 0, "none"));
+    check("P21 review: …no token for it: no cover, musts null (the bell and the sheet say it is owed)", !none.willCover && none.musts === null, JSON.stringify(none));
+    const done = withMust(tok(1, 1, 3, 0, "free"), { instances: [{ templateId: "m", day: YESTERDAY, status: "DONE" }] });
+    check("P21 review: …the must already done: nothing owed, no cover, musts null, today keeps the bank", !done.willCover && done.musts === null && done.forToday === 1, JSON.stringify(done));
+    const capped = withMust(tok(1, 1, 3, 0, "free"), {
+      owed: [1, 2, 3].map((n) => ({ instanceId: `c${n}`, day: addDays(D, -n), slot: 0, debtXp: 1, template: { ...owedTemplate, id: "m" } })),
+    });
+    check("P21 review: …a must the caps leave owing nothing (3 open for it): no token goes to it", !capped.willCover && capped.musts === null, JSON.stringify(capped));
+  }
+  check("freezes: no cover with nothing banked", !dutyBoardOf(facts({ restTokens: tok(0, 0, 3) })).freezes.willCover);
+  // Re-pinned by blueprint P21: 'a dead streak' is now the momentum run going into yesterday (the fold spends nothing
+  // there by itself without one), with no must due either.
+  check("freezes: no cover for a dead run with no must due (the token is kept)", !dutyBoardOf(facts({ units: {}, restTokens: tok(1, 1, 0) })).freezes.willCover);
+  check("freezes: a spend already made covers it", dutyBoardOf(facts({ units: {}, restTokens: tok(0, 1, 3, 0), freezeUsedYesterday: true })).freezes.willCover);
+  // Re-pinned by blueprint P21: 'at most 2' is the fold's own (rest-tokens-check); the board shows its number as it is.
+  check(
+    "P21: banked is the one bank now (the Momentum card's number); the switch offers the token going into yesterday and the bank after it",
+    b.freezes.banked === 1 && b.freezes.forYesterday === 2 && b.freezes.leftAfter === 1
+  );
+  check("P21: no bank (momentum not live, or the read failed): none banked, no cover", (() => { const n = dutyBoardOf(facts({ restTokens: null })).freezes; return n.banked === 0 && !n.willCover && n.forYesterday === 0; })());
+  check(
+    "P21: a dead run but a must due yesterday: the token covers it (step 3 spends one for a missed must)",
+    dutyBoardOf(
+      facts({
+        units: {},
+        restTokens: tok(1, 1, 0),
+        templates: [{ id: "m", kind: "HABIT", recurrence: "DAILY", startDay: "2026-09-01", dueDay: null, dueKind: null, compulsory: true, compulsoryOnRest: false, inbox: false, archivedDay: null, pendingChange: null }],
+      })
+    ).freezes.willCover
+  );
   check("freezes: usedYesterday says a spend is already dated yesterday", dutyBoardOf(facts({ freezeUsedYesterday: true })).freezes.usedYesterday === true && b.freezes.usedYesterday === false);
   check("board: the latest repair day is carried for the Full-day strip", dutyBoardOf(facts({ lastRepairDay: "2026-10-01" })).lastRepairDay === "2026-10-01" && b.lastRepairDay === null);
   const rest = dutyBoardOf(
@@ -1245,14 +1319,200 @@ console.log("— F18 reset —");
   );
 }
 
+// ═══ Blueprint P20: the M2 leftovers and Stage 7's open item ═════════════
+
+console.log("— P20 a make-up passes the proof gate as a tick —");
+{
+  const PROOF_DAY = LAUNCH;
+  const deep = tpl({ id: "tpl-deep", title: "deep work", normTitle: "deep work", band: "DEMANDING", estMinutes: 60, machineMinutes: 60, track: "CRAFT" });
+  const deepDebt = debtFor(deep);
+  const proofRead = (kind: "MINUTES" | null, sessions: SessionRow[] = [], prevTickAt: Date | null = null) => ({ launchDay: PROOF_DAY, kind, prevTickAt, sessions });
+  const deepUp = (over: Partial<MakeUpInput>) =>
+    planMakeUp(makeUpInput({ template: deep, instance: { id: "inst-deep", templateId: deep.id, day: D, slot: 0, debtXp: deepDebt }, ...over }));
+
+  const bare = deepUp({});
+  const noRead = deepUp({ proof: null });
+  check("no proof read (proof not in force today): the make-up exactly as before", bare.ok && noRead.ok && json(bare.value) === json(noRead.value) && bare.value.segments.length === 0 && bare.value.pagesCols === undefined);
+  const before = deepUp({ proof: { ...proofRead("MINUTES"), launchDay: addDays(TODAY, 1) } });
+  check("a launch day still ahead gates nothing (proofOn today)", before.ok && before.value.plan.receipt.proof === undefined);
+  const refusedMin = deepUp({ proof: proofRead("MINUTES") });
+  check("a MINUTES template's full make-up without minutes is refused, in the tick's own words", !refusedMin.ok && refusedMin.error === PROOF_MINUTES_REFUSAL, refusedMin.ok ? "ok" : refusedMin.error);
+  const withMin = deepUp({ proof: proofRead("MINUTES"), minutes: 60 });
+  check(
+    "with its minutes: paid, its receipt 'life-3' and gated, the TASK row the receipt's, nothing to count",
+    withMin.ok && withMin.value.plan.receipt.v === "life-3" && withMin.value.plan.receipt.proof?.gated === true && withMin.value.taskEvent.receipt === withMin.value.receipt && withMin.value.segments.length === 0,
+    withMin.ok ? json(withMin.value.plan.receipt.proof) : withMin.error
+  );
+  check("a 60-minute make-up prices as the bare one at its estimate did (the gate never reprices honest minutes)", withMin.ok && bare.ok && withMin.value.plan.receipt.xp === bare.value.plan.receipt.xp, withMin.ok && bare.ok ? `${withMin.value.plan.receipt.xp} vs ${bare.value.plan.receipt.xp}` : "");
+  const againBound = deepUp({ proof: proofRead("MINUTES", [], new Date(NOW.getTime() - 20 * 60_000)), minutes: 60 });
+  check("a make-up 20 minutes after today's own tick is bounded by the clock, as an Again is (wall 20)", againBound.ok && againBound.value.plan.receipt.proof?.wall === 20, againBound.ok ? json(againBound.value.plan.receipt.proof) : againBound.error);
+  const deepMvv = tpl({ ...deep, mvv: "deep work 10m" });
+  const minimum = planMakeUp(makeUpInput({ template: deepMvv, instance: { id: "inst-deep", templateId: deep.id, day: D, slot: 0, debtXp: deepDebt }, minimum: true, proof: proofRead("MINUTES") }));
+  check("the minimum version is never gated", minimum.ok && minimum.value.status === "DONE_MVV");
+  const play = deepUp({ template: tpl({ ...deep, intrinsic: true }), proof: proofRead("MINUTES") });
+  check("#play is never gated", play.ok);
+  const notProof = deepUp({ proof: proofRead(null) });
+  check("a template with no proof kind is never gated, and its receipt carries no proof", notProof.ok && bare.ok && notProof.value.plan.receipt.proof === undefined && notProof.value.plan.receipt.v === bare.value.plan.receipt.v);
+
+  const startedAt = new Date(NOW.getTime() - 45 * 60_000);
+  const timer: SessionRow = { id: "ses-1", templateId: deep.id, day: TODAY, startedAt, endedAt: new Date(NOW.getTime() - 5 * 60_000), minutes: null, source: "web", clientId: "c1" };
+  const named = deepUp({ proof: proofRead("MINUTES", [timer]), sessionId: "ses-1" });
+  check(
+    "a timer it names counts as a tick's would (40 minutes, the session counted once by makeUpCore)",
+    named.ok && named.value.segments.map((x) => x.id).join() === "ses-1" && Math.round(named.value.plan.receipt.minutes) === 40 && named.value.plan.receipt.proof?.session === "ses-1",
+    named.ok ? json({ minutes: named.value.plan.receipt.minutes, proof: named.value.plan.receipt.proof }) : named.error
+  );
+  const unnamed = deepUp({ proof: proofRead("MINUTES", [timer]) });
+  check("a timer it does not name is never picked up (today's row's timer is today's tick's): refused without minutes", !unnamed.ok && unnamed.error === PROOF_MINUTES_REFUSAL);
+  const other = deepUp({ proof: proofRead("MINUTES", [{ ...timer, templateId: "tpl-other" }]), sessionId: "ses-1" });
+  check("another task's timer: 'That timer is gone.'", !other.ok && other.error === TIMER_GONE);
+  const yesterdays = deepUp({ proof: proofRead("MINUTES", [{ ...timer, day: YESTERDAY, startedAt: at(YESTERDAY, 10), endedAt: at(YESTERDAY, 11) }]), sessionId: "ses-1" });
+  check("yesterday's stopped timer is not today's row's: refused", !yesterdays.ok && yesterdays.error === TIMER_OTHER_DAY);
+  const reportWins = deepUp({ proof: proofRead("MINUTES", [timer]), sessionId: "ses-1", minutes: 50 });
+  check("minutes and a timer: the minutes count and the timer is left as it is (nothing counted, nothing closed)", reportWins.ok && reportWins.value.segments.length === 0 && reportWins.value.plan.receipt.proof?.session == null);
+
+  const book = tpl({ id: "tpl-read", title: "read", normTitle: "read", band: "STANDARD", estMinutes: 30, machineMinutes: 30, autoMetric: "PAGES", track: "CARE" });
+  const bookUp = (over: Partial<MakeUpInput>) =>
+    planMakeUp(makeUpInput({ template: { ...book, autoTarget: 30 }, instance: { id: "inst-read", templateId: book.id, day: D, slot: 0, debtXp: debtFor(book) }, ...over }));
+  const noPages = bookUp({ proof: proofRead(null) });
+  check("a reading must's make-up without its pages is refused ('Log the pages')", !noPages.ok && noPages.error.startsWith(PAGES_REFUSAL_PREFIX), noPages.ok ? "ok" : noPages.error);
+  const fewPages = bookUp({ proof: proofRead(null), pages: 20 });
+  check("…and below its day's target", !fewPages.ok && /20 pages is below the day's 30/.test(fewPages.error), fewPages.ok ? "ok" : fewPages.error);
+  const pages = bookUp({ proof: proofRead(null), pages: 30 });
+  check(
+    "with its pages: recorded on the instance (PAGES, 30) and the receipt, never priced",
+    pages.ok && json(pages.value.pagesCols) === json({ proofKind: "PAGES", proofQty: 30 }) && pages.value.plan.receipt.proof?.pages === 30 && bookUp({}).ok && pages.value.plan.receipt.xp === (bookUp({}) as { value: { plan: { receipt: { xp: number } } } }).value.plan.receipt.xp
+  );
+  check("a pages make-up with no proof read is as before (no pages columns)", bookUp({}).ok && (bookUp({}) as { value: { pagesCols?: unknown } }).value.pagesCols === undefined);
+
+  const duty = code(read("src/lib/duty.ts"));
+  const core = duty.slice(duty.indexOf("export async function makeUpCore"), duty.indexOf("// ── Undo a make-up"));
+  check(
+    "makeUpCore reads the proof for TODAY (null, with no read, while proof is off) and hands planMakeUp the minutes, the timer and the pages",
+    /const proof = await readCompletionProof\(userId, inst\.templateId, today\);/.test(core) &&
+      /\.\.\.\(proof \? \{ proof, sessionId: opts\.sessionId \?\? null, pages: opts\.pages \?\? null \} : \{\}\)/.test(core)
+  );
+  check(
+    "…writes a reading must's pages columns only while proof is in force, and counts a named timer once (countSessionOps)",
+    /\.\.\.\(p\.pagesCols \?\? \{\}\)/.test(core) && /if \(p\.segments\.length > 0\) ops\.push\(\.\.\.countSessionOps\(userId, p\.segments, p\.plan\.receipt\.minutes, now\)\);/.test(core)
+  );
+  const action = code(read("src/app/actions/duty.ts"));
+  check(
+    "the makeUp action takes the minutes, a timer id and the tick's own pages proof; doMinimum takes none",
+    /makeUpCore\(userId, instanceId, \{ minimum: false, minutes, sessionId, pages \}\)/.test(action) && /tickPagesOf\(cleanTickProof\(opts\?\.proof\)\)/.test(action) && /makeUpCore\(userId, instanceId, \{ minimum: true \}\)/.test(action)
+  );
+
+  // The owed card asks for what the server's gate needs (duty-view owedProofOf), and the board fills it only while proof is in force.
+  const card = (t: PricedTemplate & { autoTarget?: number | null }, studyLinked = false) => ({ template: { ...t, startDay: "2026-09-01" as DayKey }, studyLinked });
+  check("owedProofOf: a MINUTES must's card carries its estimate's minute chips", json(owedProofOf(card(deep), "MINUTES", PROOF_DAY, TODAY)) === json({ minutes: proofMinuteChipsOf(60) }));
+  check("owedProofOf: a reading must's card carries its target and page chips", json(owedProofOf(card({ ...book, autoTarget: 30 }), null, PROOF_DAY, TODAY)) === json({ pages: { target: 30, chips: pageChipsOf(30) } }));
+  check(
+    "owedProofOf: none before the launch day, with none, for #play, for a study-linked must, or for a template with no proof",
+    [
+      owedProofOf(card(deep), "MINUTES", addDays(TODAY, 1), TODAY),
+      owedProofOf(card(deep), "MINUTES", null, TODAY),
+      owedProofOf(card(tpl({ ...deep, intrinsic: true })), "MINUTES", PROOF_DAY, TODAY),
+      owedProofOf(card(deep, true), "MINUTES", PROOF_DAY, TODAY),
+      owedProofOf(card(deep), null, PROOF_DAY, TODAY),
+    ].every((x) => x === null)
+  );
+  const board = { owed: [{ templateId: deep.id, template: card(deep).template, studyLinked: false }, { templateId: dishes.id, template: card(dishes).template, studyLinked: false }] } as unknown as DutyBoard;
+  const withProof = withOwedProof(board, { [deep.id]: "MINUTES" }, PROOF_DAY, TODAY);
+  check("withOwedProof: only a gated card changes; the rest are the same objects", withProof.owed[0].proof?.minutes != null && withProof.owed[1] === board.owed[1] && withOwedProof(board, {}, PROOF_DAY, TODAY) === board);
+  // P20 review: with today's ledger each minute chip is priced as the server prices that make-up (the drawer's projection).
+  const priced = owedProofOf(card(deep), "MINUTES", PROOF_DAY, TODAY, ledger(TODAY));
+  const chipPrice = (m: number) =>
+    planMakeUp(makeUpInput({ template: deep, instance: { id: "inst-deep", templateId: deep.id, day: D, slot: 0, debtXp: debtFor(deep) }, minutes: m, proof: proofRead("MINUTES") }));
+  check(
+    "P20 review: owedProofOf with today's ledger prices every minute chip (aligned), each the server's own make-up price for it; 60 of 60 is the estimate's",
+    !!priced?.prices &&
+      priced.prices.length === proofMinuteChipsOf(60).length &&
+      proofMinuteChipsOf(60).every((m, i) => {
+        const p = chipPrice(m);
+        return p.ok && Math.abs(p.value.plan.receipt.xp - priced.prices![i]) < 1e-9;
+      }) &&
+      priced.prices[proofMinuteChipsOf(60).indexOf(60)] === makeUpPricesOf(deep, ledger(TODAY), TODAY).makeUpXp &&
+      new Set(priced.prices).size > 1,
+    JSON.stringify(priced)
+  );
+  check("…and the board passes today's ledger to it", /withOwedProof\(read\.duty, proof\.kinds, proof\.proof\.launchDay, day, read\.core\.ledger\.today\)/.test(code(read("src/lib/tasks.ts"))));
+  const tasksSrc = code(read("src/lib/tasks.ts"));
+  check(
+    "the board fills the cards' proof only while proof is in force (after loadBoardProof), from its kinds",
+    /if \(!proof\) return \{ \.\.\.read\.core, dueNow, duty: read\.duty,/.test(tasksSrc) && /const duty = read\.duty \? withOwedProof\(read\.duty, proof\.kinds, proof\.proof\.launchDay, day, read\.core\.ledger\.today\) : read\.duty;/.test(tasksSrc)
+  );
+  check(
+    "the proof kinds include an archived template with an open debt (its card is gated as the server gates it)",
+    /OR: \[\{ archivedAt: null \}, \{ instances: \{ some: \{ debtOpen: true \} \} \}\]/.test(code(read("src/lib/task-sessions-server.ts")))
+  );
+  const cardSrc = code(read("src/components/today/m2/MakeUpCard.tsx"));
+  check(
+    "the card's chips are the drawer's own 44 px groups, and Make up waits for what the gate needs",
+    /data-chips="minutes"/.test(cardSrc) && /data-chips="pages"/.test(cardSrc) && /disabled=\{busy \|\| !proofReady\}/.test(cardSrc) && /onMakeUp\(e\.currentTarget, report\)/.test(cardSrc)
+  );
+  check("both make-up callers pass the card's report (Today and the weekly review)", /makeUp\(card\.instanceId, \{ \.\.\.REFRESH, \.\.\.makeUpOptsOf\(report\) \}\)/.test(code(read("src/components/today/TodayBoard.tsx"))) && /makeUp\(card\.instanceId, \{ \.\.\.REFRESH, \.\.\.makeUpOptsOf\(report\) \}\)/.test(code(read("src/components/home/WeekReview.tsx"))));
+  check(
+    "makeUpOptsOf: minutes as minutes, pages as the tick's own proof, nothing picked nothing sent",
+    json(makeUpOptsOf({ minutes: 45 })) === json({ minutes: 45 }) && json(makeUpOptsOf({ pages: 30 })) === json({ proof: { kind: "PAGES", qty: 30 } }) && json(makeUpOptsOf(undefined)) === "{}"
+  );
+}
+
+console.log("— P20 M2 leftovers —");
+{
+  // (4) A declared rest day takes no manual freeze; activity is still said first, and the board never offered it.
+  const s = (over: Partial<FreezeSpendState> = {}): FreezeSpendState => ({
+    today: TODAY,
+    launchDay: LAUNCH,
+    epochDay: "2026-09-01",
+    cursor: addDays(TODAY, -2),
+    yesterdayUnits: 0,
+    tokens: tok(2, 2),
+    alreadyUsed: false,
+    ...over,
+  });
+  const rest = freezeSpendOf(s({ yesterdayRest: "REST" }));
+  // Re-pinned by the P21 review: the refusal never claims the day owes nothing (an Even on rest days must still does).
+  check(
+    "(4) a manual freeze for a declared rest day is refused: it needs none, and an Even on rest days must is still owed",
+    !rest.ok && rest.error === "Tuesday was a rest day: it holds your streaks by itself, so no rest token is spent on it. A must marked Even on rest days is still owed.",
+    rest.ok ? "ok" : rest.error
+  );
+  check("(4) …a sick and a vacation day the same, in their words", restDayFreezeMessage(YESTERDAY, "SICK").includes("a sick day") && restDayFreezeMessage(YESTERDAY, "VACATION").includes("a vacation day"));
+  check("(4) no declaration: as before", freezeSpendOf(s({ yesterdayRest: null })).ok && freezeSpendOf(s()).ok);
+  check("(4) a repeat after a spend is still the same answer (idempotent before the rest test)", (() => { const r = freezeSpendOf(s({ yesterdayRest: "REST", alreadyUsed: true, tokens: tok(1, 2) })); return r.ok && r.value.already; })());
+  const duty = code(read("src/lib/duty.ts"));
+  const rf = duty.slice(duty.indexOf("async function readFreezeState"), duty.indexOf("export async function spendFreezeCore"));
+  check("(4) readFreezeState reads yesterday's RestDay row through validRestDays (the one held-day rule)", /prisma\.restDay\.findMany\(\{ where: \{ userId, day: dateColumn\(yesterday\) \}/.test(rf) && /yesterdayRest: validRestDays\(restRows, yesterday, yesterday\)\.get\(yesterday\) \?\? null/.test(rf));
+
+  // (3) The capped-miss late tick of a deadline one-off is allowed (decided): no debt, no card, nothing owed.
+  const facts: TickDutyFacts = { day: TODAY, today: TODAY, launchDay: LAUNCH, cursor: addDays(TODAY, -2), epochDay: "2026-09-01", oneOff: true, debited: false, frozen: false };
+  check("(3) a one-off whose miss the caps left without debt takes its late tick", tickRefusalOf(facts) === null && tickRefusalOf({ ...facts, debited: true }) === DEBITED_ONE_OFF);
+  const guard = freshnessGuardSql("u1", TODAY, 0, "tpl-rent").strings.join("?");
+  check("(3) the tick's one-off guard refuses an open debt only, never a MISSED status (a capped miss never stalls a tick)", /"debtOpen"/.test(guard) && !/'MISSED'/.test(guard));
+  check("(3) the settlement guard's note says so (SettleGuard.oneOffs)", /the caps left without debt \('debt capped'/.test(read("src/lib/settlement.ts").replace(/\s+\*\s+/g, " ")));
+
+  // (7) The small wiring: one askSectionsOf, one Record yesterday link, the server's launch day on the Must chip.
+  check("(7) AsksSheet uses shell-types' askSectionsOf (re-exported), with no copy of its own", !/export function askSectionsOf/.test(code(read("src/components/shell/AsksSheet.tsx"))) && /import \{ askSectionsOf, type ShellAsk \} from "\.\/shell-types";/.test(read("src/components/shell/AsksSheet.tsx")));
+  check("(7) rituals' 'Yesterday' notice links to RECORD_YESTERDAY_HREF", yesterdayMustsNotice(1, TODAY)?.href === RECORD_YESTERDAY_HREF && /href: RECORD_YESTERDAY_HREF,/.test(code(read("src/lib/rituals.ts"))));
+  check("(7) the root layout passes the server's Duty launch day to QuickCapture", /<QuickCapture dutyLaunchDay=\{dutyLaunchDay\(\)\} \/>/.test(read("src/app/layout.tsx")));
+
+  // (6) and (8) The rehearsal server sets the override; the override is honoured only on the mirror (duty-check pins the rule).
+  const dev = read("docs/life-plan/dev-rehearsal.mjs");
+  check("(6) dev-rehearsal.mjs sets XTNL_DUTY_LAUNCH_DAY (a Monday, overridable from the shell) beside the mirror's URL", /XTNL_DUTY_LAUNCH_DAY: process\.env\.XTNL_DUTY_LAUNCH_DAY \?\? "2026-09-28",/.test(dev) && /DATABASE_URL: LOCAL,/.test(dev));
+  check("(8) settlement's env carries DATABASE_URL, so its gate scopes the override like every other read", /DATABASE_URL: process\.env\.DATABASE_URL,/.test(code(read("src/lib/settlement.ts"))));
+}
+
 // ═══ F5 The early settle's answers (settleYesterdayCore, an injected settle) ═
 
 async function earlySettleChecks(): Promise<void> {
   console.log("— F5 settle yesterday —");
   const env = process.env as Record<string, string | undefined>;
-  const saved = { NODE_ENV: env.NODE_ENV, XTNL_DUTY_LAUNCH_DAY: env.XTNL_DUTY_LAUNCH_DAY };
+  const saved = { NODE_ENV: env.NODE_ENV, XTNL_DUTY_LAUNCH_DAY: env.XTNL_DUTY_LAUNCH_DAY, DATABASE_URL: env.DATABASE_URL };
   env.NODE_ENV = "test";
   env.XTNL_DUTY_LAUNCH_DAY = LAUNCH;
+  // Blueprint P20: the override is honoured only with no database named (or the rehearsal mirror), and Prisma's import
+  // loaded .env's shared URL; settlement is injected here, so no database is named while these run.
+  delete env.DATABASE_URL;
   try {
     const result = (over: Partial<SettleResult>): SettleResult => ({ launched: true, wrote: true, cursorBefore: addDays(TODAY, -2), cursorAfter: YESTERDAY, plans: [], refused: null, ...over });
     let called = 0;
@@ -1293,15 +1553,77 @@ async function earlySettleChecks(): Promise<void> {
   } finally {
     env.NODE_ENV = saved.NODE_ENV;
     env.XTNL_DUTY_LAUNCH_DAY = saved.XTNL_DUTY_LAUNCH_DAY;
+    env.DATABASE_URL = saved.DATABASE_URL;
     if (saved.NODE_ENV === undefined) delete env.NODE_ENV;
     if (saved.XTNL_DUTY_LAUNCH_DAY === undefined) delete env.XTNL_DUTY_LAUNCH_DAY;
+    if (saved.DATABASE_URL === undefined) delete env.DATABASE_URL;
   }
+}
+
+// ═══ Blueprint P20: the owed card's proof chips, rendered ════════════════
+
+async function makeUpCardRender(): Promise<void> {
+  console.log("— P20 the owed card's chips (rendered) —");
+  // MakeUpCard imports today.css; Node can't load CSS.
+  (Module as unknown as { _extensions: Record<string, (m: { exports: unknown }) => void> })._extensions[".css"] = (m) => {
+    m.exports = {};
+  };
+  const { MakeUpCard, makeUpShownPriceOf } = await import("../src/components/today/m2/MakeUpCard");
+  const base = { id: "i1", owed: 9.9, when: "Deep work · Monday", text: "Deep work was missed on Monday.", window: "Made up within Thu 04:00, it counts as kept.", makeUpPrice: 16.8, minimum: { label: "deep work 10m", price: 3.1 } };
+  const html = (item: Parameters<typeof MakeUpCard>[0]["item"]) => renderToStaticMarkup(createElement(MakeUpCard, { item, onMakeUp: () => {}, onMinimum: () => {} }));
+  const makeUpButton = (h: string) => /<button[^>]*>Make up/.exec(h)?.[0] ?? "";
+  const makeUpLabel = (h: string) => /<button[^>]*>(Make up[^<]*(?:<[^b][^>]*>[^<]*)*?)<\/button>/.exec(h)?.[1] ?? "";
+  const plain = html(base);
+  check("a card with no proof (proof off) renders no chips, and Make up is one tap", !plain.includes("data-chips") && !plain.includes("mu-proof") && makeUpButton(plain) !== "" && !makeUpButton(plain).includes("disabled"));
+  const minutes = html({ ...base, proof: { minutes: proofMinuteChipsOf(60) } });
+  const minuteChips = minutes.match(/<button[^>]*>\d+<!-- --> min<\/button>|<button[^>]*>\d+ min<\/button>/g) ?? [];
+  check(
+    "a deep-work card: its minute chips (the drawer's 44 px group), the plain note, and Make up waits for a pick; the minimum stays one tap",
+    /data-chips="minutes"/.test(minutes) && minuteChips.length === proofMinuteChipsOf(60).length && minutes.includes("Like its tick, its make-up counts its time: pick the minutes it took.") && makeUpButton(minutes).includes("disabled") && !/<button[^>]*disabled[^>]*>Do minimum/.test(minutes),
+    `${minuteChips.length} chips`
+  );
+  // P20 review: no price beside a disabled Make up (the estimate's would be wrong for most picks); a plain card keeps its price.
+  check(
+    "P20 review: a deep-work card's disabled Make up shows no price until a pick; a plain card's shows the estimate's",
+    /<button[^>]*disabled[^>]*>Make up<\/button>/.test(minutes) && !/≈ 16\.8|16\.8/.test(makeUpLabel(minutes)) && /Make up ·/.test(plain) && plain.includes("16.8"),
+    makeUpLabel(minutes)
+  );
+  const chips60 = proofMinuteChipsOf(60);
+  const prices = chips60.map((m) => m / 4);
+  check(
+    "P20 review: the shown price is the pick's own (OwedProof.prices), null before a pick, the estimate's with no chips or no price for it",
+    makeUpShownPriceOf({ makeUpPrice: 16.8, proof: { minutes: chips60, prices } }, chips60[0]) === prices[0] &&
+      makeUpShownPriceOf({ makeUpPrice: 16.8, proof: { minutes: chips60, prices } }, null) === null &&
+      makeUpShownPriceOf({ makeUpPrice: 16.8, proof: null }, null) === 16.8 &&
+      makeUpShownPriceOf({ makeUpPrice: 16.8, proof: { minutes: chips60 } }, chips60[0]) === 16.8
+  );
+  const tb = code(read("src/components/today/TodayBoard.tsx"));
+  check(
+    "P20 review: Today flies and compares the price the card showed (report.price), and says why when the payment differs, minutes or not",
+    /const shownXp = minimum \? \(card\.minimumXp \?\? 0\) : \(report\?\.price \?\? card\.makeUpXp\);/.test(tb) && /if \(Math\.abs\(v\.xp - shownXp\) > 0\.05\) \{/.test(tb) && !/!report\?\.minutes && Math\.abs/.test(tb)
+  );
+  check(
+    "P20 review: the ready note is the server's counting rule (MAKEUP_COUNTS_NOTE: the clamp and the clock bound), not a hand-written line",
+    /proof\.minutes \? MAKEUP_COUNTS_NOTE/.test(code(read("src/components/today/m2/MakeUpCard.tsx"))) && /never counts more than the time since it/.test(MAKEUP_COUNTS_NOTE) && /half to twice its estimate/.test(MAKEUP_COUNTS_NOTE)
+  );
+  const pages = html({ ...base, minimum: null, proof: { pages: { target: 30, chips: pageChipsOf(30) } } });
+  check(
+    "a reading card: its page chips from the day's target, and Make up waits for at least that many",
+    /data-chips="pages"/.test(pages) && pages.includes(">30 pages<") && pages.includes("pick at least 30 pages") && makeUpButton(pages).includes("disabled")
+  );
+  const free = html({ ...base, minimum: null, proof: { pages: { target: null, chips: pageChipsOf(null) } } });
+  check("a reading card with no target records what it is given: Make up is not held", /data-chips="pages"/.test(free) && !makeUpButton(free).includes("disabled"));
 }
 
 earlySettleChecks()
   .catch((err) => {
     failed++;
     console.log(`FAIL the early-settle checks threw — ${err instanceof Error ? err.message : String(err)}`);
+  })
+  .then(makeUpCardRender)
+  .catch((err) => {
+    failed++;
+    console.log(`FAIL the rendered make-up card checks threw — ${err instanceof Error ? err.message : String(err)}`);
   })
   .then(() => {
     if (failed > 0) {

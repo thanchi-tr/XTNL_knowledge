@@ -242,7 +242,7 @@ export function TodayFixtures() {
         <DayLedger
           streak={{ count: 0, kept: false, broken: true }}
           caption="Ended Tuesday at 23 days. Best 41. Any tick starts a new one."
-          freezes={{ banked: 0, used: 2 }}
+          freezes={{ banked: 0 }}
           fullDay={DAY_AWAY}
           settles
           fullNote="A Full day today is worth +0.5 MP. Tuesday cannot be repaired from today."
@@ -271,7 +271,7 @@ export function TodayFixtures() {
         <WelcomeBack
           title="You were away 4 days, Sunday to Wednesday."
           lines={[
-            { glyph: { held: "freeze" }, tone: "held", text: <>Two freezes held <b>Sunday and Monday</b>. None left; the next one comes after 7 active days.</> },
+            { glyph: { held: "freeze" }, tone: "held", text: <>Two rest tokens held <b>Sunday and Monday</b>. None left; the next one comes after 10 momentum days.</> },
             { glyph: { icon: "flame" }, text: <><b>Tuesday ended your 23-day streak.</b> Your best stays 41. Today starts a new one.</> },
             { glyph: { sigil: "duty" }, tone: "owed", text: <>3 musts from Tuesday are owed, <b>−15.1 life XP</b>. Making one up before Fri 04:00 also restores its own streak.</> },
             { glyph: { icon: "clock" }, text: "Wednesday isn't judged yet. You can record it until Fri 04:00." },
@@ -288,7 +288,7 @@ export function TodayFixtures() {
           chips={[
             { tone: "kept", icon: "check", text: "Day kept · streak 23" },
             { tone: "kept", text: "Full day · +0.5 MP" },
-            { tone: "held", held: "freeze", text: "Freeze earned · 2 banked" },
+            { tone: "held", held: "freeze", text: "Rest tokens 2" },
           ]}
           note="Judged at 04:00 today, after the full day you had to record it. Nothing else changed."
           onOk={() => undefined}

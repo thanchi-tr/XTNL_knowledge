@@ -685,6 +685,22 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
   check("yesterday: it says when the day settles (Tue's open musts are owed from Thu 04:00)", /by Thu 04:00/.test(y?.detail ?? ""), y?.detail);
   check("yesterday: absent at 0 musts", yesterdayMustsNotice(0, "2026-10-14") === null);
   eq("yesterday: one must reads singular", yesterdayMustsNotice(1, "2026-10-14")?.title, "Yesterday: 1 must open");
+  // P21 review (D19): the board's forecast decides the line: a Rest Token covers what is left open, or will once today
+  // has a task done; without one, owed as before.
+  eq(
+    "yesterday: with a token for them the line says so (nothing owed), or that it needs a task today; without, owed from then",
+    [yesterdayMustsNotice(2, "2026-10-14", "covers")?.detail, yesterdayMustsNotice(2, "2026-10-14", "if-today")?.detail, yesterdayMustsNotice(2, "2026-10-14", null)?.detail],
+    [
+      "Tick what you did by Thu 04:00; a rest token covers anything left open, so nothing is owed.",
+      "Tick what you did by Thu 04:00. A rest token covers anything left open if today has a task done; if not, it keeps your run instead and those are owed.",
+      "Tick what you did by Thu 04:00; anything left open is owed from then.",
+    ]
+  );
+  check(
+    "yesterday: the bell passes the forecast through (dutyNoticesOf's yesterdayCover; notifications reads TodayCounts.yesterdayCover)",
+    dutyNoticesOf({ today: "2026-10-17", live: true, owed: null, yesterdayMusts: 1, yesterdayCover: "covers", reviewDue: null })[0]?.detail?.includes("a rest token covers") === true &&
+      /yesterdayCover: today\?\.yesterdayCover \?\? null/.test(read("src/lib/notifications.ts"))
+  );
   // ShellData.owed.count from fixtures (the feed's own read).
   eq("shell owed: count from the feed's counts.owed", [owedOf({ counts: { due: 0, overdue: 0, today: null, owed: { count: 3, debt: 15.1 } } }), owedOf({ counts: { due: 0, overdue: 0, today: null, owed: null } }), owedOf(null)], [{ count: 3 }, { count: 0 }, { count: 0 }]);
   const shellData = read("src/lib/shell-data.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");

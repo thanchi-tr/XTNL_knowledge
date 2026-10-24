@@ -3,7 +3,8 @@
  * the shared-database safety cases of Acceptance):
  *
  *   §1 planSettlement on fixed scenarios: one DEBT per miss, idempotent re-plans, the launch
- *      floor, a reset after launch, the debt caps, freezes (spend, earn, max 2, pre-launch),
+ *      floor, a reset after launch, the debt caps, freezes (blueprint P21: one Rest Token bank,
+ *      momentum's fold: a token a day, for a day the run needs or a must missed; no earn here),
  *      rest / sick / vacation and compulsoryOnRest, TARGET periods, study musts, late
  *      one-offs, inbox musts, the make-up day, FULL_DAY, REPAIR, pending rule changes,
  *      early settles, the 14-day cap and the DST switches; every event countsForStreak false.
@@ -45,7 +46,6 @@ import {
   DUTY_CRON_SCHEDULE,
   DUTY_LAUNCH_DAY,
   debtKey,
-  freezeEarnKey,
   freezeUseKey,
   fullDayKey,
   newLifeSettingsDays,
@@ -54,6 +54,8 @@ import {
 import { debtFor } from "../src/lib/life-grade";
 import { LIFE_LAUNCH_DAY } from "../src/lib/life-economy";
 import { streakUnitsOf } from "../src/lib/streak-curve";
+import { momentumUnitsOf } from "../src/lib/momentum";
+import type { RestTokenInputs } from "../src/lib/rest-tokens";
 import type { PendingChange, RestRow } from "../src/lib/duty-rule";
 import type { ActivityInput, InstanceStatus } from "../src/lib/life-types";
 import {
@@ -170,12 +172,20 @@ function st(today: DayKey, over: Partial<SettlementState> = {}): SettlementState
     days: [],
     freezeEarned: 0,
     freezeUsed: 0,
-    lastFreezeEarnDay: null,
     openDebts: [],
     restRows: [],
     judgedDutyWeeks: new Set<string>(),
     ...over,
   };
+}
+
+/**
+ * Blueprint P21 (D19): the one Rest Token bank's inputs, momentum's freeze fold from `launch` (default L, so the
+ * launch day opens with MOMENTUM_START_FREEZES = 1): its momentum days, chest freezes and FREEZE_USE days. A fixture
+ * with no `tokens` has no bank at all (momentum not live): nothing is spent.
+ */
+function bank(o: { launch?: DayKey; active?: DayKey[]; spent?: DayKey[]; extra?: [DayKey, number][]; rest?: DayKey[] } = {}): RestTokenInputs {
+  return { launch: o.launch ?? L, active: new Set(o.active ?? []), extra: new Map(o.extra ?? []), max: new Map(), spent: new Set(o.spent ?? []), rest: new Set(o.rest ?? []) };
 }
 
 const fact = (day: DayKey, over: { units?: number; reviews?: number; ideas?: number; dayOpenQty?: number | null } = {}) => ({
@@ -253,7 +263,7 @@ function apply(s: SettlementState, plans: readonly DayPlan[], today: DayKey = s.
   const rows = [...s.rows];
   const templates = s.templates.map((t) => ({ ...t }));
   const openDebts = [...s.openDebts];
-  let { freezeEarned, freezeUsed, lastFreezeEarnDay, cursor } = s;
+  let { freezeEarned, freezeUsed, cursor } = s;
   for (const p of plans) {
     for (const op of p.ops) {
       if (op.kind === "instanceCreate") {
@@ -267,10 +277,7 @@ function apply(s: SettlementState, plans: readonly DayPlan[], today: DayKey = s.
       } else if (op.kind === "event") {
         const e = op.input;
         rows.push(row(e.day!, { source: e.source, sink: e.sink ?? "NONE", track: e.track ?? null, templateId: e.templateId ?? null, sourceId: e.sourceId ?? null, xp: e.xp ?? 0, rawXp: e.rawXp ?? null, qty: e.qty ?? null, countsForStreak: !!e.countsForStreak, dedupeKey: e.dedupeKey ?? null }));
-        if (e.source === "FREEZE_EARN") {
-          freezeEarned += 1;
-          lastFreezeEarnDay = e.day!;
-        }
+        if (e.source === "FREEZE_EARN") freezeEarned += 1;
         if (e.source === "FREEZE_USE") freezeUsed += 1;
       } else if (op.kind === "templateHousekeeping") {
         const t = templates.find((x) => x.id === op.templateId)!;
@@ -283,7 +290,7 @@ function apply(s: SettlementState, plans: readonly DayPlan[], today: DayKey = s.
       }
     }
   }
-  return { ...s, today, now: at(today), cursor, instances, rows, templates, openDebts, freezeEarned, freezeUsed, lastFreezeEarnDay };
+  return { ...s, today, now: at(today), cursor, instances, rows, templates, openDebts, freezeEarned, freezeUsed };
 }
 
 const STRETCH_DEBT = debtFor({ band: "STANDARD", bandOverride: 0, estMinutes: 15, machineMinutes: 15 });
@@ -336,7 +343,7 @@ console.log("— §1 the launch gate and the first judged day —");
   const p = plan(s);
   eq("the first plan after launch judges nothing before firstDutyDay", p.map((x) => x.day), [L]);
   check("no row is dated before the launch day", events(p).every((e) => (e.day ?? "") >= L), JSON.stringify(events(p).map((e) => e.day)));
-  eq("pre-launch active days earn no freeze on the launch day", events(p, "FREEZE_EARN").length, 0);
+  eq("pre-launch active days earn no freeze on the launch day (P21: settlement earns none at all)", events(p, "FREEZE_EARN").length, 0);
   eq("the launch day can be a Full day", events(p, "FULL_DAY").map((e) => e.dedupeKey), [fullDayKey(L)]);
   eq("a pre-launch break (L − 1) is never repaired", events(p, "REPAIR").length, 0);
 }
@@ -370,66 +377,118 @@ console.log("— §1 the debt caps —");
   eq("the caps apply in templateId, slot order across fixed misses and TARGET slots", events(sunday, "DEBT").map((e) => e.dedupeKey), [debtKey("a", d(6), 0)]);
 }
 
-console.log("— §1 freezes —");
+console.log("— §1 freezes (blueprint P21: one Rest Token bank) —");
 {
+  // Re-pinned by blueprint P21 (D19): the bank is momentum's freeze fold (rest-tokens.ts), handed in as `tokens`; M2's
+  // own balance (freezeEarned − freezeUsed, the 7-active-day earn) is retired. bank() opens with 1 token on L.
   const base = { cursor: L, templates: [tpl("stretch")], days: activeOn(L) };
-  const withFreeze = plan(st(d(3), { ...base, freezeEarned: 1 }));
+  const withFreeze = plan(st(d(3), { ...base, tokens: bank({ active: [L] }) }));
   const use = events(withFreeze, "FREEZE_USE");
-  check("no-activity day with a freeze banked: FREEZE_USE 'freeze-use:<d>', sink NONE", use.length === 1 && use[0].dedupeKey === freezeUseKey(d(1)) && use[0].sink === "NONE" && use[0].day === d(1), JSON.stringify(use));
+  check("no-activity day with a token banked and a live run: FREEZE_USE 'freeze-use:<d>', sink NONE", use.length === 1 && use[0].dedupeKey === freezeUseKey(d(1)) && use[0].sink === "NONE" && use[0].day === d(1), JSON.stringify(use));
   check("…its musts are EXCUSED, nothing is owed, the day is held", creates(withFreeze).every((c) => c.status === "EXCUSED") && events(withFreeze, "DEBT").length === 0 && withFreeze[0].held);
   const without = plan(st(d(3), base));
-  check("without a freeze: MISSED and a DEBT", creates(without)[0]?.status === "MISSED" && events(without, "DEBT").length === 1 && !without[0].held);
+  check("without a bank: MISSED and a DEBT", creates(without)[0]?.status === "MISSED" && events(without, "DEBT").length === 1 && !without[0].held);
+  const emptyBank = plan(st(d(3), { ...base, tokens: bank({ active: [L], spent: [L] }) }));
+  check("P21: with the bank already spent (the launch day's token gone): MISSED and a DEBT, no FREEZE_USE", events(emptyBank, "FREEZE_USE").length === 0 && events(emptyBank, "DEBT").length === 1);
 
-  const dead = plan(st(d(3), { cursor: L, templates: [tpl("walk", { compulsory: false })], freezeEarned: 1 }));
-  check("a dead streak with no musts due keeps its freeze", events(dead, "FREEZE_USE").length === 0 && creates(dead).length === 0, JSON.stringify(kinds(dead[0])));
-  const deadMust = plan(st(d(3), { cursor: L, templates: [tpl("stretch"), tpl("walk", { compulsory: false })], freezeEarned: 1 }));
-  check("a dead streak with a must due spends it (it protects the must) and excuses everything", events(deadMust, "FREEZE_USE").length === 1 && creates(deadMust).length === 2 && creates(deadMust).every((c) => c.status === "EXCUSED"));
+  const dead = plan(st(d(3), { cursor: L, templates: [tpl("walk", { compulsory: false })], tokens: bank() }));
+  check("a dead run with no musts due keeps its token", events(dead, "FREEZE_USE").length === 0 && creates(dead).length === 0, JSON.stringify(kinds(dead[0])));
+  const deadMust = plan(st(d(3), { cursor: L, templates: [tpl("stretch"), tpl("walk", { compulsory: false })], tokens: bank() }));
+  check("a dead run with a must due spends it (it covers the must) and excuses everything", events(deadMust, "FREEZE_USE").length === 1 && creates(deadMust).length === 2 && creates(deadMust).every((c) => c.status === "EXCUSED"));
 
-  const nothingDue = plan(st(d(3), { cursor: L, templates: [tpl("due", { autoMetric: "REVIEW_DUE" })], days: [fact(d(1), { units: 0, dayOpenQty: 0 })], freezeEarned: 1 }));
-  check("a dead streak whose only must is met with nothing due (REVIEW_DUE, DAY_OPEN 0) keeps its freeze", events(nothingDue, "FREEZE_USE").length === 0 && creates(nothingDue)[0]?.status === "DONE");
-  const spentYesterday = plan(st(d(3), { ...base, freezeEarned: 1, freezeUsed: 1 }));
-  check("a freeze already spent (a manual spend for yesterday) is not spent twice: the balance never goes below 0", events(spentYesterday, "FREEZE_USE").length === 0 && events(spentYesterday, "DEBT").length === 1);
+  const nothingDue = plan(st(d(3), { cursor: L, templates: [tpl("due", { autoMetric: "REVIEW_DUE" })], days: [fact(d(1), { units: 0, dayOpenQty: 0 })], tokens: bank() }));
+  check("a dead run whose only must is met with nothing due (REVIEW_DUE, DAY_OPEN 0) keeps its token", events(nothingDue, "FREEZE_USE").length === 0 && creates(nothingDue)[0]?.status === "DONE");
 
   const manualUse = row(d(1), { source: "FREEZE_USE", sink: "NONE", track: null, xp: 0, rawXp: null, countsForStreak: false, dedupeKey: freezeUseKey(d(1)) });
   const manualState = (days: ReturnType<typeof fact>[]) =>
-    st(d(3), { cursor: L, templates: [tpl("meds", { compulsoryOnRest: true }), tpl("stretch")], days, rows: [manualUse], freezeEarned: 1, freezeUsed: 1 });
+    st(d(3), { cursor: L, templates: [tpl("meds", { compulsoryOnRest: true }), tpl("stretch")], days, rows: [manualUse], freezeEarned: 0, freezeUsed: 1, tokens: bank({ active: [L] }) });
   const manual = plan(manualState([fact(L), fact(d(1), { units: 0 })]));
   check("a manual FREEZE_USE dated d (no activity) excuses every must, compulsoryOnRest included, and plans no second one", events(manual, "FREEZE_USE").length === 0 && creates(manual).length === 2 && creates(manual).every((c) => c.status === "EXCUSED") && manual[0].held);
-  // Decision 12 (review: a freeze spent, then yesterday recorded): a freeze covers a no-activity day only.
+  // Re-pinned by blueprint P21: D19 (a token may excuse a day's missed musts) supersedes decision 12's "a freeze covers a
+  // no-activity day only". A token spent on d is d's token whatever d holds, so a day recorded after its manual spend
+  // keeps its musts excused (it was charged before).
   const recordedAfter = plan(manualState(activeOn(L, d(1))));
   check(
-    "a manual FREEZE_USE on a day recorded afterwards (active) holds nothing: its musts are MISSED with their debt",
-    creates(recordedAfter).length === 2 && creates(recordedAfter).every((c) => c.status === "MISSED") && events(recordedAfter, "DEBT").length === 2 && !recordedAfter[0].held,
+    "P21: a manual FREEZE_USE on a day recorded afterwards (active) still excuses its musts: the token was spent on it",
+    creates(recordedAfter).length === 2 && creates(recordedAfter).every((c) => c.status === "EXCUSED") && events(recordedAfter, "DEBT").length === 0 && recordedAfter[0].held,
     JSON.stringify(creates(recordedAfter).map((c) => c.status))
   );
-  check("…no second FREEZE_USE is planned, and the note says why", events(recordedAfter, "FREEZE_USE").length === 0 && recordedAfter[0].notes.some((n) => n.includes("holds nothing")), JSON.stringify(recordedAfter[0].notes));
+  check("…no second FREEZE_USE is planned, and the note says why", events(recordedAfter, "FREEZE_USE").length === 0 && recordedAfter[0].notes.some((n) => n.includes("a rest token spent on it")), JSON.stringify(recordedAfter[0].notes));
 
-  const seven = plan(st(d(8), { days: activeOn(...span(L, d(6))) }));
-  eq("freeze earned on the 7th active day after launch", events(seven, "FREEZE_EARN").map((e) => e.dedupeKey), [freezeEarnKey(d(6))]);
-  check("…sink NONE, countsForStreak false", events(seven, "FREEZE_EARN").every((e) => e.sink === "NONE" && e.countsForStreak === false));
-  eq("at a balance of 2 nothing is earned", events(plan(st(d(8), { days: activeOn(...span(L, d(6))), freezeEarned: 2 })), "FREEZE_EARN").length, 0);
-  eq("14 active days earn two, the second after 7 more", events(plan(st(d(15), { days: activeOn(...span(L, d(13))) })), "FREEZE_EARN").map((e) => e.day), [d(6), d(13)]);
-  eq("max 2: from a balance of 1 only one more is earned", events(plan(st(d(15), { days: activeOn(...span(L, d(13))), freezeEarned: 1 })), "FREEZE_EARN").map((e) => e.day), [d(6)]);
-  eq("pre-launch active days earn nothing (the 7th counts from launch)", events(plan(st(d(8), { cursor: d(-1), days: activeOn(...span(d(-6), d(6))) })), "FREEZE_EARN").map((e) => e.day), [d(6)]);
-  eq(
-    "an inactive day earns nothing, however many came before",
-    events(plan(st(d(9), { days: [...activeOn(...span(L, d(6))).map((f) => (f.day === d(6) ? fact(d(6), { units: 0 }) : f)), fact(d(7))] })), "FREEZE_EARN").map((e) => e.day),
-    [d(7)]
+  // D19: a token may excuse a day's missed musts, whether or not the day had other activity; one a day. Re-pinned by
+  // the P21 review: only while the token is still free when the day is judged (the day after it is then past), so
+  // here the day after is active too.
+  const activeMiss = plan(st(d(3), { cursor: L, templates: [tpl("stretch")], days: activeOn(L, d(1)), rows: [deed(d(1))], tokens: bank({ active: [L, d(1), d(2)] }) }));
+  check(
+    "P21: an active day with a must missed spends a token and excuses it (D19): FREEZE_USE, EXCUSED, no DEBT",
+    events(activeMiss, "FREEZE_USE").length === 1 && creates(activeMiss)[0]?.status === "EXCUSED" && events(activeMiss, "DEBT").length === 0,
+    JSON.stringify(kinds(activeMiss[0]))
   );
-  const tail = st(d(24), { cursor: d(20), lastFreezeEarnDay: d(2), freezeEarned: 1, days: activeOn(d(21), d(22)), activeDaysBefore: 5 });
-  eq("active days before the facts read count toward the next freeze (5 + 2 = 7)", events(plan(tail), "FREEZE_EARN").map((e) => e.day), [d(22)]);
-  eq("…and without them nothing is earned", events(plan({ ...tail, activeDaysBefore: undefined }), "FREEZE_EARN").length, 0);
+  // P21 review (the run comes first): the day after it was empty, so the fold already gave the one token to that day
+  // (the run kept); a spend on the must's day would take it back and break the run after the fact. No spend: owed.
+  const runFirst = plan(st(d(3), { cursor: L, templates: [tpl("stretch")], days: activeOn(L, d(1)), rows: [deed(d(1))], tokens: bank({ active: [L, d(1)] }) }));
+  check(
+    "P21 review: an active day with a must missed and an empty next day (the fold's token kept the run there): no FREEZE_USE, MISSED with its DEBT",
+    events(runFirst, "FREEZE_USE").length === 0 && creates(runFirst)[0]?.status === "MISSED" && events(runFirst, "DEBT").length === 1 && !runFirst[0].held,
+    JSON.stringify(kinds(runFirst[0]))
+  );
+  // P21 review (one token, one day): 'Use a freeze' for yesterday (today - 1) landed before settlement judged the day
+  // before it; the bank's one token is that row's, so the day before is owed rather than excused by the same token.
+  const manualLater = plan(st(d(3), { cursor: L, templates: [tpl("stretch")], days: activeOn(L, d(1)), tokens: bank({ active: [L, d(1)], spent: [d(2)] }), freezeUsed: 1 }));
+  check(
+    "P21 review: a manual spend for yesterday read before the day before it is judged: that day plans no second spend and is owed (one token covers one day)",
+    events(manualLater, "FREEZE_USE").length === 0 && events(manualLater, "DEBT").length === 1,
+    JSON.stringify(kinds(manualLater[0]))
+  );
+  check(
+    "…with two banked both are covered: the day before takes the second (the later day keeps its own)",
+    events(plan(st(d(3), { cursor: L, templates: [tpl("stretch")], days: activeOn(L, d(1)), tokens: bank({ active: [L, d(1)], spent: [d(2)], extra: [[L, 1]] }), freezeUsed: 1 })), "FREEZE_USE").length === 1
+  );
+  // P21 review: a miss the caps leave owing nothing (3 open for the task already) takes no token.
+  const threeOpen = [1, 2, 3].map((n) => ({ instanceId: `o${n}`, templateId: "stretch", day: d(-10 - n), slot: 0, debtXp: debtFor(tpl("stretch")) }));
+  const cappedMiss = plan(st(d(3), { cursor: L, templates: [tpl("stretch")], openDebts: threeOpen, tokens: bank() }));
+  check(
+    "P21 review: a must whose miss is capped (3 open for it) spends no token: MISSED, 'debt capped', the token kept",
+    events(cappedMiss, "FREEZE_USE").length === 0 && creates(cappedMiss)[0]?.status === "MISSED" && creates(cappedMiss)[0]?.debtXp === 0 && cappedMiss[0].notes.some((n) => /debt capped/.test(n)),
+    JSON.stringify(cappedMiss[0].notes)
+  );
+  const totalNear = [{ instanceId: "big", templateId: "other", day: d(-12), slot: 0, debtXp: 100 }];
+  check(
+    "…nor one the 100 total cap leaves at nothing",
+    events(plan(st(d(3), { cursor: L, templates: [tpl("stretch")], openDebts: totalNear, tokens: bank() })), "FREEZE_USE").length === 0
+  );
+  const twoMusts = plan(st(d(3), { cursor: L, templates: [tpl("stretch"), tpl("floss")], days: activeOn(L, d(1)), tokens: bank({ active: [L, d(1)], extra: [[L, 1]] }) }));
+  check("P21: one token a day: two musts missed on one day spend one token, both excused", events(twoMusts, "FREEZE_USE").length === 1 && creates(twoMusts).every((c) => c.status === "EXCUSED") && events(twoMusts, "DEBT").length === 0);
+  const twoDays = plan(st(d(4), { cursor: L, templates: [tpl("stretch")], tokens: bank() }));
+  check(
+    "P21: a bank of one and two days with a must missed: the first spends it, the second is owed (the plan's next day folds the planned spend)",
+    events(twoDays, "FREEZE_USE").map((e) => e.day).join() === d(1) && events(twoDays, "DEBT").map((e) => e.day).join() === d(2),
+    JSON.stringify(twoDays.map((p) => kinds(p)))
+  );
+  const beforeBank = plan(st(d(3), { cursor: L, templates: [tpl("stretch")], tokens: bank({ launch: d(5) }) }));
+  check("P21: a day before the bank's launch has no token: the must is owed", events(beforeBank, "FREEZE_USE").length === 0 && events(beforeBank, "DEBT").length === 1);
+  const restMomentum = plan(st(d(4), { cursor: L, templates: [tpl("walk", { compulsory: false })], days: activeOn(L), tokens: bank({ active: [L], rest: [d(1)] }), restRows: [restRow(d(1))] }));
+  check(
+    "P21: a rest day holds the run with no token, so the day after it, empty, spends the token the run still has",
+    events(restMomentum, "FREEZE_USE").map((e) => e.day).join() === d(2),
+    JSON.stringify(restMomentum.map((p) => kinds(p)))
+  );
+
+  // Re-pinned by blueprint P21: settlement earns nothing (the bank's earns are momentum's own fold); FREEZE_EARN stays a
+  // source, written by no one.
+  eq("P21: 7 active days after launch earn no FREEZE_EARN here", events(plan(st(d(8), { days: activeOn(...span(L, d(6))) })), "FREEZE_EARN").length, 0);
+  eq("P21: 14 active days earn none either", events(plan(st(d(15), { days: activeOn(...span(L, d(13))) })), "FREEZE_EARN").length, 0);
 }
 
 console.log("— §1 rest, sick, vacation and compulsoryOnRest —");
 {
   const tpls = [tpl("meds", { compulsoryOnRest: true }), tpl("stretch"), tpl("walk", { compulsory: false })];
-  const rest = plan(st(d(3), { cursor: L, templates: tpls, days: activeOn(L), freezeEarned: 1, restRows: [restRow(d(1))] }));
+  const rest = plan(st(d(3), { cursor: L, templates: tpls, days: activeOn(L), tokens: bank({ active: [L], rest: [d(1)] }), restRows: [restRow(d(1))] }));
   const by = (p: DayPlan[], id: string) => creates(p).find((c) => c.templateId === id);
   check("a rest day: a must is EXCUSED, a non-must habit is EXCUSED", by(rest, "stretch")?.status === "EXCUSED" && by(rest, "walk")?.status === "EXCUSED");
   check("…compulsoryOnRest is owed (MISSED with its DEBT)", by(rest, "meds")?.status === "MISSED" && events(rest, "DEBT").map((e) => e.dedupeKey).join() === debtKey("meds", d(1), 0));
   check("…a rest day spends no freeze and is held", events(rest, "FREEZE_USE").length === 0 && rest[0].held);
-  const freeze = plan(st(d(3), { cursor: L, templates: tpls, days: activeOn(L), freezeEarned: 1 }));
+  const freeze = plan(st(d(3), { cursor: L, templates: tpls, days: activeOn(L), tokens: bank({ active: [L] }) }));
   check("a freeze day excuses compulsoryOnRest too, and nothing is owed", ["meds", "stretch", "walk"].every((id) => by(freeze, id)?.status === "EXCUSED") && events(freeze, "DEBT").length === 0);
 
   const late = plan(st(d(3), { cursor: L, templates: [tpl("stretch")], restRows: [restRow(d(1), "REST", new Date(dayStartOf(d(1)).getTime() + 3_600_000))] }));
@@ -744,9 +803,11 @@ console.log("— §6 the database guard: xtnl-idea or the rehearsal mirror, noth
   const overrides = { XTNL_DUTY_LAUNCH_DAY: "2026-10-19", XTNL_LIFE_LAUNCH_DAY: "2026-10-05" };
   eq("on the rehearsal mirror the XTNL_ overrides are honoured", launchDaysFor({ kind: "rehearsal" }, overrides), { duty: "2026-10-19", life: "2026-10-05", ignored: [] });
   const prodDays = launchDaysFor({ kind: "production" }, overrides);
+  // Blueprint P22 (re-pinned for the flip): an override equal to its constant changes nothing, so it is not reported.
+  const differing = [overrides.XTNL_DUTY_LAUNCH_DAY !== DUTY_LAUNCH_DAY, overrides.XTNL_LIFE_LAUNCH_DAY !== LIFE_LAUNCH_DAY].filter(Boolean).length;
   check(
-    "against xtnl-idea the code constants decide and each override is reported as ignored",
-    prodDays.duty === DUTY_LAUNCH_DAY && prodDays.life === LIFE_LAUNCH_DAY && prodDays.ignored.length === 2 && prodDays.ignored.every((l) => l.includes("ignored")),
+    "against xtnl-idea the code constants decide and each override that would change a day is reported as ignored",
+    prodDays.duty === DUTY_LAUNCH_DAY && prodDays.life === LIFE_LAUNCH_DAY && prodDays.ignored.length === differing && differing >= 1 && prodDays.ignored.every((l) => l.includes("ignored")),
     JSON.stringify(prodDays)
   );
   eq("…and with no override nothing is reported", launchDaysFor({ kind: "production" }, {}).ignored, []);
@@ -858,6 +919,8 @@ class FakeDb {
       if (this.instances.filter((i) => inside(i.day)).length !== f.instances) return false;
       if (this.rest.filter((r) => inside(r.day) && r.cancelledAt == null).length !== f.rest) return false;
     }
+    const open = this.instances.filter((i) => i.debtOpen);
+    if (open.length !== g.openDebts.count || Math.abs(open.reduce((t, i) => t + i.debtXp, 0) - g.openDebts.sum) >= 0.001) return false;
     if (!g.undone.every((id) => this.instances.some((i) => i.id === id && i.status === "UNDONE"))) return false;
     if (this.instances.some((i) => g.oneOffs.includes(i.templateId) && ["DONE", "DONE_LATE", "DONE_MVV"].includes(i.status))) return false;
     return true;
@@ -876,6 +939,18 @@ class FakeDb {
         f.dayOpens += 1;
         f.dayOpenQty = Number(e.qty ?? 0);
       }
+      by.set(k, f);
+    }
+    return [...by.values()];
+  }
+
+  /** Net momentum units by day (momentum.ts momentumUnitsOf), as the bank's units query answers. */
+  momentumUnits(): unknown[] {
+    const by = new Map<string, { day: Date; units: number }>();
+    for (const e of this.events) {
+      const k = keyOfDateColumn(e.day);
+      const f = by.get(k) ?? { day: e.day, units: 0 };
+      f.units += momentumUnitsOf({ source: e.source, countsForStreak: !!e.countsForStreak });
       by.set(k, f);
     }
     return [...by.values()];
@@ -940,6 +1015,8 @@ class FakeDb {
         const text = sql.strings.join("?");
         if (text.includes('LEFT JOIN "TaskTemplate"')) return db.dbg();
         if (text.includes("HAVING")) return [{ n: 0 }];
+        // Blueprint P21: the Rest Token bank's momentum units (rest-tokens-server readRestTokens).
+        if (text.includes("'WORKOUT', 'CHECKPOINT'")) return db.momentumUnits();
         return db.facts();
       },
       $executeRaw: (sql: Prisma.Sql) => db.desc("$executeRaw", sql),
@@ -1034,8 +1111,13 @@ function restoreRealClient() {
   for (const [k, v] of savedEntries) db[k] = v;
 }
 
-const WRITE_ENV: SettleEnv = { XTNL_LIFE_JUDGE: "1", XTNL_DUTY_LAUNCH_DAY: L };
-const DEV_ENV: SettleEnv = { NODE_ENV: "development", XTNL_DUTY_LAUNCH_DAY: L };
+/**
+ * Blueprint P21: the executor's cases run with no Rest Token bank (the momentum launch day far ahead), so each keeps
+ * the one thing it tests; the bank's own cases name a launch day. MOMENTUM_LAUNCH_DAY itself is 2026-10-12, this file's L.
+ */
+const NO_BANK = "2099-01-05";
+const WRITE_ENV: SettleEnv = { XTNL_LIFE_JUDGE: "1", XTNL_DUTY_LAUNCH_DAY: L, XTNL_MOMENTUM_LAUNCH_DAY: NO_BANK };
+const DEV_ENV: SettleEnv = { NODE_ENV: "development", XTNL_DUTY_LAUNCH_DAY: L, XTNL_MOMENTUM_LAUNCH_DAY: NO_BANK };
 const USER = "u-settle-check";
 
 /** The roadmap step's writers, quiet: every chain and cron call injects them, so the real ones never run here. */
@@ -1101,9 +1183,10 @@ async function executor(): Promise<void> {
     eq("a chunk of 7 days: one createMany, one events createMany, one template update, the cursor", chunkStatementLabels(g1), ["lock", "guard", "instances.createMany", "events.createMany", "template.update:stretch", "cursor"]);
     check("…grouping keeps every op: 7 creates, 3 DEBT rows, cursor at day 6", g1.creates.length === 7 && g1.events.length === 3 && g1.cursor === d(6) && g1.freezeRows === 0);
     eq("a quiet chunk (nothing owed) is 3 statements", chunkStatementLabels(groupChunk(plan(st(d(3), { cursor: L })))), ["lock", "guard", "cursor"]);
-    const withFreeze = groupChunk(plan(st(d(8), { days: activeOn(...span(L, d(6))) })));
+    // P21: the spend is the one FREEZE_* row settlement writes (it earns none).
+    const withFreeze = groupChunk(plan(st(d(3), { cursor: L, templates: [tpl("stretch")], days: activeOn(L), tokens: bank({ active: [L] }) })));
     eq("FREEZE_* rows are counted for the next chunk's guard", withFreeze.freezeRows, 1);
-    const full: SettleGuard = { cursor: L, epochDay: EPOCH, freezeRows: 2, fresh: { from: d(1), to: d(2), events: 4, instances: 3, rest: 1 }, undone: ["u1", "u2"], oneOffs: ["ts"] };
+    const full: SettleGuard = { cursor: L, epochDay: EPOCH, freezeRows: 2, fresh: { from: d(1), to: d(2), events: 4, instances: 3, rest: 1 }, openDebts: { count: 2, sum: 7.5 }, undone: ["u1", "u2"], oneOffs: ["ts"] };
     const guard = settleGuardSql(USER, full);
     const text = guard.strings.join("?");
     check(
@@ -1119,10 +1202,19 @@ async function executor(): Promise<void> {
         /SELECT 1 \/ \(CASE WHEN/.test(text),
       text
     );
+    check(
+      "P22 review: …and the open debts the caps were planned against (count and Σ debtXp, personal Board), so a make-up, its undo or an accept-the-loss in between re-plans",
+      /\(SELECT COUNT\(\*\) = \?::int AND ABS\(COALESCE\(SUM\("debtXp"\), 0\) - \?::float8\) < 0\.001 FROM "TaskInstance" WHERE "userId" = \? AND "debtOpen" AND "templateId" NOT IN \(SELECT "id" FROM "TaskTemplate" WHERE "userId" = \? AND "boardId" IS NOT NULL\)\)/.test(text) &&
+        guard.values.includes(7.5),
+      text
+    );
     eq("…its first values: cursor, epoch, user, user, freeze rows", guard.values.slice(0, 5), [L, EPOCH, USER, USER, 2]);
     check("…and guardOfSql hands the checks the guard it was built from", guardOfSql(guard) === full && guardOfSql(Prisma.sql`SELECT 1`) === null);
-    const bare = settleGuardSql(USER, { cursor: L, epochDay: EPOCH, freezeRows: 0, fresh: null, undone: [], oneOffs: [] }).strings.join("?");
-    check("…with no fresh day, no moved instance and no charged one-off it is the cursor, epoch and freeze clauses only", !/"day" >=/.test(bare) && !/'UNDONE'/.test(bare) && !/NOT EXISTS/.test(bare));
+    const bare = settleGuardSql(USER, { cursor: L, epochDay: EPOCH, freezeRows: 0, fresh: null, openDebts: { count: 0, sum: 0 }, undone: [], oneOffs: [] }).strings.join("?");
+    check("…with no fresh day, no moved instance and no charged one-off it is the cursor, epoch, freeze and open-debt clauses only", !/"day" >=/.test(bare) && !/'UNDONE'/.test(bare) && !/NOT EXISTS/.test(bare) && /"debtOpen"/.test(bare));
+    // P22 review: the next chunk's guard expects the debts the chunk before it opened.
+    const opened = groupChunk(plan(st(d(3), { cursor: L, templates: [tpl("stretch"), tpl("floss")] })));
+    eq("…a chunk's new debts (count, Σ) are counted for the next chunk's guard", opened.newDebts, { count: 2, sum: debtFor(tpl("stretch")) + debtFor(tpl("floss")) });
 
     // Which days are fresh: today − 2 always (a straddling 'record yesterday'), yesterday on an early settle.
     const lateRead = { state: st(d(4), { cursor: L, instances: [inst("x", d(2), "DONE")], restRows: [restRow(d(2)), restRow(d(1), "REST", undefined, new Date())] }), dayRows: new Map([[d(1), 5], [d(2), 3]]) };
@@ -1232,13 +1324,13 @@ async function executor(): Promise<void> {
     // A 'record yesterday' that straddled 04:00 lands on today − 2 after the read: the day is re-planned.
     const ev = (id: string, day: DayKey, over: Partial<FakeEvent> = {}): FakeEvent =>
       ({ id, day: dateColumn(day), source: "TASK", sink: "TRACK", countsForStreak: true, dedupeKey: null, templateId: null, ...over }) as FakeEvent;
+    // P21: the token is the bank's launch-day one (momentum launched at d(−5) here), not an earned FREEZE_EARN row.
     const straddle = new FakeDb(d(-1), [tpl("stretch")]);
-    straddle.events.push(ev("fe", d(-5), { source: "FREEZE_EARN", sink: "NONE", countsForStreak: false, dedupeKey: freezeEarnKey(d(-5)) }));
     straddle.onTransaction = () => {
       straddle.instances.push({ id: "rec", templateId: "stretch", day: dateColumn(L), slot: 0, status: "DONE", source: "record-yesterday", debtXp: 0, debtOpen: false, repaired: false });
       straddle.events.push(ev("rec-ev", L, { templateId: "stretch", dedupeKey: `task:stretch:${L}:0:0` }));
     };
-    const sr = await settleLifeDays(USER, at(d(2)), { env: WRITE_ENV, client: straddle.client() });
+    const sr = await settleLifeDays(USER, at(d(2)), { env: { ...WRITE_ENV, XTNL_MOMENTUM_LAUNCH_DAY: d(-5) }, client: straddle.client() });
     check(
       "a straddling record of today − 2 after the read: the guard fails, and the re-plan spends no freeze on a day that is now active",
       sr.wrote && straddle.transactions.length === 2 && straddle.events.every((x) => x.source !== "FREEZE_USE") && straddle.instances.every((i) => i.status !== "EXCUSED") && straddle.cursor === L,
@@ -1257,6 +1349,24 @@ async function executor(): Promise<void> {
     };
     await settleLifeDays(USER, at(d(3)), { env: WRITE_ENV, client: older.client() });
     check("a write dated before today − 2 does not touch the guard (no retry for days no request can reach)", older.transactions.length === 1 && older.cursor === d(1));
+
+    // P22 review: a make-up's undo reopening a debt after the read (the same lock, rows dated today, outside `fresh`):
+    // the open-debt clause fails, and the re-plan caps the miss (3 open for the task), so the cap holds.
+    const debt = debtFor(tpl("stretch"));
+    const undoRace = new FakeDb(d(-1), [tpl("stretch")]);
+    const openMiss = (id: string, day: DayKey, open: boolean): FakeInstance => ({ id, templateId: "stretch", day: dateColumn(day), slot: 0, status: open ? "MISSED" : "DONE_LATE", source: open ? "manual" : "make-up", debtXp: debt, debtOpen: open, repaired: false });
+    undoRace.instances.push(openMiss("m1", d(-9), true), openMiss("m2", d(-8), true), openMiss("m3", d(-7), false));
+    undoRace.onTransaction = () => {
+      Object.assign(undoRace.instances.find((i) => i.id === "m3")!, { status: "MISSED", source: "manual", debtOpen: true });
+    };
+    const ur = await settleLifeDays(USER, at(d(2)), { env: WRITE_ENV, client: undoRace.client() });
+    const urMiss = undoRace.instances.find((i) => i.templateId === "stretch" && keyOfDateColumn(i.day) === L);
+    check(
+      "P22 review: an undone make-up landing between settlement's read and write fails the open-debt clause; the re-plan caps the miss (at most 3 open for a task)",
+      ur.wrote && undoRace.transactions.length === 2 && undoRace.events.every((x) => x.source !== "DEBT") && urMiss?.status === "MISSED" && urMiss.debtXp === 0 && !urMiss.debtOpen && undoRace.instances.filter((i) => i.debtOpen).length === 3,
+      JSON.stringify({ tx: undoRace.transactions.length, events: undoRace.events.map((x) => x.source), miss: urMiss })
+    );
+    eq("…the first attempt's guard held the two debts it read", guardOfSql(undoRace.transactions[0][1].args)?.openDebts, { count: 2, sum: 2 * debt });
 
     const reset = new FakeDb(d(-1), [tpl("stretch")]);
     reset.onTransaction = () => {
@@ -1339,10 +1449,20 @@ async function executor(): Promise<void> {
     );
     const previewEnv: SettleEnv = { NODE_ENV: "production", VERCEL_ENV: "preview", XTNL_DUTY_LAUNCH_DAY: L };
     const preview = new FakeDb(d(-1), [tpl("stretch")]);
-    const pv = await settleLifeDays(USER, at(d(3)), { env: previewEnv, client: preview.client() });
-    check("a Preview deployment (NODE_ENV production, VERCEL_ENV 'preview') writes nothing", preview.writes === 0 && !pv.wrote, JSON.stringify({ ...pv, plans: pv.plans.length }));
+    // Blueprint P22 (re-pinned for the flip): once DUTY_LAUNCH_DAY is set (any Monday), the Preview runs on a day Duty is
+    // live by the constant, so it is the writes gate, not the launch gate, that must refuse.
+    const previewAt = DUTY_LAUNCH_DAY != null && DUTY_LAUNCH_DAY > d(1) ? at(addDays(DUTY_LAUNCH_DAY, 3)) : at(d(3));
+    const pv = await settleLifeDays(USER, previewAt, { env: previewEnv, client: preview.client() });
+    // M2 leftover 9 (P20): the reason is asserted. While DUTY_LAUNCH_DAY is null a Preview (NODE_ENV production) ignores the
+    // override, so it is refused as not started; once the constant is set it must be the writes gate that refuses.
+    const previewWhy = DUTY_LAUNCH_DAY == null ? "Duty has not started." : WRITES_OFF_REFUSAL;
+    check(
+      `a Preview deployment (NODE_ENV production, VERCEL_ENV 'preview') writes nothing: refused '${previewWhy}'`,
+      preview.writes === 0 && !pv.wrote && pv.refused === previewWhy,
+      JSON.stringify({ ...pv, plans: pv.plans.length })
+    );
     const previewChain = new FakeDb(d(-1), [tpl("stretch")]);
-    await maybeMaintainLife(USER, at(d(3)), { env: previewEnv, client: previewChain.client(), judge: async () => {}, roadmap: NO_ROADMAP });
+    await maybeMaintainLife(USER, previewAt, { env: previewEnv, client: previewChain.client(), judge: async () => {}, roadmap: NO_ROADMAP });
     check("…and its maintenance chain reads nothing for settlement", previewChain.reads.length === 0 && previewChain.writes === 0);
     const before = new FakeDb(d(-1), [tpl("stretch")]);
     const br = await settleLifeDays(USER, at(d(-1)), { env: WRITE_ENV, client: before.client() });
@@ -1350,7 +1470,10 @@ async function executor(): Promise<void> {
     const be = await settleLifeDays(USER, at(d(-1)), { env: WRITE_ENV, client: before.client(), early: true });
     eq("an early settle before launch is refused the same way", be.refused, "Duty starts Mon 12 Oct");
     const none = new FakeDb(d(-1));
-    eq("no launch day at all: 'Duty has not started.'", (await settleLifeDays(USER, at(d(3)), { env: { XTNL_LIFE_JUDGE: "1" }, client: none.client() })).refused, DUTY_LAUNCH_DAY == null ? "Duty has not started." : null);
+    // Blueprint P22 (re-pinned for the flip): with no override the code constant decides; once it is set (any Monday) the
+    // run is placed after it, where Duty is live and nothing refuses it.
+    const noneAt = DUTY_LAUNCH_DAY != null && DUTY_LAUNCH_DAY > d(1) ? at(addDays(DUTY_LAUNCH_DAY, 3)) : at(d(3));
+    eq("no launch day at all: 'Duty has not started.'", (await settleLifeDays(USER, noneAt, { env: { XTNL_LIFE_JUDGE: "1" }, client: none.client() })).refused, DUTY_LAUNCH_DAY == null ? "Duty has not started." : null);
     if (DUTY_LAUNCH_DAY == null) {
       const prod = new FakeDb(d(-1), [tpl("stretch")]);
       const pr = await settleLifeDays(USER, at(d(3)), { env: { NODE_ENV: "production", XTNL_DUTY_LAUNCH_DAY: L }, client: prod.client() });
@@ -2029,15 +2152,57 @@ function staticChecks(): void {
   console.log("— §6 duty-launch.ts and the shared lock (static) —");
   const launch = readFileSync(join(root, "scripts/duty-launch.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const firstRead = launch.indexOf("prisma.");
+  // Blueprint P20 (M2 leftover 9): a dry run against a refused target stops too (a plan of the wrong data is no review).
   check(
-    "duty-launch: the database guard runs first, and --apply on a refused target stops before any read",
+    "duty-launch: the database guard runs first, and a refused target stops before any read, dry run or --apply",
     /launchTargetOf\(\{ DATABASE_URL: process\.env\.DATABASE_URL, DIRECT_URL: process\.env\.DIRECT_URL \}\)/.test(launch) &&
-      launch.indexOf('APPLY && target.kind === "refused"') > 0 &&
-      launch.indexOf('APPLY && target.kind === "refused"') < firstRead
+      launch.indexOf('if (target.kind === "refused") {') > 0 &&
+      launch.indexOf('if (target.kind === "refused") {') < firstRead &&
+      !launch.includes('APPLY && target.kind === "refused"')
   );
+  {
+    const life = readFileSync(join(root, "scripts/life-launch.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const lifeFirstRead = Math.min(...["prisma.", "judgeClosedWeeks("].map((k) => life.indexOf(k)).filter((i) => i > 0));
+    check(
+      "life-launch (P20, leftover 9): the same guard first (launchTargetOf, a refused target stops), its day from launchDaysFor, an ignored override stops",
+      /launchTargetOf\(\{ DATABASE_URL: process\.env\.DATABASE_URL, DIRECT_URL: process\.env\.DIRECT_URL \}\)/.test(life) &&
+        life.indexOf('if (target.kind === "refused") {') > 0 &&
+        life.indexOf('if (target.kind === "refused") {') < lifeFirstRead &&
+        /const days = launchDaysFor\(target\);/.test(life) &&
+        life.indexOf("if (days.ignored.length > 0) {") < lifeFirstRead &&
+        /const launchDay = days\.life;/.test(life) &&
+        !/\blifeLaunchDay\(/.test(life)
+    );
+  }
   check("duty-launch: launch days come from launchDaysFor (the XTNL_ overrides on the rehearsal mirror only)", /launchDaysFor\(target\)/.test(launch) && !/\bdutyLaunchDay\(|\blifeLaunchDay\(/.test(launch));
   check("duty-launch: --apply refuses before firstDutyDay + 1 and before writing", /launchApplyTooEarly\(today, first\)/.test(launch) && launch.indexOf("if (tooEarly)") < launch.indexOf("lifeSettings.updateMany"));
   check("duty-launch: the cursor write is conditional on a null cursor and the epoch it read", /updateMany\(\{[\s\S]*?settledThroughDay: null, epochDay: settings\.epochDay/.test(launch));
+  {
+    // Blueprint P22: the dry run the lead runs with the user is read only, and it shows every must and its debt.
+    const dryEnd = launch.indexOf("if (!APPLY) {");
+    const writes = [...launch.matchAll(/\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw|\$transaction|settleLifeDays\(/g)].map((m) => ({ what: m[0], at: m.index ?? 0 }));
+    check(
+      "duty-launch (P22): the dry run is read only: its one write (the cursor's lifeSettings.updateMany) comes after the dry run returns, and nothing else writes",
+      dryEnd > 0 && writes.length === 1 && writes[0].what === ".updateMany(" && writes[0].at > dryEnd && /if \(!APPLY\) \{\s*console\.log\("\\nDry run: nothing written\.[^"]*"\);\s*return;\s*\}/.test(launch),
+      JSON.stringify(writes)
+    );
+    const settlementSrc = readFileSync(join(root, "src/lib/settlement.ts"), "utf8");
+    const readBody = settlementSrc.slice(settlementSrc.indexOf("export async function readSettlementState"), settlementSrc.indexOf("\n}\n", settlementSrc.indexOf("export async function readSettlementState")));
+    const tokensSrc = readFileSync(join(root, "src/lib/rest-tokens-server.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    check(
+      "…and what it calls before that only reads (readSettlementState, readRestTokenSummary) or plans (planSettlement, worstWeekOf: pure)",
+      readBody.length > 0 && !/\.(create|createMany|update|updateMany|upsert|delete)\(|\$executeRaw|\$transaction/.test(readBody) && !/\.(create|createMany|update|updateMany|upsert|delete)\(|\$executeRaw|\$transaction/.test(tokensSrc) &&
+        /readSettlementState\(prisma, userId, now, \{ launchDay, cursor: cursor \?\? addDays\(first, -1\) \}\)/.test(launch) && /readRestTokenSummary\(prisma, userId, today, \{ dutyLaunch: launchDay \}\)/.test(launch)
+    );
+    check(
+      "duty-launch (P22): it prints every must on the personal Board with the debt it would carry, and the worst first week as settlement itself would charge it (worstWeekOf over the musts read through settlementTemplateOf)",
+      /where: \{ userId, \.\.\.PERSONAL_BOARD, kind: \{ in: \["TASK", "HABIT"\] \}, archivedAt: null/.test(launch) &&
+        /owes \$\{debt\} if missed/.test(launch) &&
+        /const worst = worstWeekOf\(musts\.map\(settlementTemplateOf\), \{ launchDay, epochDay, now \}\);/.test(launch) &&
+        /for \(const \[day, lines\] of byDay\) console\.log/.test(launch) &&
+        launch.indexOf("const worst = worstWeekOf(") < dryEnd
+    );
+  }
   const lockSql = "pg_advisory_xact_lock(hashtext(${`life-complete:${userId}`}::text))";
   check(
     "settlement takes the completion paths' own lock (tasks.ts lifeLockOp's key; it builds on the global client, so settlement keeps its own copy for the injected one)",

@@ -32,6 +32,7 @@ import type { CelebrationEvent } from "@/lib/celebration-types";
 import type { ChainView, ChestOpenResult, ChestView, MomentumView, QuestView, RunMark, RunView, SwapResult } from "@/lib/momentum-server";
 import type { CreditTags } from "@/lib/credits";
 import { COSMETICS, MOMENTUM, cosmeticById, type ChestReceipt, type QuestSlot } from "@/lib/momentum";
+import { REST_TOKENS_WORD } from "@/lib/rest-tokens";
 import { TRACK_LABEL, kneePay, receiptCritOf, roundTo } from "@/lib/life-grade";
 import { FLAME_PATH } from "@/components/glyph/paths/flame";
 import { refreshPending } from "@/components/celebrate/stage";
@@ -409,7 +410,7 @@ function LiveCard({ view, nowIso, actions, prices, settled, credits }: { view: L
 
 // ═══ The Momentum sheet (the flame) ════════════════════════════════════════════════════════════
 
-const MARK_WORD: Readonly<Record<RunMark, string>> = { active: "kept", held: "held by a freeze", missed: "missed", open: "today, nothing yet", before: "before momentum began" };
+const MARK_WORD: Readonly<Record<RunMark, string>> = { active: "kept", held: "held by a freeze", rest: "a rest day, held with no freeze", missed: "missed", open: "today, nothing yet", before: "before momentum began" };
 
 const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -429,8 +430,9 @@ export function RunBody({ view, busy, onSkin }: { view: LiveMomentum; busy?: boo
       <p className="mo-runline">
         <b>Run {run.current}</b> · longest {run.longest}
       </p>
+      {/* P21 review: the bank's one name, paired once with the freezes it is ('Rest tokens 1 of 2', as Today's chip says it). */}
       <p className="t-meta">
-        {run.bank} {run.bank === 1 ? "freeze" : "freezes"} of {run.freezeMax} ·{" "}
+        {REST_TOKENS_WORD} {run.bank} of {run.freezeMax} ·{" "}
         {run.bank >= run.freezeMax ? "bank full" : `next in ${run.nextFreezeIn} momentum ${run.nextFreezeIn === 1 ? "day" : "days"}`}
       </p>
       <ol className="mo-grid" aria-label={`The last ${run.grid.length} days`}>
@@ -442,11 +444,13 @@ export function RunBody({ view, busy, onSkin }: { view: LiveMomentum; busy?: boo
           </li>
         ))}
       </ol>
+      {/* P21 review: the rest mark has its key too (hatched, a dashed edge), so a rest day is never read as today's open cell. */}
       <p className="mo-legend t-meta" aria-hidden="true">
-        <span className="mo-key" data-mark="active" /> kept <span className="mo-key" data-mark="held" /> held <span className="mo-key" data-mark="missed" /> missed
+        <span className="mo-key" data-mark="active" /> kept <span className="mo-key" data-mark="held" /> held <span className="mo-key" data-mark="rest" /> rest{" "}
+        <span className="mo-key" data-mark="missed" /> missed
       </p>
       <p className="t-meta">
-        Any task, a {MOMENTUM.EX_STREAK_MIN}-minute walk or a checkpoint keeps it. A freeze covers a missed day automatically.
+        Any task, a {MOMENTUM.EX_STREAK_MIN}-minute walk or a checkpoint keeps it. A rest token (a freeze) covers a missed day automatically.
       </p>
       {onSkin && (
         <div className="mo-skins" role="group" aria-label="Flame">

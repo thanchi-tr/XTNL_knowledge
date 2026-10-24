@@ -9,16 +9,20 @@
  *
  *   npx tsx scripts/duty-check.ts
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { dayEndOf, dayStartOf, addDays, weekdayOf, type DayKey } from "../src/lib/life-day";
 import { DEBT_CAP, debtFor } from "../src/lib/life-grade";
 import { LIFE_LAUNCH_DAY } from "../src/lib/life-economy";
 import {
   DUTY_LAUNCH_DAY,
+  DUTY_REHEARSAL_PORT,
   MAKEUP_RESTORE_DAYS,
   SETTLE_LAG_DAYS,
   debtKey,
   dutyLagging,
   dutyLaunchDay,
+  dutyOverrideScoped,
   firstDutyDay,
   freezeEarnKey,
   freezeUseKey,
@@ -379,10 +383,36 @@ check("dutyLagging: cursor < today − 2 − 3", dutyLagging("2026-10-08", "2026
 // ═══ §2 Launch gate ═══════════════════════════════════════════════════════
 
 console.log("— §2 launch gate —");
-check("DUTY_LAUNCH_DAY is null until the lead sets it", DUTY_LAUNCH_DAY === null);
+// M2 leftover 2 (blueprint P20): null until the lead sets it, then a valid launch day (a Monday on or after
+// LIFE_LAUNCH_DAY; the deploy-day rule is duty-launch.ts's gate at --apply, so the day itself stands in for it here).
+check(
+  "DUTY_LAUNCH_DAY is null, or a valid launch day once the lead sets it",
+  DUTY_LAUNCH_DAY === null || validateDutyLaunchDay(DUTY_LAUNCH_DAY, { deployDay: DUTY_LAUNCH_DAY, lifeLaunchDay: LIFE_LAUNCH_DAY }).valid,
+  String(DUTY_LAUNCH_DAY)
+);
 check("dutyLaunchDay ignores the env in production", dutyLaunchDay({ NODE_ENV: "production", XTNL_DUTY_LAUNCH_DAY: "2026-10-12" }) === DUTY_LAUNCH_DAY);
 check("dutyLaunchDay honours a valid env day outside production", dutyLaunchDay({ NODE_ENV: "development", XTNL_DUTY_LAUNCH_DAY: " 2026-10-12 " }) === "2026-10-12");
 check("dutyLaunchDay ignores an invalid env day", dutyLaunchDay({ NODE_ENV: "development", XTNL_DUTY_LAUNCH_DAY: "2026-02-30" }) === DUTY_LAUNCH_DAY);
+// M2 leftover 8 (blueprint P20): the override is honoured only where it cannot reach the shared database.
+{
+  const at = (DATABASE_URL: string | undefined) => dutyLaunchDay({ NODE_ENV: "development", XTNL_DUTY_LAUNCH_DAY: "2026-10-12", DATABASE_URL });
+  const mirror = `postgresql://postgres:rehearsal@localhost:${DUTY_REHEARSAL_PORT}/postgres`;
+  check(
+    "override scope: honoured with no DATABASE_URL (blank too) and on the rehearsal mirror (localhost, 127.0.0.1, [::1] on 55432)",
+    [at(undefined), at("  "), at(mirror), at(`postgresql://p:p@127.0.0.1:${DUTY_REHEARSAL_PORT}/postgres`), at(`postgresql://p:p@[::1]:${DUTY_REHEARSAL_PORT}/postgres`)].every((d) => d === "2026-10-12")
+  );
+  check(
+    "override scope: the constant against Supabase, another local database, another host or an unreadable URL",
+    [
+      at("postgresql://postgres.xvlkujmtdcpaoxdftgpl:pw@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres"),
+      at("postgresql://postgres:postgres@localhost:5432/postgres"),
+      at(`postgresql://p:p@rehearsal.example.com:${DUTY_REHEARSAL_PORT}/postgres`),
+      at("not a url"),
+    ].every((d) => d === DUTY_LAUNCH_DAY)
+  );
+  check("override scope: dutyOverrideScoped reads the URL's host and port only", dutyOverrideScoped(mirror) && !dutyOverrideScoped("postgresql://u:p@localhost/postgres") && dutyOverrideScoped(undefined));
+  check("the mirror's port is settlement.ts REHEARSAL_DB_PORT's (one number)", DUTY_REHEARSAL_PORT === 55432 && /REHEARSAL_DB_PORT = DUTY_REHEARSAL_PORT;/.test(readFileSync(join(process.cwd(), "src/lib/settlement.ts"), "utf8")));
+}
 check("isDutyLaunched: never without a launch day", !isDutyLaunched("2030-01-01", null));
 check("isDutyLaunched: from the launch day on", !isDutyLaunched("2026-10-11", "2026-10-12") && isDutyLaunched("2026-10-12", "2026-10-12"));
 {
