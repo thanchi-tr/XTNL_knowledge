@@ -317,6 +317,8 @@ export async function editPlan(roadmapId: string, edit: PlanEdit): Promise<Roadm
   if (o.kind === "RENAME" && isRef(o.milestoneId) && text(o.title)) clean = { kind: "RENAME", milestoneId: o.milestoneId, title: o.title };
   // Ruling N24: a removal carries the topic's name as typed in its confirm (the core checks it).
   else if (o.kind === "REMOVE_TOPIC" && isRef(o.milestoneId) && isRef(o.domainId) && text(o.typed)) clean = { kind: "REMOVE_TOPIC", milestoneId: o.milestoneId, domainId: o.domainId, typed: o.typed };
+  // Ruling N27 (the page): a parent picked for a topic of an unstarted layer, by their keys (the core checks the layers).
+  else if (o.kind === "PICK_PARENT" && isRef(o.childKey) && isRef(o.parentKey)) clean = { kind: "PICK_PARENT", childKey: o.childKey, parentKey: o.parentKey };
   else if (o.kind === "ADD_TOPIC") {
     const nm = asObject(o.newMilestone);
     const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 20 ? v : undefined);

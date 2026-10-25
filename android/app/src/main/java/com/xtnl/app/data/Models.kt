@@ -460,6 +460,26 @@ data class MainQuest(
     val startOnWeb: Boolean = false,
     /** The aim suggestions are on: an empty quest may say so quietly. */
     val suggest: Boolean = true,
+    /** Ruling N28: the planned layer's study while it is locked or Start is off (the web card's one action); null otherwise. */
+    val study: QuestStudy? = null,
+)
+
+/**
+ * The topic to study now (GET /quests `study`; roadmap contracts ruling N28): its cards at level 6 of the floor ("n of 8"),
+ * its cards due, and the web's own words and link ([line] "Study Markov chains · 3 of 8 · 4 due", [webHref] the Domain's
+ * review run, or "Add an idea to …" with none due). The run itself is the web's; the app says the line.
+ */
+@Serializable
+data class QuestStudy(
+    val name: String = "",
+    val domainId: String = "",
+    val cards: Int = 0,
+    val floor: Int = 8,
+    val due: Int = 0,
+    val layer: Int = 0,
+    val geminiNamed: Boolean = false,
+    val line: String = "",
+    val webHref: String = "",
 )
 
 /**

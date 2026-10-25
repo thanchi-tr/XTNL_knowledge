@@ -7,6 +7,14 @@
  * roadmap's PROFICIENCY reading too, applies the reach rules, and invalidates
  * 'roadmap'.
  *
+ * Roadmap rework 1, P1 (contracts §22.20 ruling N26): on a TOPICS plan the PLANNED
+ * layer rows of the accepted version are measured too (their paying card keys), and
+ * one reaches on cards alone when every paying term holds: reachedDay only, in
+ * HELD_AT_START's shape (no goal, no rank, nothing paid). Such a reach, stored or
+ * new, is kept out of the aim's reach and the Proficiency milestones part
+ * (isCardsReachRow): those stay Start's. RoadmapContext.planKind and the rows' layer
+ * and chainRole carry what the rule reads; a context without them is as before.
+ *
  * Contract: docs/life-plan/roadmap-contracts.md §R1. Callers:
  *   recordRoadmapReadings   settlement.ts maybeMaintainLife and runLifeCron (lane G, after the
  *                           judge), the degrade cron (lane G, after it degrades); never fails its caller
@@ -132,6 +140,7 @@ import {
   acceptanceOrderBy,
   checkpointLogPrefix,
   isAimDepth,
+  isCardsReachRow,
   isGoalSlot,
   isLegacyRoadmap,
   isMissingRev4Column,
@@ -157,6 +166,7 @@ import {
   type MilestoneNote,
   type MilestoneStatus,
   type Origin,
+  type PlanKind,
   type PositionRow,
   type PracticeBand,
   type PracticeMethod,
@@ -396,6 +406,8 @@ export interface RoadmapContext {
   checkpointLogs?: Reading[];
   /** The interval multiplier of the current acceptance (the clean-entry read's window reads the wider of it and the live loadout's; cleanReadDaysOf). */
   m?: number;
+  /** Roadmap.planKind (revision 5): TOPICS reads ruling N26's reach on cards; absent or null reads as LEVELS (every fixture before it). */
+  planKind?: PlanKind | null;
 }
 
 /** Which roadmap a context load reads. */
@@ -531,6 +543,9 @@ function milestoneOf(r: MilestoneRow): CtxMilestone {
     goal: null,
     steps: [],
     createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : null,
+    // Revision 5 (RoadmapMilestone.layer, .chainRole; MilestoneDraft's own fields): ruling N26 reads a TOPICS layer row by them.
+    layer: r.layer ?? null,
+    chainRole: r.chainRole === "LAYER" || r.chainRole === "DEPTH" ? r.chainRole : null,
   };
 }
 
@@ -540,6 +555,13 @@ const isOpenMilestone = (m: CtxMilestone, superseded: ReadonlySet<string>): bool
 
 /** The PAYS measures a run computes (CHECKPOINT is context; a measure with no key is not read). */
 const payingKeyed = (m: CtxMilestone): MeasureSpec[] => m.measures.filter((x) => x.role === "PAYS" && x.kind !== "CHECKPOINT" && x.measureKey);
+
+/**
+ * Ruling N26: a layer row measured before Start on a TOPICS plan: PLANNED, of the accepted version, not reached, with
+ * no goal and not superseded. Its paying card keys are computed each run, and it reaches when every one holds.
+ */
+const isCardsLayerRow = (m: CtxMilestone, version: number, superseded: ReadonlySet<string>): boolean =>
+  m.status === "PLANNED" && m.chainRole === "LAYER" && m.version === version && m.reachedDay == null && m.goalId == null && !superseded.has(m.id);
 
 /** A practice measure's templates: its scope's, else its key's. */
 function templateIdsOf(measure: MeasureSpec): string[] {
@@ -811,6 +833,7 @@ async function contextOfRow(
     counts,
     checkpointLogs: logs.map(toReading),
     m,
+    planKind: row.planKind === "TOPICS" ? "TOPICS" : "LEVELS",
   };
 }
 
@@ -838,6 +861,7 @@ async function findRoadmapRows(client: RoadmapReadingsClient, where: Prisma.Road
     fieldId: true,
     depth: true,
     slot: true,
+    planKind: true,
     milestones: { where: milestoneWhere, orderBy: { ord: "asc" }, include: { items: true, measures: true } },
     acceptances,
   } as const;
@@ -859,7 +883,7 @@ async function findRoadmapRows(client: RoadmapReadingsClient, where: Prisma.Road
     if (!isMissingRev4Column(err)) throw err;
     // Before the rev-4 migration no seat exists either: every row reads slot null.
     const rows = many ? await client.roadmap.findMany({ where, orderBy, select: legacySelect }) : [await client.roadmap.findFirst({ where, orderBy, select: legacySelect })];
-    return rows.flatMap((row) => (row ? [{ ...row, depth: null, slot: null }] : []));
+    return rows.flatMap((row) => (row ? [{ ...row, depth: null, slot: null, planKind: null }] : []));
   }
 }
 
@@ -1163,9 +1187,16 @@ export interface PlanOptions {
  *      again"): CARDS_AT_LEVEL from the card histogram (levels 13–20 count),
  *      PRACTICE_KEPT from the templates' instances and the held days over
  *      [start, dueOf(m)]; plus the current acceptance's end-state card measures.
+ *   1b. Ruling N26 (a TOPICS plan, ctx.planKind): each PLANNED layer row of the accepted
+ *      version (isCardsLayerRow) has its paying card keys computed from the same counts, so
+ *      the stored readings stay truthful before any Start.
  *   2. The reach rules on each such STARTED milestone, g as of
  *      goalAsOf(today, dueOf(m)) (one due day: the goal's once started) on the
  *      stored readings overlaid with step 1.
+ *   2b. Ruling N26: a step-1b row whose every paying term is a card term and holds on the
+ *      overlaid readings reaches today (reachedDay alone, HELD_AT_START's shape: no goal, no
+ *      rank, nothing paid, never startable). A reach on cards, stored or new, counts in
+ *      neither step 3 nor step 4 (isCardsReachRow): those stay Start's.
  *   3. Roadmap.reachedDay, once the final scheduled milestone's reach is
  *      confirmed and every end-state measure holds its target today. On a
  *      revision-4 plan also (aimReachedOf): a depth plan's practice kept at
@@ -1208,6 +1239,14 @@ export function planRoadmapWrite(ctx: RoadmapContext, now: Date, opts: PlanOptio
     const p = parseMeasureKey(t.measureKey);
     if (p?.kind === "CARDS_AT_LEVEL" && !rows.has(t.measureKey)) rows.set(t.measureKey, cardRow(t.measureKey, p));
   }
+  // Ruling N26 (step 1b): a TOPICS plan's PLANNED layer rows are measured too, so a layer can reach on cards alone.
+  const cardsRows = ctx.planKind === "TOPICS" && ctx.roadmap.status === "ACTIVE" ? ctx.milestones.filter((m) => isCardsLayerRow(m, ctx.roadmap.version, superseded)) : [];
+  for (const m of cardsRows) {
+    for (const meas of payingKeyed(m)) {
+      const p = parseMeasureKey(meas.measureKey!);
+      if (p?.kind === "CARDS_AT_LEVEL" && !rows.has(meas.measureKey!)) rows.set(meas.measureKey!, cardRow(meas.measureKey!, p));
+    }
+  }
 
   const computed: Reading[] = Array.from(rows.values()).map((r) => ({ ...r, source: "COMPUTED", observedAt }));
   const overlaid = [...ctx.readings.filter((r) => !(r.day === today && rows.has(r.measureKey))), ...computed];
@@ -1216,7 +1255,8 @@ export function planRoadmapWrite(ctx: RoadmapContext, now: Date, opts: PlanOptio
   const reachedNow = new Map<string, DayKey | null>();
   const gBy: Record<string, MilestoneG> = {};
   for (const m of ctx.milestones) {
-    reachedNow.set(m.id, m.reachedDay);
+    // A stored reach on cards (ruling N26) counts in neither the aim's reach nor Proficiency: those stay Start's.
+    reachedNow.set(m.id, isCardsReachRow(m) ? null : m.reachedDay);
     if (m.status !== "STARTED" || m.goal?.open !== true || superseded.has(m.id)) continue;
     const g = milestoneGOn(seriesMilestoneOf(m), overlaid, m.steps, goalAsOf(today, dueOf(m)));
     gBy[m.id] = g;
@@ -1224,6 +1264,14 @@ export function planRoadmapWrite(ctx: RoadmapContext, now: Date, opts: PlanOptio
     if (action.kind === "none") continue;
     reaches.push({ milestoneId: m.id, action, knownPending: m.reachPendingDay });
     if ((action.kind === "reach" || action.kind === "confirm") && opts.countNewReaches !== false) reachedNow.set(m.id, action.day);
+  }
+  // Ruling N26 (step 2b): a PLANNED layer row reaches when every paying term is a card term and holds on the overlaid
+  // readings (a row with a practice or a step term waits for Start). reachedDay alone; never into reachedNow.
+  for (const m of cardsRows) {
+    const paying = payingKeyed(m);
+    if (paying.length === 0 || paying.some((x) => x.kind !== "CARDS_AT_LEVEL")) continue;
+    const holds = paying.every((x) => (lastReadingOn(overlaid, x.measureKey!, today)?.value ?? -Infinity) >= x.target);
+    if (holds) reaches.push({ milestoneId: m.id, action: { kind: "reach", day: today }, knownPending: null });
   }
 
   let aimReachedDay: DayKey | null = null;

@@ -38,6 +38,7 @@ import {
   WEEK_QUEST_FINAL_LAG_DAYS,
   isQuestWeekFinal,
   type AimCardView,
+  type AimStudyView,
   type PastWeekView,
   type TextClass,
   type WeekQuestKind,
@@ -245,13 +246,25 @@ export interface MainQuest {
   } | null;
   /** The quest's one line, in neutral words ("Milestone 1 is planned.", "42% of the way · due Sun 7 Mar"). */
   line: string;
-  /** Start is offered on the web: a planned milestone, ROADMAP_GOALS_LIVE on and a server that writes. False otherwise, always. */
+  /**
+   * Start is offered on the web: a planned milestone, ROADMAP_GOALS_LIVE on and a server that writes, and (ruling N28) not a
+   * TOPICS layer whose prerequisites are open (Start would refuse PREREQS_OPEN). False otherwise, always.
+   */
   startable: boolean;
+  /**
+   * Ruling N28: the study while the milestone is a planned TOPICS layer (locked or Start off): one topic, "n of 8" and its
+   * cards due (AimCardView.study: the first topic of the layer not done, else the next planned layer's). Today's card and
+   * GET /quests carry it as the one action; null otherwise.
+   */
+  study?: MainQuestStudy | null;
   /** The aim suggestions are on (LifeSettings.aimSuggestions is not false): an empty quest may say so quietly. */
   suggest: boolean;
   /** This week's sprint, when the started milestone has one this week. */
   sprint: Sprint | null;
 }
+
+/** Ruling N28: the topic to study now, as the card carries it (AimStudyView's fields; the review run is its Domain's). */
+export type MainQuestStudy = AimStudyView;
 
 const ROADMAP_PAGE = "/you/roadmap";
 const ROADMAP_NEW = "/you/roadmap/new";
@@ -287,7 +300,7 @@ function struckOf(spans: readonly (readonly number[])[] | null | undefined): [nu
  * is never shown as this quest's). Never throws: an unreadable card reads as none.
  */
 export function mainQuestOf(card: AimCardView | null | undefined, week: WeekQuestsView | null | undefined, today: DayKey): MainQuest {
-  const none: MainQuest = { state: "NONE", roadmapId: null, title: null, href: ROADMAP_NEW, milestone: null, line: "No main quest yet.", startable: false, suggest: card?.aimSuggestions !== false, sprint: null };
+  const none: MainQuest = { state: "NONE", roadmapId: null, title: null, href: ROADMAP_NEW, milestone: null, line: "No main quest yet.", startable: false, suggest: card?.aimSuggestions !== false, sprint: null, study: null };
   try {
     if (!card || card.state === "EMPTY" || !card.roadmapId) return none;
     const base: MainQuest = { ...none, roadmapId: card.roadmapId, title: titleOf(card), href: ROADMAP_PAGE };
@@ -309,8 +322,10 @@ export function mainQuestOf(card: AimCardView | null | undefined, week: WeekQues
     const sprint = week && week.milestoneId === m.id && m.status !== "PLANNED" ? sprintOf(week, today) : null;
     switch (m.status) {
       case "PLANNED": {
-        const startable = card.goalsLive === true && !card.writesOff;
-        return { ...base, state: "PLANNED", milestone, startable, line: startable ? `${MILESTONE} ${m.ord} is ready to start.` : `${MILESTONE} ${m.ord} is planned.` };
+        // Ruling N28: a locked TOPICS layer offers no Start (it would refuse PREREQS_OPEN); its study is the action instead.
+        const startable = card.goalsLive === true && !card.writesOff && m.locked !== true;
+        // The study is the one action only while Start is not: Start offered, nothing else is said (the phone reads the same).
+        return { ...base, state: "PLANNED", milestone, startable, study: startable ? null : (card.study ?? null), line: startable ? `${MILESTONE} ${m.ord} is ready to start.` : `${MILESTONE} ${m.ord} is planned.` };
       }
       case "PAST_DUE":
         return { ...base, state: "PAST_DUE", milestone, sprint, line: m.dueDay ? `${MILESTONE} ${m.ord} was due ${weekdayDate(m.dueDay)}: close or reschedule it.` : `${MILESTONE} ${m.ord} is past its day: close or reschedule it.` };

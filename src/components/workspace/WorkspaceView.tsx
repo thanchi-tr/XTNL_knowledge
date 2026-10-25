@@ -3,7 +3,9 @@
 /**
  * Study › Review: the hub, the focus runner and the recap, on one route.
  *
- * The runner's mode lives in the URL (?view=run, then ?view=recap), written
+ * The runner's mode lives in the URL (?view=run, then ?view=recap; ruling N28:
+ * ?view=run&domain=<id> is one Domain's run, the Study card's [Review n] and
+ * the roadmap's "Study <topic>" action, roadmap-links reviewRunHref), written
  * with the native history API, which Next's router syncs into
  * useSearchParams without a server round trip or a remount — so the run's
  * state survives, and the browser's Back button exits the run. A reload of
@@ -135,15 +137,19 @@ export function WorkspaceView(props: Props) {
   const bosses = focus?.fieldId ? [...allBosses].sort((a, b) => Number(b.fieldId === focus.fieldId) - Number(a.fieldId === focus.fieldId)) : allBosses;
   const router = useRouter();
   const pathname = usePathname();
-  const view = useSearchParams().get("view");
+  const params = useSearchParams();
+  const view = params.get("view");
+  // Ruling N28: a Domain-scoped run from a link (the roadmap's and Today's "Study <topic>"): its due cards, none → the hub.
+  const domainParam = params.get("domain");
+  const domainCards = (id: string | null): RunCard[] => (id ? fields.flatMap((f) => f.cards).filter((c) => c.domainId === id) : []);
   const { streak, recordResult } = useStreak();
   /** An "I was right" on its way for the card on screen, or its refusal. */
   const [override, setOverride] = useState<{ busy: boolean; error: string | null } | null>(null);
   const { prefs, motion } = useMotionPref();
 
-  const resumable = view === "run" && totalDue > 0;
+  const resumable = view === "run" && (domainParam ? domainCards(domainParam).length > 0 : totalDue > 0);
   const [mode, setMode] = useState<Mode>(resumable ? "run" : "hub");
-  const [run, setRun] = useState<Run | null>(() => (resumable ? newRun(fields, ALL_FIELDS, today, quest, totalDue) : null));
+  const [run, setRun] = useState<Run | null>(() => (resumable ? (domainParam ? topicRun(domainParam) : newRun(fields, ALL_FIELDS, today, quest, totalDue)) : null));
   const [selected, setSelected] = useState<string>(focusField ?? ALL_FIELDS);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [boonFor, setBoonFor] = useState<string | null>(null);
@@ -192,11 +198,17 @@ export function WorkspaceView(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
-  function enter(next: Run) {
+  /** One Domain's due cards as a run, seeded by the day and the Domain (ruling N14's [Review n]; N28's link). */
+  function topicRun(domainId: string): Run {
+    const base = newRun(fields, ALL_FIELDS, today, quest, totalDue);
+    return { ...base, id: `topic:${today}:${domainId}`, queue: seededOrder(domainCards(domainId), `${today}:${domainId}`) };
+  }
+
+  function enter(next: Run, query = "?view=run") {
     openRun(next.id);
     setRun(next);
     setMode("run");
-    window.history.pushState(null, "", "?view=run");
+    window.history.pushState(null, "", query);
     pushedRef.current = true;
     window.scrollTo(0, 0);
   }
@@ -207,12 +219,10 @@ export function WorkspaceView(props: Props) {
     enter(next);
   }
 
-  /** The focus topic's due cards, one tap (ruling N14). */
+  /** The focus topic's due cards, one tap (ruling N14); the URL names the Domain, so a reload resumes the same run (N28). */
   function reviewTopic(topic: StudyTopic) {
-    const base = newRun(fields, ALL_FIELDS, today, quest, totalDue);
-    const cards = fields.flatMap((f) => f.cards).filter((c) => c.domainId === topic.domainId);
-    if (cards.length === 0) return;
-    enter({ ...base, id: `topic:${today}:${topic.domainId}`, queue: seededOrder(cards, `${today}:${topic.domainId}`) });
+    if (domainCards(topic.domainId).length === 0) return;
+    enter(topicRun(topic.domainId), `?view=run&domain=${encodeURIComponent(topic.domainId)}`);
   }
 
   function challenge(fieldId: string) {

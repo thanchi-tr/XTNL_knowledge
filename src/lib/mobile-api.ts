@@ -51,7 +51,8 @@ import type { SubmitReviewResult } from "../app/actions/review";
 import type { SubmitIdeaResult } from "../app/actions/ideas";
 import type { ReviewDay } from "../app/review/review-data";
 import type { MomentumView } from "./momentum-server";
-import { SPRINT, type MainQuest } from "./main-quest";
+import { SPRINT, type MainQuest, type MainQuestStudy } from "./main-quest";
+import { studyMainQuestActionOf } from "../components/today/main-quest-card";
 import { geminiWordsOf } from "../components/roadmap/roadmap-copy";
 import type { CapitalPanel, CapitalReading, StatusPanel } from "./status-panel";
 import type { AvatarTargetView } from "./avatar";
@@ -1089,10 +1090,16 @@ export function acceptLossReplyOf(v: { instanceId: string; debtXp: number }, owe
  * and is offered only while ROADMAP_GOALS_LIVE is on, so it is false while the switch is off). Read only: the app has
  * no Start and no plan edit. The milestone's title keeps its provenance (contracts §22.11): `titleNote` is Gemini's
  * words for a Gemini title ("Gemini suggestion · not checked"; null for the user's or the app's) and `titleStruck` its
- * NUMBER spans, struck through as the web strikes them, never rewritten.
+ * NUMBER spans, struck through as the web strikes them, never rewritten. Ruling N28: `study` is the planned TOPICS
+ * layer's one action while it is locked or Start is off (Today's card carries the same): the topic, its cards at level 6
+ * of the floor ("n of 8"), its cards due, the web's line ("Study <topic> · 3 of 8 · 4 due", or "Add an idea to <topic>"
+ * with none due) and the web link it goes to (the Domain's review run, or the add flow placed in its Domain); on a locked
+ * layer (ruling N27 as the review round reads it) the lock's first unmet parent, the hero's own "Add n cards to <parent>"
+ * to the add flow placed in that Domain; null otherwise.
  */
 export function questsMainOf(q: MainQuest) {
   const m = q.milestone;
+  const study = q.study && q.state === "PLANNED" ? questsStudyOf(q.study) : null;
   return {
     state: q.state,
     title: q.title,
@@ -1102,7 +1109,14 @@ export function questsMainOf(q: MainQuest) {
       : null,
     startOnWeb: q.startable,
     suggest: q.suggest,
+    study,
   };
+}
+
+/** Ruling N28: the study as the phone shows it: the web card's words and link (studyMainQuestActionOf), beside its counts. */
+export function questsStudyOf(s: MainQuestStudy) {
+  const a = studyMainQuestActionOf(s);
+  return { name: s.name, domainId: s.domainId, cards: s.cards, floor: s.floor, due: s.due, layer: s.layer, geminiNamed: s.geminiNamed, line: a.label, webHref: a.href };
 }
 
 /**

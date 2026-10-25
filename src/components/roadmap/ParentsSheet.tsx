@@ -19,7 +19,7 @@ import { Glyph, ProvMark } from "@/components/glyph/Glyph";
 import { DomainName } from "@/components/glyph/NamedMark";
 import { goalGlyphOf } from "@/components/glyph/paths/goal";
 import { EDGE_PARENTS_MAX, type TopicMapView, type TopicRowView } from "@/lib/roadmap-types";
-import { TOPIC_ACTION_WORD, crossGoalLine, parentsLayerOption, parentsTitle } from "./roadmap-copy";
+import { TOPIC_ACTION_WORD, crossGoalLine, parentsLayerOption, parentsTitle, samplesOfLine } from "./roadmap-copy";
 import { useRoadmapAction } from "./roadmap-runtime";
 
 export interface ParentsSheetProps {
@@ -38,6 +38,8 @@ export function ParentsSheet({ open, onClose, roadmapId, map, row }: ParentsShee
   const [keys, setKeys] = useState<string[]>(initial);
   const { run, pending, error } = useRoadmapAction();
   const crossGoal = row.parents.kind === "LINKS" ? row.parents.crossGoal : [];
+  // Ruling N27 (the page): a LINK vote under EDGE_DRAW reads beside its candidate ("2 of 3 samples"), never as a check.
+  const votesOf = new Map((row.suggestions ?? []).map((s) => [s.key, s] as const));
   const toggle = (k: string, on: boolean) => {
     setLayerWide(false);
     setKeys((ks) => (on ? (ks.length >= EDGE_PARENTS_MAX ? ks : [...ks, k]) : ks.filter((x) => x !== k)));
@@ -71,6 +73,7 @@ export function ParentsSheet({ open, onClose, roadmapId, map, row }: ParentsShee
             <input type="checkbox" className="rm-avd-box" checked={!layerWide && keys.includes(c.key)} disabled={!keys.includes(c.key) && keys.length >= EDGE_PARENTS_MAX} onChange={(e) => toggle(c.key, e.currentTarget.checked)} />
             <span data-wc="name">{c.name}</span>
             {!layerWide && keys.includes(c.key) && <ProvMark cls="you" size={12} />}
+            {votesOf.has(c.key) && <span className="t-meta rm-tm-ps-votes">{samplesOfLine(votesOf.get(c.key)!.votes, votesOf.get(c.key)!.samples)}</span>}
           </label>
         ))}
         {crossGoal.map((c, i) => (

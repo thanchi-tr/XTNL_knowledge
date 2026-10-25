@@ -2691,6 +2691,82 @@ async function main() {
     );
   }
 
+  // ═══ Roadmap rework 1, P1: a layer reaches on cards alone (contracts §22.20 ruling N26) ═══════════════════════════
+
+  console.log("— roadmap rework 1: a PLANNED layer row of a TOPICS plan reaches on cards alone (N26) —");
+  {
+    // A layer row's paying term: its topic's Domain at OPEN_LEVEL, recall cards (`r`), target TOPIC_FLOOR_CARDS (§22.12).
+    const rMeasure = (id: string, domainIds: string[], target: number): RT.MeasureSpec => ({ ...cardsMeasure(id, domainIds, 6, target, 0), targetSource: "DEPTH", measureKey: RT.cardsAtLevelKey(domainIds, 6, "r") });
+    const KP = RT.cardsAtLevelKey([D_P], 6, "r");
+    const KI = RT.cardsAtLevelKey([D_I], 6, "r");
+    const KX = RT.cardsAtLevelKey([D_X], 6, "r");
+    /** A never-started layer row: PLANNED, no goal, with its layer and role (RoadmapMilestone.layer, .chainRole). */
+    const layerRow = (id: string, ord: number, layer: number, measures: RT.MeasureSpec[], extra: Partial<RR.CtxMilestone> = {}): RR.CtxMilestone =>
+      ms({ id, ord, layer, chainRole: "LAYER", status: "PLANNED", startedDay: null, goalId: null, goal: null, measures, windowStart: addDays(MON, 42 * (layer - 1)), dueDay: addDays(MON, 42 * layer - 1), ...extra });
+    const counts = M.cardCountsOf(
+      [
+        { domainId: D_P, level: 6, questionType: "SHORT", count: 8 },
+        { domainId: D_I, level: 7, questionType: "SHORT", count: 5 },
+        { domainId: D_X, level: 9, questionType: "SHORT", count: 12 },
+      ],
+      {}
+    );
+    const l1 = layerRow("l1", 1, 1, [rMeasure("a1", [D_P], 8)]);
+    const l2 = layerRow("l2", 2, 2, [rMeasure("a2", [D_I], 8)]);
+    const depth = ms({ id: "dp", ord: 3, chainRole: "DEPTH", status: "PLANNED", startedDay: null, goalId: null, goal: null, measures: [rMeasure("a3", [D_X], 8)] });
+    const topics = (p: Partial<RR.RoadmapContext> = {}): RR.RoadmapContext => ctxOf({ planKind: "TOPICS", counts, histogram: counts.all, milestones: [l1, l2, depth], ...p });
+    const plan = R.planRoadmapWrite(topics(), at(MON));
+    const levels = R.planRoadmapWrite(ctxOf({ counts, histogram: counts.all, milestones: [l1, l2, depth] }), at(MON));
+    const keyed = (p: RR.RoadmapWritePlan) => p.rows.filter((r) => [KP, KI, KX].includes(r.measureKey)).map((r) => [r.measureKey, r.value]);
+    eq(
+      "N26: layer 1's paying term holds (8 of 8 at level 6) → it reaches today with reachedDay alone (no goal, nothing pending); layer 2 at 5 of 8 does not; the depth row never does here; both layers' card keys are computed this run, the depth row's is not",
+      [plan.reaches, keyed(plan), plan.aimReachedDay],
+      [[{ milestoneId: "l1", action: { kind: "reach", day: MON }, knownPending: null }], [[KP, 8], [KI, 5]], null]
+    );
+    eq("N26: without planKind TOPICS (every LEVELS context, and every fixture before this ruling) nothing changes: no reach, no layer key computed", [levels.reaches, keyed(levels)], [[], []]);
+    check("N26: Proficiency is byte-identical with and without the reach (the milestones part stays Start's)", json(plan.proficiency) === json(levels.proficiency), json([plan.proficiency?.value, levels.proficiency?.value]));
+    const withGoal = R.planRoadmapWrite(topics({ milestones: [{ ...l1, goalId: "g-l1" }, l2, depth] }), at(MON));
+    const practice = R.planRoadmapWrite(
+      topics({ milestones: [{ ...l1, measures: [...l1.measures, practiceMeasure("p1", "lp1", "tp1", MON, 6)] }, l2, depth], templates: { tp1: { rule: "TARGET:2/W", startDay: MON, instances: [] } } }),
+      at(MON)
+    );
+    const stale = R.planRoadmapWrite(topics({ roadmap: { ...topics().roadmap, version: 2 } }), at(MON));
+    eq("N26: a row with a goal, a row with a practice term, and a row of another version never reach this way", [withGoal.reaches, practice.reaches, stale.reaches], [[], [], []]);
+    // The review round (ruling N25): the paying key counts recall cards (`r`): 7 SHORT cards beside one MULTI card at level 6 read 7 of 8, so
+    // the layer does not reach; the gate, "n of 8" and this key now count the same rows (a MULTI card never counts anywhere).
+    const withMulti = M.cardCountsOf(
+      [
+        { domainId: D_P, level: 6, questionType: "SHORT", count: 7 },
+        { domainId: D_P, level: 6, questionType: "MULTI", count: 1 },
+        { domainId: D_I, level: 7, questionType: "SHORT", count: 5 },
+        { domainId: D_X, level: 9, questionType: "SHORT", count: 12 },
+      ],
+      {}
+    );
+    const multi = R.planRoadmapWrite(topics({ counts: withMulti, histogram: withMulti.all }), at(MON));
+    eq("N25/N26 (the review round): 7 recall cards beside one MULTI card at level 6 read 7 of 8 on the paying key, so layer 1 does not reach on cards (the gate's count is the same)", [multi.reaches, keyed(multi).find((r) => r[0] === KP)?.[1]], [[], 7]);
+    // A stored reach on cards (PLANNED, a reachedDay, no note) counts in neither the aim's reach nor Proficiency's
+    // milestones part; the same row held when you began (HELD_AT_START) counts in both, as before.
+    const onCards = R.planRoadmapWrite(topics({ milestones: [{ ...l1, reachedDay: addDays(MON, -1) }] }), at(MON));
+    const held = R.planRoadmapWrite(topics({ milestones: [{ ...l1, reachedDay: addDays(MON, -1), notes: ["HELD_AT_START"] }] }), at(MON));
+    eq(
+      "N26: a stored reach on cards is not the aim's final reach and counts no milestone in Proficiency (reached 0), and it is never stamped again; the same row held when you began counts as before (the aim reached, reached 1)",
+      [onCards.aimReachedDay, PF.parseProficiencyDetail(onCards.proficiency!.detail)?.reached, onCards.reaches, held.aimReachedDay, PF.parseProficiencyDetail(held.proficiency!.detail)?.reached],
+      [null, 0, [], MON, 1]
+    );
+    // Through the writer: the stub client takes the reach as reachOpOf's `reach` (reachedDay set where null, nothing pending).
+    const store = new Store();
+    const client = stubClient(store);
+    const run1 = await R.recordRoadmapReadings(UID, at(MON), { env: ON, caller: "LIFE_CRON", client, loadContext: async () => fromStore(store, topics(), MON) });
+    const day2 = addDays(MON, 1);
+    const run2 = await R.recordRoadmapReadings(UID, at(day2), { env: ON, caller: "LIFE_CRON", client, loadContext: async () => fromStore(store, topics(), day2) });
+    eq(
+      "N26 through the writer: the first run writes layer 1's reach (reachedDay = the day, nothing pending) and the layer keys' rows; the next day's run reaches nothing again (the stored reach stands) and writes no second stamp",
+      [run1.reaches, store.milestones.get("l1"), store.get(KP, MON)?.value, store.get(KI, MON)?.value, run2.reaches, store.milestones.get("l2") ?? null],
+      [1, { reachedDay: MON, reachPendingDay: null }, 8, 5, 0, null]
+    );
+  }
+
   // ═══ Greps: isolation and names ═════════════════════════════════════════
 
   console.log("— greps —");

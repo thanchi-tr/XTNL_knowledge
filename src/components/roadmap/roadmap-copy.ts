@@ -102,7 +102,7 @@ import { payBar } from "@/lib/life-economy";
 // Type only (erased): the chip kinds the short labels name (ui-motion.md §4.6).
 import type { HonestyKind } from "@/components/glyph/HonestyChip";
 // Revision 5, lane 9: the topic map's words (contracts §22.11; ui-motion.md §15).
-import { BREADTH_WORD, type BreadthKey, type Caution, type EmptyLayerOffer, type LayerChange, type PlanKind, type TopicClass, type TopicLayerView, type TopicNote } from "@/lib/roadmap-types";
+import { BREADTH_WORD, OPEN_LEVEL, type BreadthKey, type Caution, type EmptyLayerOffer, type LayerChange, type PlanKind, type TopicClass, type TopicHideView, type TopicLayerView, type TopicNote } from "@/lib/roadmap-types";
 // Revision 5, fix round: the Gemini chain's wait and stop lines (ruling 47).
 import type { RunPhase, TopicChainStop } from "@/lib/roadmap-types";
 
@@ -2610,6 +2610,14 @@ export function layerStateWord(state: TopicLayerView["state"], layer: number, em
 export function layerChosenSr(n: number): string {
   return `${n} in the plan`;
 }
+/** Ruling N32 (a plan): a layer behind the open one folds to its count, "3 done"; its topics sit behind the header's ▸. */
+export function layerDoneWord(n: number): string {
+  return `${n} done`;
+}
+/** Ruling N32: the fold toggle on a plan's layer header (aria-expanded says whether its topics show). */
+export function layerTopicsAria(k: number): string {
+  return `Topics of layer ${k}`;
+}
 /** [Keep these] (D36): glyph-only; its words are in the card Key. */
 export function keepLayerAria(k: number): string {
   return `Keep layer ${k}`;
@@ -2666,8 +2674,10 @@ export function rebreakCostLine(requestsMax: number, left: number): string {
 export const ACCEPT_ALL_WORD = "Accept all";
 /** [Accept all]'s confirm: what it would keep, layer by layer (AcceptTopicChoices.keepAll). */
 export const ACCEPT_ALL_LEAD = "Accept all puts these Gemini names in your plan. Keeping never marks them checked.";
-/** A layer that showed nothing: its names Google hadn't checked, taken so the milestone isn't empty (ruling N17). */
+/** A name Google hadn't checked, listed under its layer (ruling N17; since ruling N30 unticked, with its reason and a per-name tap). */
 export const ACCEPT_ALL_UNCHECKED = "not checked";
+/** Ruling N30: a layer in [Accept all]'s list holding only not-checked names, none tapped yet (the button waits for a tap). */
+export const ACCEPT_ALL_TAP_LINE = "Nothing checked here: tap a name to keep this layer.";
 export function acceptAllLinksLine(n: number): string {
   return `It also keeps ${plural(n, "not-checked link")}.`;
 }
@@ -2681,9 +2691,9 @@ export function aftercareGroupLabel(ord: number): string {
 }
 export const AFTERCARE_KEEP_WORD = "Keep them on Today";
 export const AFTERCARE_ARCHIVE_WORD = "Archive them";
-/** The accept's Domain confirm (§22.14): "Creates 9 Domains in Business & Finance." */
-export function createsDomainsLine(n: number, areaName: string): string {
-  return `Creates ${plural(n, "Domain")} in ${areaName}.`;
+/** The accept's Domain confirm (§22.14): "Creates 9 Domains in Business & Finance." ([Accept all]'s first line too, ruling N30; with no Area name to hand, "Creates 9 Domains.") */
+export function createsDomainsLine(n: number, areaName?: string | null): string {
+  return areaName ? `Creates ${plural(n, "Domain")} in ${areaName}.` : `Creates ${plural(n, "Domain")}.`;
 }
 /** Before the Gemini names among them, listed by name (each a name, exempt). */
 export function geminiNamesAmongLine(): string {
@@ -2716,6 +2726,25 @@ export function afterLayerLine(k: number): string {
 export function repliesOfLine(votes: number, samples: number): string {
   return `${votes} of ${samples} replies`;
 }
+// ── Roadmap rework 1, P2 (ruling N27's page): the lock's parents and the LINK votes under EDGE_DRAW, offered as parents ──
+/** A vote that did not reach EDGE_DRAW, beside the parent it names: "2 of 3 replies" (one word for one count, repliesOfLine's, the Key's; the review round). */
+export function samplesOfLine(votes: number, samples: number): string {
+  return repliesOfLine(votes, samples);
+}
+/** The one-tap pick's full words: "Hidden Markov models builds on Monte Carlo methods · 2 of 3 replies". */
+export function pickParentLine(child: string, parent: string, votes: number, samples: number): string {
+  return `${child} builds on ${parent} · ${samplesOfLine(votes, samples)}`;
+}
+/** A lock parent's spoken count: "3 of 8 cards at level 6", "8 of 8 cards at level 6 · at its floor". */
+export function lockParentSr(cards: number, floor: number, met: boolean): string {
+  return `${cards} of ${floor} cards at level ${OPEN_LEVEL}${met ? " · at its floor" : ""}`;
+}
+/** The pick's toast: "Builds on Monte Carlo methods" (its body names the version; Undo is the accept's). */
+export function pickedParentToast(name: string): string {
+  return `Builds on ${name}`;
+}
+/** The locked node's ▸ heading over its parents ("n of 8" each). */
+export const LOCK_PARENTS_WORD = "Builds on";
 /** A source row: "<title> (from Google)" (SourcesSheet; the sheet claims no host). */
 export function sourceRowText(title: string): string {
   return `${title} (from Google)`;
@@ -2753,6 +2782,34 @@ export const TOPIC_NOTE_WORDS: Readonly<Record<TopicNote, string>> = {
   ADDED_BY_DEEPER: "from Go deeper",
   ADDED_BY_REBREAK: "from Break down again",
 };
+/**
+ * Rulings N30 and N31: why a name sits behind the fold, inline beside it (TopicHideView): the words, and the name a
+ * NEAR_DUPLICATE duplicates ("same as" + the name, or "part of" + the name for a bare tail word, ruling N31 as the review
+ * round narrowed it; the name rendered as a name). An honesty mark (ui-motion §3, D2: exempt from
+ * the budgets, never cut).
+ */
+export function hideReasonWordsOf(h: TopicHideView): { text: string; name: string | null } {
+  switch (h.reason) {
+    case "NEAR_DUPLICATE":
+      return h.sameAs ? { text: "same as", name: h.sameAs } : h.partOf ? { text: "part of", name: h.partOf } : { text: TOPIC_NOTE_WORDS.NEAR_DUPLICATE, name: null };
+    case "UNSURE_LAYER":
+      return { text: TOPIC_NOTE_WORDS.UNSURE_LAYER, name: null };
+    case "LANGUAGE_UNCHECKED":
+      return { text: "language not checked", name: null };
+    case "REGION":
+      return { text: "names a region", name: null };
+    case "VAGUE_FIELD":
+      return { text: "a whole field", name: null };
+    case "WEAK":
+      return { text: "Google linked no clear page", name: null };
+    case "NONE":
+      return { text: "Google linked no page", name: null };
+    case "GROUND_FAILED":
+      return { text: "web check failed", name: null };
+    default:
+      return { text: "web check not run", name: null };
+  }
+}
 export const MATCHES_ORDER_LINE = "matches your order";
 export const HELD_TOPIC_SR = "Held when you began";
 export const KNOWN_TOPIC_SR = "You said you know this";
@@ -2817,6 +2874,8 @@ export const KEEP_LEVEL_PLAN_WORD = "Keep the level plan";
 export const TRACK_ROUTINE_WORD = "Track the routine as its own goal";
 export const TOPIC_PATHS_LABEL = "How to plan it";
 export const WRITE_TOPICS_LINE = "You write the topics, layer by layer, from broad to deep. No Gemini.";
+/** Ruling N33: on a Field aim the level plan's paths ([Build from my numbers], [Write it myself], [Draft with Gemini]) sit behind one ▸ with these words. */
+export const LEVEL_PATHS_WORD = "Level plan";
 export const BREAK_INTO_TOPICS_LINE = "Breaks this plan into a topic map, broad to deep. Your plan stays as it is until you accept the map.";
 /** The same sheet while the topic map's Gemini chain is on (ruling N11): one tap runs Gemini's breakdown. */
 export const BREAK_INTO_TOPICS_GEMINI_LINE = "Gemini breaks this plan into milestones and topics, checked on Google. Your plan stays as it is until you accept the map.";
@@ -2928,7 +2987,26 @@ export const NEXT_ACTION_WORDS = {
   checkDraft: "Check the draft",
   drafting: "Drafting",
   startLater: "Starting milestones arrives with the next update.",
+  // Roadmap rework 1, P2 (rulings N27 and N28): the locked milestone's and the planned layer's one action.
+  study: "Study",
+  addIdea: "Add an idea to",
+  know: "I know this",
+  due: "due",
 } as const;
+/** Ruling N28: "Study Markov chains · 3 of 8 · 4 due" (the gate's count of the floor, then the cards due; none due: no due part). */
+export function studyActionLabel(name: string, cards: number, floor: number, due: number): string {
+  const W = NEXT_ACTION_WORDS;
+  return `${W.study} ${name} · ${cards} of ${floor}${due > 0 ? ` · ${due} ${W.due}` : ""}`;
+}
+/** Ruling N27: the locked milestone's "Review <parent> · 3 due" chip (its full words; the chip shows "Review 3"). */
+export function reviewTopicLabel(name: string, due: number): string {
+  const W = NEXT_ACTION_WORDS;
+  return `${W.review} ${name} · ${due} ${W.due}`;
+}
+/** Ruling N27: the locked milestone's "I know this · <parent>" chip (its full words; the chip shows "I know this"). */
+export function knownChipLabel(name: string): string {
+  return `${NEXT_ACTION_WORDS.know} · ${name}`;
+}
 /** A count with its unit ("3 cards", "1 session"). */
 export function nextCountLine(n: number, unit: "card" | "session" | "step"): string {
   return `${n} ${unit}${n === 1 ? "" : "s"}`;
@@ -2939,7 +3017,17 @@ export function nextActionLabelOf(a: { kind: string; n: number | null; unit: "ca
   const count = a.n != null && a.unit ? nextCountLine(a.n, a.unit) : null;
   switch (a.kind) {
     case "ADD":
+    // Ruling N27: the locked milestone's primary reads as an ADD ("Add 5 cards to Markov chains": the parent that still lacks cards).
+    case "LOCKED":
       return `${W.add} ${count ?? ""}${a.name ? ` to ${a.name}` : ""}`.replace(/ +/g, " ").trim();
+    case "STUDY":
+      return `${W.study}${a.name ? ` ${a.name}` : ""}`;
+    case "ADD_IDEA":
+      return `${W.addIdea}${a.name ? ` ${a.name}` : ""}`;
+    case "REVIEW_TOPIC":
+      return `${W.review}${a.name ? ` ${a.name}` : ""}${count ? ` · ${count}` : ""}`;
+    case "KNOWN":
+      return a.name ? knownChipLabel(a.name) : W.know;
     case "REVIEW":
       return `${W.review} ${count ?? ""}${a.name ? ` in ${a.name}` : ""}`.replace(/ +/g, " ").trim();
     case "PRACTICE":
@@ -2981,9 +3069,9 @@ export function nextActionLabelOf(a: { kind: string; n: number | null; unit: "ca
 /** A secondary chip's words: the verb and the figure ("Review 12", "Add 6", "Tick 1", "Log a score", "Close it on Tasks"). */
 export function nextChipLabelOf(a: { kind: string; n: number | null }): string {
   const W = NEXT_ACTION_WORDS;
-  const verb = a.kind === "ADD" ? W.add : a.kind === "REVIEW" ? W.review : a.kind === "PRACTICE" ? W.practise : a.kind === "STEP" ? W.tick : null;
+  const verb = a.kind === "ADD" || a.kind === "LOCKED" ? W.add : a.kind === "REVIEW" || a.kind === "REVIEW_TOPIC" ? W.review : a.kind === "PRACTICE" ? W.practise : a.kind === "STEP" ? W.tick : null;
   if (verb) return a.n != null ? `${verb} ${a.n}` : verb;
-  return a.kind === "CHECKPOINT" ? W.logScore : a.kind === "CLOSE_ON_TASKS" ? W.closeOnTasks : a.kind === "TASKS" ? W.openTasks : nextActionLabelOf({ kind: a.kind, n: a.n, unit: null, name: null });
+  return a.kind === "CHECKPOINT" ? W.logScore : a.kind === "CLOSE_ON_TASKS" ? W.closeOnTasks : a.kind === "TASKS" ? W.openTasks : a.kind === "KNOWN" ? W.know : nextActionLabelOf({ kind: a.kind, n: a.n, unit: null, name: null });
 }
 /** The hero's line when nothing is open this week. */
 export const NEXT_ALL_DONE_LINE = "Nothing open this week";

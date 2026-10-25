@@ -93,6 +93,9 @@ import {
   type PackSection,
   type RoadmapView,
   type RunView,
+  type MilestoneLockParentView,
+  type MilestoneLockView,
+  type MilestoneTopicView,
   type StartPreview,
   type WeekQuestRow,
 } from "../src/lib/roadmap-types";
@@ -271,9 +274,14 @@ async function main() {
   check("names: no week quest row reads 'Quest n of'", !/Quest \d+ of/i.test(all));
   const rankLines = visible.filter((l) => AIM_RANKS.some((r) => new RegExp(`\\b${r}\\b`).test(l)));
   check("names: no rank line uses 'earn' or 'earns'", rankLines.every((l) => !/\bearns?\b/i.test(l)), rankLines.filter((l) => /\bearns?\b/i.test(l)).join(" | "));
-  check("names: no href to /review anywhere rendered", !/href="\/review/.test(all));
+  // Ruling N28 amends the rule: the one review link is a Domain-scoped run (roadmap-links reviewRunHref), never the bare page.
+  const reviewHrefs = [...all.matchAll(/href="(\/review[^"]*)"/g)].map((m) => m[1]);
+  check("names: no href to the bare /review anywhere rendered; every review href is one Domain's run (/review?view=run&domain=<id>, ruling N28)", reviewHrefs.every((h) => /^\/review\?view=run&amp;domain=[\w-]+$/.test(h)), reviewHrefs.filter((h) => !/^\/review\?view=run&amp;domain=[\w-]+$/.test(h)).slice(0, 3).join(" | "));
   const roadmapSrc = walk("src/components/roadmap").filter((f) => /\.(ts|tsx)$/.test(f));
-  check("names: no roadmap component source links to /review", roadmapSrc.every((f) => !/["'`]\/review/.test(code(read(f)))));
+  check(
+    "names: no roadmap component source links to /review but roadmap-links' one builder, reviewRunHref (the Domain's run; an id that isn't one goes to the roadmap page, never the whole due run: the review round)",
+    roadmapSrc.every((f) => f.endsWith("roadmap-links.ts") || !/["'`]\/review/.test(code(read(f)))) && /export function reviewRunHref\(domainId: string\): string \{\s*return ID\.test\(domainId\) \? `\/review\?view=run&domain=\$\{encodeURIComponent\(domainId\)\}` : ROADMAP_HREF;/.test(code(read("src/components/roadmap/roadmap-links.ts")))
+  );
   check("names: 'Mastered' / 'mastery' never in roadmap copy; ⬡ only via statedPayoutCopy", !/mastery/i.test(code(read("src/components/roadmap/roadmap-copy.ts"))) && !/⬡/.test(code(read("src/components/roadmap/roadmap-copy.ts"))));
   check("names: no 'Ladder', 'Rung', 'Tier', 'Waypoint' or 'Title' word in rendered roadmap copy", visible.every((l) => !/\b(Ladder|Rung|Tier|Waypoint)\b/.test(l)));
   // Blueprint P15 (D11, one vocabulary): the week quests are the main quest's sprint ("This week's sprint", short "Sprint").
@@ -1551,15 +1559,18 @@ async function main() {
           gates: { gemini: true },
         })
       );
+      // Ruling N33: on a Field Area the level plan's paths sit behind one ▸ (data-level-paths), as secondaries; [Write the topics] is the submit.
       check(
-        "draft with Gemini: the Field form says all three parts it will ask (6 lines, the Domains, a practice per stage)",
-        /class="btn btn-primary lg"[^>]*>Draft with Gemini</.test(asking) &&
+        "draft with Gemini: the Field form says all three parts it will ask (6 lines, the Domains, a practice per stage); since ruling N33 Draft with Gemini is a secondary behind the ▸ and Write the topics is the submit",
+        /<details class="rm-adv rm-in-more" data-level-paths="">[\s\S]*?class="btn btn-secondary lg"[^>]*>Draft with Gemini</.test(asking) &&
+          /<button type="submit" class="btn btn-primary lg"[^>]*>Write the topics</.test(asking) &&
           flat(asking).includes("Gemini will put your 6 outline lines in order, suggest which of your other Domains the aim may need, and choose at most one practice per stage from the app's options; the app builds the rest and writes every word.")
       );
       check(
-        "draft with Gemini: nothing to ask (practices off, no outline, every Domain chosen) — no Draft with Gemini, Build from my numbers is the submit, and the line says why",
+        "draft with Gemini: nothing to ask (practices off, no outline, every Domain chosen) — no Draft with Gemini, Build from my numbers alone behind the ▸ (ruling N33: Write the topics is the submit), and the line says why",
         !nothing.includes("Draft with Gemini") &&
-          /<button type="submit" class="btn btn-primary lg"[^>]*>Build from my numbers</.test(nothing) &&
+          /<button type="submit" class="btn btn-primary lg"[^>]*>Write the topics</.test(nothing) &&
+          /data-level-paths="">[\s\S]*?class="btn btn-secondary lg"[^>]*>Build from my numbers</.test(nothing) &&
           flat(nothing).includes(copy.GEMINI_NOTHING_TO_ASK_LINE) &&
           !flat(nothing).includes("Gemini will"),
         flat(nothing).slice(Math.max(0, flat(nothing).indexOf("Build from my numbers") - 20), flat(nothing).indexOf("Build from my numbers") + 260)
@@ -4874,8 +4885,11 @@ async function main() {
       check("measures (mosaic): no '+0/25 since you began' wall is visible on the page", !/\+0\/25 since you began/.test(vis("many-measures")));
     }
     check(
-      "topic map (step by step): the layers up to the first not done show, the rest hidden in the markup behind 'Show layer k'; [Redo topics] still reaches them",
-      /stepHidden=\{i > stepThrough\}/.test(read("src/components/roadmap/TopicMap.tsx")) && /hidden=\{stepHidden \|\| undefined\}/.test(read("src/components/roadmap/LayerBand.tsx"))
+      "topic map (step by step, a draft): the layers up to the first not done show, the rest hidden in the markup behind 'Show layer k'; [Redo topics] still reaches them; a plan folds instead (ruling N32: every band shown, the step-through a draft's)",
+      /stepHidden=\{i > stepThrough\}/.test(read("src/components/roadmap/TopicMap.tsx")) &&
+        /hidden=\{stepHidden \|\| undefined\}/.test(read("src/components/roadmap/LayerBand.tsx")) &&
+        /const stepThrough = !draft \? map\.layers\.length - 1 : /.test(read("src/components/roadmap/TopicMap.tsx")) &&
+        /fold=\{foldOf\(i\)\}/.test(read("src/components/roadmap/TopicMap.tsx"))
     );
     check("R3 rail: `reach` keys on the plan's basis (no surface), and a user's own Start (goal id null → set) bumps the rail's start tick", /<RouteRail nodes=\{stepped\} seenKey=\{seenBaseOf\(seen \?\? null, "plan"\)\} startTick=\{startTick\}/.test(read("src/components/roadmap/RoadmapView.tsx")) && /tick: !startSeen\.goalId && goalId \? startSeen\.tick \+ 1 : startSeen\.tick/.test(read("src/components/roadmap/RoadmapView.tsx")));
     check("R3 rail: the top rank's line (Paragon, or what keeps it closed) sits in the card's (i), in the markup", page("active").includes("Reaching the aim gives the Aim rank Paragon.") && !actVis.includes("Reaching the aim gives") && page("depth-lowered").includes("Top rank on this plan: Expert"));
@@ -6757,6 +6771,80 @@ async function main() {
       fail9h.join(" | ")
     );
 
+    // ── 3b. Rulings N30 and N31 (roadmap rework 1, P3): a hidden row says why, inline; [Accept all] lists the not-checked
+    //    names unticked with a per-name tap and says "Creates n Domains" first; its keepAll never carries a not-checked name ──
+    const fail30: string[] = [];
+    const whyOf = (html: string) => [...html.matchAll(/<span class="rm-tm-why" data-wc="honest" data-hide="([A-Z_]+)">([\s\S]*?)<\/span>/g)].map((m) => [m[1], m[2]]);
+    for (const l of dmap9.layers) {
+      const names = l.topics.filter((r) => r.cls === "NOT_CHECKED");
+      if (names.length === 0) continue;
+      const open = R(createElement(LayerBand, { map: dmap9, layer: l, draft: true, trace: { self: null, related: new Set<string>() }, onTrace: () => {}, onMore: () => {}, hiddenOpen: true }));
+      const ul = /<ul class="rm-tm-rows rm-tm-rows-hidden">[\s\S]*?<\/ul>/.exec(open)?.[0] ?? "";
+      const lis = ul.match(/<li [\s\S]*?<\/li>/g) ?? [];
+      for (const r of names) {
+        const li = lis.find((x) => x.includes(`data-key="${r.key}"`)) ?? "";
+        const why = whyOf(li);
+        if (!r.hide || why.length !== 1 || why[0][0] !== r.hide.reason) fail30.push(`${r.key}: reason ${JSON.stringify(why)}`);
+        if (r.hide?.sameAs && !li.includes(`· same as <span data-wc="name">${r.hide.sameAs}</span>`)) fail30.push(`${r.key}: no "same as ${r.hide.sameAs}"`);
+        const w = wc9.countAppWords(li, { width: 344 }).words;
+        if (w.length > 0) fail30.push(`${r.key}: app words «${w.join(" ")}»`);
+      }
+      // a shown row says nothing of the kind
+      if (whyOf(open.replace(ul, "")).length > 0) fail30.push(`layer ${l.layer}: a reason outside the fold`);
+    }
+    const dup30 = dmap9.layers[0].topics.find((r) => r.key === "T9");
+    if (dup30?.hide?.reason !== "NEAR_DUPLICATE" || dup30.hide.sameAs !== "Alpha one") fail30.push("the fixture: T9 is a NEAR_DUPLICATE of Alpha one");
+    check(
+      "lane 9 (rulings N30, N31): each revealed NOT_CHECKED row says why it sat behind the fold, inline under its name as an honesty mark (data-wc=\"honest\", data-hide=<reason>), a duplicate reading «same as <name>» with the shown name as a name; the row still holds no app word; no shown row carries one",
+      fail30.length === 0,
+      fail30.join(" | ")
+    );
+    const ch30 = tm9.acceptTopicChoicesOf(dmap9, { keepAll: true, aftercare: null });
+    const list30 = tm9.acceptAllListOf(dmap9);
+    check(
+      "lane 9 (ruling N30): [Accept all]'s keepAll carries no NOT_CHECKED name and ticks none; the list carries layer 3's one GROUND-hidden name (Gamma hidden two, NONE) as `unchecked` with its key and reason, never a name the agreement hid (T9 NEAR_DUPLICATE, T12 UNSURE_LAYER); no layer of the draft is bare (each listed layer shows a row)",
+      !!ch30.keepAll &&
+        !ch30.keepAll.names.some((n) => hidden9.some((r) => r.name === n)) &&
+        !tm9.acceptAllTickedOf(dmap9, list30).some((r) => r.cls === "NOT_CHECKED") &&
+        JSON.stringify(list30.find((x) => x.layer === 3)?.unchecked) === JSON.stringify([{ key: "T13", name: "Gamma hidden two", reason: "NONE" }]) &&
+        !list30.some((x) => (x.unchecked ?? []).some((u) => u.key === "T9" || u.key === "T12")) &&
+        tm9.acceptAllBareLayersOf(dmap9, list30).length === 0 &&
+        tm9.acceptAllBareLayersOf({ layers: [{ ...dmap9.layers[2], topics: dmap9.layers[2].topics.filter((r) => r.cls === "NOT_CHECKED") }] }, [{ layer: 3, names: [], unchecked: [{ key: "T13", name: "Gamma hidden two", reason: "NONE" }] }]).join() === "3",
+      JSON.stringify({ keepAll: ch30.keepAll, list: list30, bare: tm9.acceptAllBareLayersOf(dmap9, list30) })
+    );
+    const mapSrc30 = readFileSync(join(process.cwd(), "src/components/roadmap/TopicMap.tsx"), "utf8");
+    const sheetSrc30 = readFileSync(join(process.cwd(), "src/components/roadmap/TopicSheet.tsx"), "utf8");
+    check(
+      "lane 9 (ruling N30): the [Accept all] sheet (a portal) says \"Creates n Domains\" first (createsDomainsLine over acceptTopicChoicesOf's create), then the lead; each not-checked name is a 44 px checkbox (rm-tm-ck, inPlanAria) whose tap is chooseTopic on that key, beside its name and HideReason «not checked · …»; a bare layer says so and the button waits (disabled while bareLayers remain); the topic ▸ lists the reason too",
+      /<div className="rm-stack" style=\{\{ gap: 10 \}\} data-accept-all="">\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?<p className="t-meta" style=\{\{ margin: 0 \}\} data-creates="">\s*\{createsDomainsLine\(acceptChoices\.create, areaName\)\}\s*<\/p>\s*<p className="t-meta" style=\{\{ margin: 0 \}\}>\s*\{ACCEPT_ALL_LEAD\}/.test(mapSrc30) &&
+        /const acceptChoices = acceptTopicChoicesOf\(map, \{ keepAll: true, aftercare: liveMilestone != null \? aftercare : null \}\);/.test(mapSrc30) &&
+        /<input type="checkbox" className="rm-avd-box" checked=\{false\} disabled=\{pending\} aria-label=\{inPlanAria\(u\.name\)\} onChange=\{\(\) => choose\(u\.key, true\)\} \/>/.test(mapSrc30) &&
+        /<HideReason hide=\{u\} lead=\{ACCEPT_ALL_UNCHECKED\} \/>/.test(mapSrc30) &&
+        /\{bareLayers\.includes\(x\.layer\) && \(\s*<p className="t-meta" data-bare="">\s*\{ACCEPT_ALL_TAP_LINE\}/.test(mapSrc30) &&
+        /disabled=\{pending \|\| \(liveMilestone != null && aftercare == null\) \|\| \(needsOver && !overKept\) \|\| bareLayers\.length > 0\} onClick=\{acceptAll\}/.test(mapSrc30) &&
+        /\.rm-tm-unck li \{ display: flex; align-items: center; gap: 4px; padding: 0; min-height: 44px; \}/.test(readFileSync(join(process.cwd(), "src/components/roadmap/roadmap.css"), "utf8")) &&
+        /\{row\.hide && \(\s*<li>\s*<HideReason hide=\{row\.hide\} lead=\{ACCEPT_ALL_UNCHECKED\} \/>\s*<\/li>\s*\)\}/.test(sheetSrc30),
+      "TopicMap.tsx / TopicSheet.tsx / roadmap.css"
+    );
+
+    // ── 3c. Ruling N29 (roadmap rework 1, P3): the Review hub's Study card (RoadmapFocus) never shows Gemini's milestone title
+    //    bare: LayerBand's visible mark and its spoken label ride with it; code's "Layer k" stays plain ──
+    {
+      const { RoadmapFocus } = await import("../src/components/workspace/RoadmapFocus");
+      const topic29 = { key: "T1", name: "Diversification", domainId: "d-div", cards: 3, floor: 8, due: 4, live: 12, done: false };
+      const focusOf = (geminiTitle: boolean) => ({ roadmapId: "rm1", goal: "Manage my portfolio", fieldId: "f-fin", fieldName: "Finance", layer: 2, layers: 4, title: geminiTitle ? "Construct strategic asset allocation models" : "Layer 2", geminiTitle, current: topic29, rest: [], done: 0, total: 1, layerDue: 4 });
+      const gem29 = R(createElement(RoadmapFocus, { focus: focusOf(true), onReview: () => {} }));
+      const code29 = R(createElement(RoadmapFocus, { focus: focusOf(false), onReview: () => {} }));
+      const h2Of = (html: string) => /<h2 id="rv-focus-h"[^>]*>[\s\S]*?<\/h2>/.exec(html)?.[0] ?? "";
+      check(
+        "roadmap focus (ruling N29): Gemini's title renders with data-gemini, its words a name, the visible pv.suggest mark and the spoken «Gemini's milestone · not checked»; code's \"Layer 2\" renders bare of all three",
+        /^<h2 id="rv-focus-h" class="rv-focus-title" data-gemini=""><span data-wc="name">Construct strategic asset allocation models<\/span><svg [^>]*data-g="pv\.suggest"[\s\S]*?<span class="sr-only">Gemini(?:&#x27;|')s milestone · not checked<\/span><\/h2>$/.test(h2Of(gem29)) &&
+          h2Of(code29) === '<h2 id="rv-focus-h" class="rv-focus-title">Layer 2</h2>' &&
+          copy.GEMINI_MILESTONE_LABEL === "Gemini's milestone · not checked",
+        JSON.stringify({ gem: h2Of(gem29), code: h2Of(code29) })
+      );
+    }
+
     // ── 4. A layer's milestone (§22.20 ruling N8): MAP's title, hurdle and target under the header, Gemini's words
     //    (data-wc="name"), marked «Gemini's milestone · not checked»; the header block stays within row 13's 6 app words;
     //    a layer with no milestone renders none ──
@@ -6783,6 +6871,198 @@ async function main() {
       failMs.length === 0,
       failMs.join(" | ")
     );
+
+    // ── 5. Roadmap rework 1, P4 (contracts §22.20 rulings N32 and N33): the plan page expands only the open layer; the intake's
+    //    primary on a Field aim is [Write the topics] with the level plan's paths behind one ▸ ──
+    {
+      const page32 = (s: FixtureState) => renders.get(s)?.page ?? "";
+      const band32 = (html: string, layer: number) => new RegExp(`<section class="rm-tm-band[^"]*" data-layer="${layer}"[^>]*>[\\s\\S]*?</section>`).exec(html)?.[0] ?? "";
+      const foldOf32 = (html: string, layer: number) => /data-fold="(done|header)"/.exec(/<section class="rm-tm-band[^"]*" data-layer="\d"[^>]*>/.exec(band32(html, layer))?.[0] ?? "")?.[1] ?? null;
+      const word32 = (b: string) => /<span class="rm-tm-sw" data-lo="word">([^<]*)<\/span>/.exec(b)?.[1] ?? "";
+      const rowsHidden32 = (b: string) => /<ul class="rm-tm-rows" hidden="">/.test(b) && !/<ul class="rm-tm-rows">/.test(b);
+      const rowsShown32 = (b: string) => /<ul class="rm-tm-rows">/.test(b) && !/<ul class="rm-tm-rows" hidden="">/.test(b);
+      const toggle32 = (b: string, k: number) => new RegExp(`<button type="button" class="rm-tm-foldl" aria-label="${copy.layerTopicsAria(k)}" aria-expanded="false">`).test(b);
+      const hd32 = (b: string) => /<div class="rm-tm-hd" data-wc-block="topic-layer">[\s\S]*?<\/div>(?=<ul class="rm-tm-rows|<\/section>)/.exec(b)?.[0] ?? "";
+      const plan32 = page32("topic-map-plan");
+      const b32 = [1, 2, 3, 4].map((k) => band32(plan32, k));
+      check(
+        "ruling N32 (topic-map-plan): only the open layer is expanded: layer 1 folds to «Layer 1 · 3 done» (its count in place of the state word and figure, its rows hidden), layer 2 shows its rows with no fold, layers 3 and 4 fold to their header («after 2», «after 3», the figure kept, rows hidden); each folded layer's 44 px ▸ is 'Topics of layer k', aria-expanded false",
+        b32.every((b) => b !== "") &&
+          foldOf32(plan32, 1) === "done" &&
+          word32(b32[0]) === copy.layerDoneWord(3) &&
+          !/class="rm-tm-n"/.test(hd32(b32[0])) &&
+          rowsHidden32(b32[0]) &&
+          toggle32(b32[0], 1) &&
+          foldOf32(plan32, 2) === null &&
+          word32(b32[1]) === "open" &&
+          rowsShown32(b32[1]) &&
+          !/rm-tm-foldl/.test(b32[1]) &&
+          foldOf32(plan32, 3) === "header" &&
+          word32(b32[2]) === "after 2" &&
+          /class="rm-tm-n"/.test(hd32(b32[2])) &&
+          rowsHidden32(b32[2]) &&
+          toggle32(b32[2], 3) &&
+          foldOf32(plan32, 4) === "header" &&
+          word32(b32[3]) === "after 3" &&
+          rowsHidden32(b32[3]) &&
+          toggle32(b32[3], 4) &&
+          /\.rm-tm-foldl \{ display: inline-grid; place-items: center; width: 44px; height: 44px;/.test(read("src/components/roadmap/roadmap.css")),
+        JSON.stringify([1, 2, 3, 4].map((k) => [k, foldOf32(plan32, k), word32(b32[k - 1]), rowsHidden32(b32[k - 1])]))
+      );
+      const folded32 = page32("topic-map-folded");
+      const locked32 = page32("topic-locked");
+      // The review round: two layers reading OPEN (layer 1 closed short with its topics at the floor beside layer 2 under way): the
+      // current milestone's layer (TopicMap currentLayer, the hero's) is the one expanded; the earlier OPEN layer folds to its header with its state word.
+      const base32 = roadmapFixture("topic-map-plan").view!;
+      const twoOpen32 = R(
+        createElement(RoadmapScreen, {
+          view: { ...base32, current: { ...base32.current!, milestone: { ...base32.current!.milestone, layer: 2, chainRole: "LAYER" as const } }, topicMap: { ...base32.topicMap!, layers: base32.topicMap!.layers.map((l) => (l.layer === 1 ? { ...l, state: "OPEN" as const } : l)) } },
+          startPreview: null,
+          gates: roadmapFixture("topic-map-plan").gates,
+        })
+      );
+      check(
+        "ruling N32 (topic-map-folded, topic-locked, topic-study; the review round): the open layer moves with the plan: layer 3 under way folds 1 and 2 to «3 done» and «2 done» and 4 to its header; a locked layer 2 leaves layer 1 (the one open) expanded and folds 2–4 to their header; with layers 1 and 2 both OPEN the current milestone's (2) is expanded and layer 1 folds to its header reading «open»; a draft is never folded and keeps its step-through, a plan has no 'Show layer k'",
+        foldOf32(twoOpen32, 1) === "header" &&
+          word32(band32(twoOpen32, 1)) === "open" &&
+          rowsHidden32(band32(twoOpen32, 1)) &&
+          foldOf32(twoOpen32, 2) === null &&
+          rowsShown32(band32(twoOpen32, 2)) &&
+          foldOf32(twoOpen32, 3) === "header" &&
+          /currentLayer=\{view\.current\?\.milestone\.layer \?\? null\}/.test(code(read("src/components/roadmap/RoadmapView.tsx"))) &&
+          foldOf32(folded32, 1) === "done" &&
+          foldOf32(folded32, 2) === "done" &&
+          word32(band32(folded32, 2)) === copy.layerDoneWord(2) &&
+          foldOf32(folded32, 3) === null &&
+          rowsShown32(band32(folded32, 3)) &&
+          foldOf32(folded32, 4) === "header" &&
+          foldOf32(locked32, 1) === null &&
+          rowsShown32(band32(locked32, 1)) &&
+          [2, 3, 4].every((k) => foldOf32(locked32, k) === "header") &&
+          foldOf32(page32("topic-study"), 1) === "done" &&
+          foldOf32(page32("topic-study"), 2) === null &&
+          !/data-fold=/.test(page32("topic-map-draft")) &&
+          page32("topic-map-draft").includes(copy.showNextLayerLine(2, 2)) &&
+          !/rm-tm-step|rm-tm-foldl\b[^>]*>[\s\S]{0,40}Show layer/.test(plan32) &&
+          !plan32.includes("Show layer"),
+        JSON.stringify({ folded: [1, 2, 3, 4].map((k) => foldOf32(folded32, k)), locked: [1, 2, 3, 4].map((k) => foldOf32(locked32, k)), twoOpen: [1, 2, 3, 4].map((k) => foldOf32(twoOpen32, k)) })
+      );
+      // One provenance chip per layer (its header's who-word, D37), none on a row: a row's own chip lives in its ▸ (TopicSheet).
+      const chips32 = (html: string) => [1, 2, 3, 4].map((k) => (hd32(band32(html, k)).match(/data-hc="/g) ?? []).length);
+      const rowChips32 = (html: string) => (html.match(/<li class="rm-tm-row[^"]*"[\s\S]*?<\/li>/g) ?? []).filter((li) => /data-hc="/.test(li)).length;
+      check(
+        "ruling N32: one provenance chip per layer (the header's who-word chip stays visible on a folded layer) and none on a topic row (the row's chip is in its ▸) on topic-map-plan, topic-map-folded and topic-chain",
+        [plan32, folded32, page32("topic-chain")].every((h) => chips32(h).every((n) => n === 1) && rowChips32(h) === 0) && !/hidden=""[^>]*>[\s\S]{0,200}<div class="rm-tm-h2">/.test(band32(plan32, 1)),
+        JSON.stringify([chips32(plan32), chips32(folded32), rowChips32(plan32)])
+      );
+      const visibleRows32 = (html: string) => (html.match(/<ul class="rm-tm-rows">[\s\S]*?<\/ul>/g) ?? []).reduce((n, ul) => n + (ul.match(/<li class="rm-tm-row/g) ?? []).length, 0);
+      const allRows32 = (html: string) => (html.match(/<li class="rm-tm-row/g) ?? []).length;
+      console.log(`  · N32 note: the topic-map-plan page reads ${wc9.countAppWords(plan32, { width: 344 }).count} app words at 344 (74 before the fold), ${visibleRows32(plan32)} of its ${allRows32(plan32)} topic rows on screen (9 of 9 before); topic-chain ${wc9.countAppWords(page32("topic-chain"), { width: 344 }).count} (75 before)`);
+      r0Gate("words", WORD_BUDGET_ROWS.filter((r) => r.id.startsWith("s32-")).map((r) => r.id), "N32");
+
+      // Ruling N33: the intake's primary on a Field aim.
+      const intake33 = (s: FixtureState) => renders.get(s)?.intake ?? "";
+      const sticky33 = (h: string) => /<div class="rm-sticky"[\s\S]*?<\/form>/.exec(h)?.[0] ?? "";
+      const details33 = (h: string) => /<details class="rm-adv rm-in-more" data-level-paths="">[\s\S]*?<\/details>/.exec(h)?.[0] ?? "";
+      const outside33 = (h: string) => sticky33(h).replace(details33(h), "");
+      const depth33 = intake33("intake-depth");
+      const topics33 = intake33("intake-topics");
+      check(
+        "ruling N33 (intake-depth: a Field aim, no key): [Write the topics] is the form's submit and primary, no [Break it down] (the chain is off), and the level plan's paths ([Build from my numbers], [Write it myself], «from your numbers») sit in one closed ▸ «Level plan» after it, none outside it",
+        /<button type="submit" class="btn btn-primary lg"[^>]*>Write the topics</.test(outside33(depth33)) &&
+          !depth33.includes("Break it down") &&
+          (depth33.match(/data-level-paths=""/g) ?? []).length === 1 &&
+          !/<details class="rm-adv rm-in-more" data-level-paths="" open/.test(depth33) &&
+          new RegExp(`<summary><svg[^>]*>[\\s\\S]*?</svg>${copy.LEVEL_PATHS_WORD}</summary>`).test(details33(depth33)) &&
+          /class="btn btn-secondary lg"[^>]*>Build from my numbers</.test(details33(depth33)) &&
+          /class="btn btn-secondary lg"[^>]*>Write it myself</.test(details33(depth33)) &&
+          /data-hc="no-key"/.test(details33(depth33)) &&
+          !/Build from my numbers|Write it myself|data-hc="no-key"|type="submit"[^>]*>Draft with Gemini/.test(outside33(depth33)) &&
+          depth33.indexOf(">Write the topics<") < depth33.indexOf("data-level-paths") &&
+          depth33.includes(copy.WRITE_TOPICS_LINE),
+        sticky33(depth33).slice(0, 400)
+      );
+      check(
+        "ruling N33 (intake-topics: a Field aim, a key, the chain on): [Write the topics] the submit, [Break it down] a secondary beside it before the ▸, and behind the ▸ the Gemini path's lanes, [Draft with Gemini], [Build from my numbers] and «Google may use this»; no [Write it myself]",
+        /<button type="submit" class="btn btn-primary lg"[^>]*>Write the topics</.test(outside33(topics33)) &&
+          /class="btn btn-secondary lg"[^>]*>Break it down</.test(outside33(topics33)) &&
+          topics33.indexOf(">Break it down<") < topics33.indexOf("data-level-paths") &&
+          /class="rm-in-lanes"/.test(details33(topics33)) &&
+          !/class="rm-in-lanes"/.test(outside33(topics33)) &&
+          /class="btn btn-secondary lg"[^>]*>Draft with Gemini</.test(details33(topics33)) &&
+          /class="btn btn-secondary lg"[^>]*>Build from my numbers</.test(details33(topics33)) &&
+          /data-hc="data"/.test(details33(topics33)) &&
+          !topics33.includes("Write it myself"),
+        sticky33(topics33).slice(0, 400)
+      );
+      check(
+        "ruling N33: a track aim keeps its primary ([Build from my numbers] the submit on intake-confirm, no ▸, no [Write the topics]); the blank intake too",
+        (["intake-confirm", "intake", "no-key"] as const).every((s) => /<button type="submit" class="btn btn-primary lg"[^>]*>Build from my numbers</.test(intake33(s)) && !intake33(s).includes("data-level-paths") && !intake33(s).includes("Write the topics")) &&
+          /void submit\(topicPrimary \? "TOPICS" : askGemini \? "GEMINI" : "STARTER"\);/.test(code(read("src/components/roadmap/RoadmapForm.tsx")))
+      );
+      // The tap budget: on a Field aim the topics path is one tap (the submit), [Break it down] one, the level plan's paths two (the 44 px summary, then the button).
+      const taps33 = (h: string, label: string) => (new RegExp(`>${label}<`).test(outside33(h)) ? 1 : new RegExp(`>${label}<`).test(details33(h)) ? 2 : null);
+      check(
+        "ruling N33 tap budget: on a Field aim [Write the topics] is 1 tap, [Break it down] 1, [Build from my numbers] and [Write it myself] 2 (a closed 44 px ▸, then the button); on a track aim [Build from my numbers] is 1",
+        taps33(depth33, "Write the topics") === 1 &&
+          taps33(depth33, "Build from my numbers") === 2 &&
+          taps33(depth33, "Write it myself") === 2 &&
+          taps33(topics33, "Break it down") === 1 &&
+          taps33(topics33, "Draft with Gemini") === 2 &&
+          taps33(intake33("intake-confirm"), "Build from my numbers") === 1 &&
+          /\.rm-adv > summary \{ min-height: 44px;/.test(read("src/components/roadmap/roadmap.css")) &&
+          /\.rm-in-more \{ flex-basis: 100%;/.test(read("src/components/roadmap/roadmap.css")),
+        JSON.stringify({ depth: [taps33(depth33, "Write the topics"), taps33(depth33, "Build from my numbers")], topics: [taps33(topics33, "Break it down"), taps33(topics33, "Draft with Gemini")] })
+      );
+      console.log(`  · N33 note: the intake reads ${(["intake-depth", "intake-empty-library", "intake-left-out", "intake-topics"] as const).map((s) => `${s} ${wc9.countAppWords(intake33(s), { width: 344 }).count}`).join(", ")} app words at 344 (120, 87, 80 before ruling N33; intake-topics is new)`);
+      // Ruling N30's list and ruling N28's hero on the new fixtures: the pure builders over the fixture data, and the rendered hero.
+      const accept33 = roadmapFixture("topic-accept-all");
+      const list33 = tm9.acceptAllListOf(accept33.topicMap!.map);
+      check(
+        "ruling N30 (topic-accept-all): the fixture's [Accept all] list carries layer 3's and 4's not-checked names with their reasons and layer 5 (not-checked names only) as a bare layer the button waits on; the map card opens the sheet at mount (fixtureOpen 'accept')",
+        JSON.stringify(list33.map((x) => [x.layer, x.names.length, (x.unchecked ?? []).map((u) => `${u.key}:${u.reason}`)])) === JSON.stringify([[1, 2, []], [2, 4, []], [3, 3, ["T13:NONE"]], [4, 1, ["T16:GROUND_FAILED"]], [5, 0, ["T20:NONE", "T21:GROUND_FAILED"]]]) &&
+          JSON.stringify(tm9.acceptAllBareLayersOf(accept33.topicMap!.map, list33)) === "[5]" &&
+          accept33.topicMap!.open?.sheet === "accept" &&
+          /useState\(fixtureOpen\?\.sheet === "accept"\)/.test(read("src/components/roadmap/TopicMap.tsx")),
+        JSON.stringify(list33)
+      );
+      const hero33 = (s: FixtureState) => /<[^>]*data-wc-block="next-action"[\s\S]*?rm-next-go[^>]*>[\s\S]*?<\/a>/.exec(page32(s))?.[0] ?? "";
+      const vis33 = (h: string) => wc9.visibleText(h, { width: 344 }).replace(/\s+/g, " ").trim();
+      check(
+        "rulings N27 and N28 on the new fixtures: topic-locked's hero reads [Add 3 cards to Alpha one] with 'I know this' and 'Review 3'; topic-study's hero reads 'Study Beta one · 3 of 8 · 4 due' to /review?view=run&domain=d-T3; topic-locked's rail lists Alpha one '5 of 8' first on layer 2's ▸",
+        /data-next="LOCKED"[^>]*href="\/add\?domain=d-T1"/.test(hero33("topic-locked")) &&
+          vis33(hero33("topic-locked")).endsWith("Add 3 cards to Alpha one") &&
+          /<span class="sr-only">I know this · Alpha one<\/span>/.test(page32("topic-locked")) &&
+          /<span class="sr-only">Review Alpha one · 3 due<\/span>/.test(page32("topic-locked")) &&
+          /data-next="STUDY"[^>]*href="\/review\?view=run&amp;domain=d-T3"/.test(hero33("topic-study")) &&
+          vis33(hero33("topic-study")).endsWith("Study Beta one · 3 of 8 · 4 due") &&
+          /<ul class="rm-basis rm-lock-list"><li><span data-wc="name"[^>]*>Alpha one<[\s\S]*?aria-label="5 of 8 cards at level 6">5 of 8<\/span>/.test(page32("topic-locked")),
+        JSON.stringify([vis33(hero33("topic-locked")), vis33(hero33("topic-study"))])
+      );
+      // The review round: a Gemini-named Domain's name on the hero carries pv.named (DomainName), as every surface outside the map
+      // does (§22.11, ruling 67); and the hero's primary says what Today's one action and GET /quests' line say (studyMainQuestActionOf
+      // over the lock's first unmet parent, else the study topic: one builder, next-action's).
+      const { studyMainQuestActionOf: mqOf33 } = await import("../src/components/today/main-quest-card");
+      const { nextActionOf: naOf33, lockedParentOf: lpOf33, studyTopicOf: stOf33 } = await import("../src/components/roadmap/next-action");
+      const todayOf33 = (s: FixtureState): string | null => {
+        const v = roadmapFixture(s).view!;
+        const parent = lpOf33(v.current!);
+        const t = parent ?? stOf33(v, v.current!);
+        if (!t || !t.domainId) return null;
+        return mqOf33({ key: t.key, name: t.name, domainId: t.domainId, fieldId: null, cards: t.cards, floor: t.floor, due: t.due ?? 0, layer: 0, geminiNamed: t.geminiNamed, ...(parent ? { locked: true } : {}) }).label;
+      };
+      check(
+        "rulings N27 and N28 (the review round): the hero's Gemini-named Domain carries pv.named (one data-named span in topic-locked's and topic-study's primary, 'named by Gemini' spoken once there), and the hero's primary reads as Today's one action (studyMainQuestActionOf over the lock's parent, else the study topic) on both fixtures",
+        (hero33("topic-locked").match(/data-named=""/g) ?? []).length === 1 &&
+          (hero33("topic-study").match(/data-named=""/g) ?? []).length === 1 &&
+          (hero33("topic-locked").match(/named by Gemini/g) ?? []).length === 1 &&
+          naOf33(roadmapFixture("topic-locked").view!).primary.label === todayOf33("topic-locked") &&
+          naOf33(roadmapFixture("topic-study").view!).primary.label === todayOf33("topic-study") &&
+          todayOf33("topic-locked") === "Add 3 cards to Alpha one" &&
+          todayOf33("topic-study") === "Study Beta one · 3 of 8 · 4 due",
+        JSON.stringify([todayOf33("topic-locked"), todayOf33("topic-study"), (hero33("topic-locked").match(/data-named=""/g) ?? []).length])
+      );
+    }
   }
   // ===== /Rev 5 lane 9 =====
 
@@ -7012,6 +7292,26 @@ async function main() {
     const shapeN = (x: ReturnType<typeof na.nextActionOf>) => JSON.stringify({ kind: x.primary.kind, label: x.primary.label, do: x.primary.do, chips: x.secondary.map((c) => `${c.kind}:${c.short}`) });
     const want = (kind: string, label: string, d: unknown, chips: string[] = []) => JSON.stringify({ kind, label, do: d, chips });
     const NEW = { kind: "href", href: "/you/roadmap/new" };
+    // Rulings N27 and N28: a planned TOPICS layer's topics ("n of 8") and its lock on the accepted (Start off) and start-refit (Start on) fixtures.
+    const topicsN = (due: number, done = false): MilestoneTopicView[] => [
+      { key: "T1", lineageId: "l1", name: "Bayes rule", domainId: "d-br", cards: 8, floor: 8, due: 0, held: false, skipped: false, done: true, geminiNamed: true },
+      { key: "T3", lineageId: "l3", name: "Markov chains", domainId: "d-mc", cards: done ? 8 : 3, floor: 8, due, held: false, skipped: false, done, geminiNamed: true },
+    ];
+    const lockN = (p: Partial<MilestoneLockParentView> = {}): MilestoneLockView => ({
+      afterLayer: 1,
+      wholeLayer: true,
+      parents: [
+        { key: "T3", name: "Markov chains", domainId: "d-mc", cards: 3, floor: 8, due: 3, held: false, skipped: false, met: false, geminiNamed: true, ...p },
+        { key: "T1", name: "Bayes rule", domainId: "d-br", cards: 8, floor: 8, due: 0, held: false, skipped: false, met: true, geminiNamed: true },
+      ],
+      suggestions: [],
+    });
+    const planned = (live: boolean): RoadmapView => (live ? vN("start-refit") : vN("accepted"));
+    const lockedV = (live: boolean, p: Partial<MilestoneLockParentView> = {}): RoadmapView => ({ ...planned(live), planEdit: null, current: { ...planned(live).current!, topics: topicsN(0), lock: lockN(p) } });
+    const studyV = (p: { due: number }): RoadmapView => ({ ...vN("accepted"), planEdit: null, current: { ...vN("accepted").current!, topics: topicsN(p.due), lock: null } });
+    const laterRow = (topics: MilestoneTopicView[]): MilestoneRowView => ({ ...vN("accepted").milestones[1], ord: 2, state: "PLANNED", chainRole: "LAYER", layer: 2, topics });
+    const studyNextV = (): RoadmapView => ({ ...studyV({ due: 0 }), current: { ...studyV({ due: 0 }).current!, topics: topicsN(0, true), lock: null }, milestones: [vN("accepted").milestones[0], laterRow([{ key: "T4", lineageId: "l4", name: "Kalman filters", domainId: "d-kf", cards: 1, floor: 8, due: 2, held: false, skipped: false, done: false, geminiNamed: true }])] });
+    const studyNoneV = (): RoadmapView => ({ ...studyV({ due: 0 }), current: { ...studyV({ due: 0 }).current!, topics: topicsN(0, true), lock: null }, milestones: [vN("accepted").milestones[0]] });
     const GOLDEN: [string, RoadmapView, string][] = [
       ["SET_AIM (no roadmap)", vN("empty"), want("SET_AIM", "Set an aim", NEW)],
       ["SET_AIM (a plan made before revision 4: its own way on)", vN("legacy"), want("SET_AIM", "Start again at a depth", NEW)],
@@ -7028,6 +7328,15 @@ async function main() {
       ["CLOSE_ON_TASKS (past due, never started)", { ...vN("past-due"), current: { ...vN("past-due").current!, goalId: null } }, want("CLOSE_ON_TASKS", "Close it on Tasks", { kind: "href", href: "/today" })],
       ["START (Start is live)", vN("start-refit"), want("START", "Start milestone 2", { kind: "sheet", sheet: "start" })],
       ["START_LATER (Start not live: a line, never a disabled Start)", vN("accepted"), want("START_LATER", "Starting milestones arrives with the next update.", { kind: "none" })],
+      // Roadmap rework 1, P2 (rulings N27 and N28): a locked layer before Start; the planned layer's study while Start is off.
+      ["LOCKED (a planned layer whose prerequisites are open, before Start): Add 5 cards to the parent still short, chips I know this and Review 3 (its due cards)", lockedV(false), want("LOCKED", "Add 5 cards to Markov chains", { kind: "href", href: "/add?domain=d-mc" }, ["KNOWN:I know this", "REVIEW_TOPIC:Review 3"])],
+      ["LOCKED with Start live (Start would refuse PREREQS_OPEN): the same, never Start", lockedV(true), want("LOCKED", "Add 5 cards to Markov chains", { kind: "href", href: "/add?domain=d-mc" }, ["KNOWN:I know this", "REVIEW_TOPIC:Review 3"])],
+      ["LOCKED (the parent has no card due): the add and I know this only", lockedV(false, { due: 0 }), want("LOCKED", "Add 5 cards to Markov chains", { kind: "href", href: "/add?domain=d-mc" }, ["KNOWN:I know this"])],
+      ["STUDY (Start not live, a planned layer with a topic to do: its Domain's review run, n of 8 and the cards due)", studyV({ due: 4 }), want("STUDY", "Study Markov chains · 3 of 8 · 4 due", { kind: "href", href: "/review?view=run&domain=d-mc" })],
+      ["ADD_IDEA (the topic has no card due): an idea filed in its Domain", studyV({ due: 0 }), want("ADD_IDEA", "Add an idea to Markov chains", { kind: "href", href: "/add?domain=d-mc" })],
+      ["STUDY (every topic of the current layer done: the next planned layer's first topic, N14's P15 rule)", studyNextV(), want("STUDY", "Study Kalman filters · 1 of 8 · 2 due", { kind: "href", href: "/review?view=run&domain=d-kf" })],
+      ["START_LATER (every topic done and no later layer with one: the line)", studyNoneV(), want("START_LATER", "Starting milestones arrives with the next update.", { kind: "none" })],
+      ["START unchanged (Start live, nothing locked, topics to do): the Start sheet", { ...vN("start-refit"), current: { ...vN("start-refit").current!, topics: topicsN(4), lock: null } }, want("START", "Start milestone 2", { kind: "sheet", sheet: "start" })],
       ["ADD (v1: the Domain the add flow preselects), Review and Practise as chips", act, want("ADD", "Add 3 cards to Risk Management", { kind: "href", href: "/add?field=f-tr&domain=d-rm" }, ["REVIEW:Review 2", "PRACTICE:Practise 2"])],
       ["ADD (parts: the part with the most left)", vN("depth-realistic"), want("ADD", "Add 1 card to Inference", { kind: "href", href: "/add?field=f-st&domain=d-in" }, ["REVIEW:Review 4", "PRACTICE:Practise 1"])],
       ["REVIEW (v1 over two Domains: no Domain named; the week quests' due days, never /review)", doneKinds(act, ["ADD"]), want("REVIEW", "Review 2 cards", { kind: "reveal", target: "week-quests" }, ["PRACTICE:Practise 2", "STEP:Tick 1"])],
@@ -7043,9 +7352,16 @@ async function main() {
     const allViews = [...FIXTURE_STATES.map((s) => roadmapFixture(s).view).filter((x): x is RoadmapView => x != null), ...GOLDEN.map((g) => g[1])];
     const allActs = allViews.map((x) => na.nextActionOf(x));
     const hrefs = allActs.flatMap((a) => [a.primary, ...a.secondary]).flatMap((a) => (a.do.kind === "href" ? [a.do.href] : []));
-    check("next action: no action links to /review (Review has no Domain filter: roadmap.md Names); a Review reveals the week quests' due days", hrefs.length > 20 && hrefs.every((h) => !h.startsWith("/review")) && allActs.flatMap((a) => [a.primary, ...a.secondary]).filter((a) => a.kind === "REVIEW").every((a) => a.do.kind === "reveal"));
     check(
-      "next action: ≤ 2 chips, one per kind, never the primary's kind, only week-quest kinds (and Close it on Tasks)",
+      "next action: no action links to the bare /review (a Review reveals the week quests' due days); the one review link is a Domain's run (ruling N28: STUDY and the lock's Review <parent>, /review?view=run&domain=<id>)",
+      hrefs.length > 20 &&
+        hrefs.every((h) => !h.startsWith("/review") || /^\/review\?view=run&domain=[\w-]+$/.test(h)) &&
+        hrefs.some((h) => h.startsWith("/review?view=run&domain=")) &&
+        allActs.flatMap((a) => [a.primary, ...a.secondary]).filter((a) => a.kind === "REVIEW").every((a) => a.do.kind === "reveal") &&
+        allActs.flatMap((a) => [a.primary, ...a.secondary]).every((a) => (a.do.kind === "href" && a.do.href.startsWith("/review") ? a.kind === "STUDY" || a.kind === "REVIEW_TOPIC" : true))
+    );
+    check(
+      "next action: ≤ 2 chips, one per kind, never the primary's kind, only week-quest kinds (and Close it on Tasks, and the lock's I know this and Review <parent>: ruling N27)",
       allActs.every((a) => a.secondary.length <= na.NEXT_SECONDARY_MAX && new Set(a.secondary.map((c) => c.kind)).size === a.secondary.length && a.secondary.every((c) => c.kind !== a.primary.kind && na.NEXT_CHIP_KINDS.has(c.kind))) && na.NEXT_SECONDARY_MAX === 2
     );
     check(
@@ -7100,6 +7416,55 @@ async function main() {
       visN(bodyHero)
     );
     check("hero (accepted, Start not live): the line, no Start button anywhere on the page", visN(elN(pageN("accepted"), 'data-wc-block="next-action"')).includes(copy.NEXT_ACTION_WORDS.startLater) && !/>Start milestone 1</.test(pageN("accepted")));
+    // Ruling N28: from /you/roadmap the study is one tap: the hero's primary is the Domain's run link itself (no sheet, no fold).
+    const studyPage = R(createElement(RoadmapScreen, { view: studyV({ due: 4 }), startPreview: null, gates: roadmapFixture("accepted").gates }));
+    const studyHero = elN(studyPage, 'data-wc-block="next-action"');
+    const studyGo = elN(studyHero, "rm-next-go");
+    check(
+      "hero (N28, Start not live, a planned layer): one tap from /you/roadmap: the primary is <a href=\"/review?view=run&domain=d-mc\" data-next=\"STUDY\"> reading 'Study Markov chains · 3 of 8 · 4 due' (the name a name with its pv.named mark: a Gemini-named Domain, the review round), no chip, no Start anywhere",
+      /^<a data-next="STUDY" class="btn btn-primary lg btn-block rm-next-go" href="\/review\?view=run&amp;domain=d-mc">/.test(studyGo) && visN(studyGo) === "Study Markov chains · 3 of 8 · 4 due" && /<span data-wc="name" data-named="">Markov chains<span class="mg-nm" aria-hidden="true" data-pm="named">/.test(studyGo) && !/rm-next-chip/.test(studyHero) && !/>Start milestone 1</.test(studyPage) && (studyPage.match(/href="\/review/g) ?? []).length === 1,
+      studyGo.slice(0, 300)
+    );
+    const lockedPage = R(createElement(RoadmapScreen, { view: lockedV(false), startPreview: null, gates: roadmapFixture("accepted").gates }));
+    const lockedHero = elN(lockedPage, 'data-wc-block="next-action"');
+    check(
+      "hero (N27, a locked layer): [Add 5 cards to Markov chains] to /add with the Domain preselected, chips 'I know this' (a button: skipTopic) and 'Review 3' (the Domain's run link), each with its full words sr-only",
+      /^<a data-next="LOCKED" class="btn btn-primary lg btn-block rm-next-go" href="\/add\?domain=d-mc">/.test(elN(lockedHero, "rm-next-go")) &&
+        visN(elN(lockedHero, "rm-next-go")) === "Add 5 cards to Markov chains" &&
+        /<button type="button" class="chip btn-chip rm-next-chip" data-next="KNOWN">[\s\S]*?<span class="sr-only">I know this · Markov chains<\/span>/.test(lockedHero) &&
+        /<a class="chip btn-chip rm-next-chip" data-next="REVIEW_TOPIC" href="\/review\?view=run&amp;domain=d-mc">[\s\S]*?<span class="sr-only">Review Markov chains · 3 due<\/span>/.test(lockedHero) &&
+        /else if \(d\.kind === "run" && d\.run === "knowTopic"\) run\(\(x\) => x\.skipTopic\(header\.id, d\.key, true\)\);/.test(code(read("src/components/roadmap/RoadmapView.tsx"))),
+      visN(lockedHero)
+    );
+    // Ruling N27 (the page): a locked rail node's ▸ lists the parents it waits on, "n of 8" each (the unmet first), and the vote under EDGE_DRAW as a one-tap pick while edits are on.
+    const planPage = pageN("topic-map-plan");
+    const lockLists = [...planPage.matchAll(/<ul class="rm-basis rm-lock-list">([\s\S]*?)<\/ul>/g)].map((m) => m[1]);
+    const lockNames = (ul: string) => [...ul.matchAll(/<li( data-met="")?><span data-wc="name"[^>]*>([^<]+)</g)].map((m) => [m[2], !!m[1]]);
+    check(
+      "rail (N27, topic-map-plan): the locked layers 3 and 4 list their parents in the ▸ (layer 3: Beta one '3 of 8' first, Beta two met with the check and its spoken count; layer 4: Gamma one '0 of 8', My own topic '2 of 8'), every Gemini name with its mark; the current layer 2 lists none",
+      (planPage.match(/data-wc-block="lock-parents"/g) ?? []).length === 2 &&
+        lockLists.length === 2 &&
+        JSON.stringify(lockNames(lockLists[0])) === JSON.stringify([["Beta one", false], ["Beta two", true]]) &&
+        /aria-label="3 of 8 cards at level 6">3 of 8<\/span>/.test(lockLists[0]) &&
+        /<span class="sr-only">1 of 8 cards at level 6 · at its floor<\/span>/.test(lockLists[0]) &&
+        JSON.stringify(lockNames(lockLists[1])) === JSON.stringify([["Gamma one", false], ["My own topic", false]]) &&
+        /aria-label="0 of 8 cards at level 6">0 of 8<\/span>/.test(lockLists[1]) &&
+        /aria-label="2 of 8 cards at level 6">2 of 8<\/span>/.test(lockLists[1]) &&
+        (lockLists[0].match(/data-named=""/g) ?? []).length === 2 &&
+        (lockLists[1].match(/data-named=""/g) ?? []).length === 1,
+      JSON.stringify(lockLists.map(lockNames))
+    );
+    check(
+      "rail (N27, topic-map-plan): layer 3's one pick is a 44 px chip 'Gamma one · Beta two · 2 of 3 replies' (sr 'Gamma one builds on Beta two · 2 of 3 replies': one word for one count, repliesOfLine's, the review round; Gemini's suggest mark), one tap (editPlan PICK_PARENT); topic-chain (no plan edits) lists the parents and offers no pick",
+      /<button type="button" class="chip btn-chip rm-lock-pick">[\s\S]*?data-g="pv\.suggest"[\s\S]*?<span class="sr-only">Gamma one builds on Beta two · 2 of 3 replies<\/span><\/button>/.test(planPage) &&
+        !/of \d+ samples/.test(planPage + pageN("topic-sheet") + pageN("topic-parents")) &&
+        (planPage.match(/rm-lock-pick"/g) ?? []).length === 1 &&
+        /\.rm-lock \.chip\.btn-chip, \.rm-lock-pick \{ min-height: 44px; \}/.test(read("src/components/roadmap/roadmap.css")) &&
+        /kind: "PICK_PARENT", childKey: s\.child\.key, parentKey: s\.key/.test(code(read("src/components/roadmap/RoadmapView.tsx"))) &&
+        (pageN("topic-chain").match(/data-wc-block="lock-parents"/g) ?? []).length === 1 &&
+        !pageN("topic-chain").includes("rm-lock-pick"),
+      planPage.slice(planPage.indexOf("rm-lock-pick") - 60, planPage.indexOf("rm-lock-pick") + 200)
+    );
     const refitHero = elN(pageN("start-refit"), 'data-wc-block="next-action"');
     check("hero (D25): a kept Gemini title keeps «Gemini · kept · not checked» beside it, a chip button opening the full words (one tap)", /data-hc="gemini-kept"/.test(refitHero) && refitHero.includes(copy.PROVENANCE_WORDS.KEPT_SUGGESTION.replace(/'/g, "&#x27;")) && visN(refitHero).includes(copy.SHORT_GEMINI_KEPT) && /aria-expanded="false"/.test(refitHero));
     check("hero: Start opens the page's Start sheet, Re-plan its Re-plan sheet; Log a score, Mark done and Reschedule open their sheets from the hero; Finish starting runs finishStarting", (() => {
@@ -7161,7 +7526,7 @@ async function main() {
     r0Gate("words", WORD_BUDGET_ROWS.filter((r) => r.row === 16 || r.row === 4 || r.row === 5 || r.row === 6).map((r) => r.id), "§16");
     const foldWords = (s: FixtureState) => [elN(pageN(s), 'data-wc-block="next-action"'), elN(pageN(s), 'data-wc-block="aim-header"')].reduce((n, b) => n + wcN.countAppWords(b, { width: 344 }).count, 0);
     check("§16 top screen at 344: the hero and the Aim header read ≤ 20 app words on every living plan (the aim was ≤ 40)", living.every((s) => foldWords(s) <= 20), living.filter((s) => foldWords(s) > 20).map((s) => `${s}: ${foldWords(s)}`).join(", "));
-    console.log(`  · §16 note: the active page reads ${wcN.countAppWords(pageN("active"), { width: 344 }).count} app words at 344 (135 before), the top screen ${foldWords("active")}`);
+    console.log(`  · §16 note: the active page reads ${wcN.countAppWords(pageN("active"), { width: 344 }).count} app words at 344 (135 before), the top screen ${foldWords("active")}; the locked hero (topic-locked) ${wcN.countAppWords(elN(pageN("topic-locked"), 'data-wc-block="next-action"'), { width: 344 }).count} of 8 with its top screen ${foldWords("topic-locked")} of 20, the study hero (topic-study) ${wcN.countAppWords(elN(pageN("topic-study"), 'data-wc-block="next-action"'), { width: 344 }).count} of 5 with its top screen ${foldWords("topic-study")} of 20 (the review round's rows s16-next-locked and s16-next-study)`);
   }
   // ===== /The next action =====
 

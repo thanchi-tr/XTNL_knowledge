@@ -487,6 +487,7 @@ import {
   ROADMAP_GAPS_LIVE,
   STAGE_KEYS,
   STAGE_LEVEL,
+  NON_RECALL_TYPES,
   STORED_CHECKPOINT_KINDS,
   TRACK_STAGE_KEYS,
   gapsNotShownOf,
@@ -651,15 +652,22 @@ import {
   TOPIC_ROLES,
   TOPIC_SCOPES,
   geminiNamedOf,
+  isCardsReachRow,
   isTopicDepth,
   layersOfDiff,
   milestoneCapOf,
   namedPartsOf,
+  topicDoneOf,
   type AcceptRefusalCode,
   type AimClause,
   type DraftPlan,
   type EdgeDraft,
   type LayerSetChange,
+  type MilestoneLockParentView,
+  type MilestoneLockSuggestionView,
+  type AimStudyView,
+  type MilestoneLockView,
+  type MilestoneTopicView,
   type ParentPick,
   type PlanKind,
   type PreviousPlan,
@@ -1502,7 +1510,8 @@ function guardCondition(userId: string, g: StoreGuard): Prisma.Sql {
       return Prisma.sql`NOT EXISTS (SELECT 1 FROM "RoadmapMilestone" WHERE "roadmapId" = ${g.roadmapId} AND "version" = ${g.version}::int
         AND "status" IN (${Prisma.join(["DRAFT", "LATER"])}))`;
     // Revision 5, lane 8 (F-R5-10): the layer before reached (or held), or every parent of every chosen topic of this
-    // layer at OPEN_LEVEL over its floor (counted as cardsAtOpenOf counts: live cards at level 6 or above), held or skipped,
+    // layer at OPEN_LEVEL over its floor (counted as cardsAtOpenOf counts: live recall cards at level 6 or above, never a
+    // NON_RECALL_TYPES card, the paying key's own count: ruling N25 as the review round reads it), held or skipped,
     // and every cross-goal parent Domain at OPEN_LEVEL over its floor. A parent is a counting link (yours, cross-goal, or
     // Gemini's drawn one, none removed), else every chosen topic of the layer before.
     case "PREREQS_MET":
@@ -1526,7 +1535,7 @@ function guardCondition(userId: string, g: StoreGuard): Prisma.Sql {
                       AND x."childLineageId" = c."lineageId" AND x."decision" <> 'REMOVED' AND (x."origin" <> 'GEMINI' OR x."drawn")))
                 AND p."skippedDay" IS NULL AND p."heldDay" IS NULL
                 AND (p."domainId" IS NULL OR (SELECT COUNT(*) FROM "Idea" i WHERE i."domainId" = p."domainId" AND NOT i."isArchived"
-                  AND i."level" >= ${OPEN_LEVEL}::int) < ${TOPIC_FLOOR_CARDS}::int))
+                  AND i."level" >= ${OPEN_LEVEL}::int AND i."questionType"::text NOT IN (${Prisma.join(NON_RECALL_TYPES)})) < ${TOPIC_FLOOR_CARDS}::int))
             AND NOT EXISTS (SELECT 1 FROM "RoadmapMilestone" m
               JOIN "RoadmapTopic" c ON c."roadmapId" = m."roadmapId" AND c."version" = m."version" AND c."layer" = m."layer"
                 AND c."chosen" AND c."decision" NOT IN ('REMOVED', 'MERGED')
@@ -1534,7 +1543,7 @@ function guardCondition(userId: string, g: StoreGuard): Prisma.Sql {
                 AND x."origin" = 'CROSS_GOAL' AND x."decision" <> 'REMOVED'
               WHERE m."id" = ${g.milestoneId}
                 AND (x."parentDomainId" IS NULL OR (SELECT COUNT(*) FROM "Idea" i WHERE i."domainId" = x."parentDomainId" AND NOT i."isArchived"
-                  AND i."level" >= ${OPEN_LEVEL}::int) < ${TOPIC_FLOOR_CARDS}::int))
+                  AND i."level" >= ${OPEN_LEVEL}::int AND i."questionType"::text NOT IN (${Prisma.join(NON_RECALL_TYPES)})) < ${TOPIC_FLOOR_CARDS}::int))
           )
         )`;
   }
@@ -2935,6 +2944,10 @@ function gateLevelOf(m: Pick<MilestoneDraft, "measures" | "stage">): number | nu
 /** "Held when you began" (HELD_AT_START): reached at acceptance, never startable, and it gives no rank. */
 const heldRow = (m: { feasibility?: unknown; notes?: readonly string[] }): boolean =>
   (m.notes ?? storedNotes(m.feasibility)).includes("HELD_AT_START");
+
+/** Ruling N26: reached on cards alone (roadmap-types isCardsReachRow): a PLANNED layer row with a reachedDay and no HELD_AT_START note. Held's shape: no rank, never startable, nothing paid. */
+const cardsReachRow = (m: { status: string; reachedDay: DayKey | null; chainRole?: string | null; goalId?: string | null; feasibility?: unknown; notes?: readonly string[] }): boolean =>
+  isCardsReachRow({ status: m.status, reachedDay: m.reachedDay, chainRole: m.chainRole ?? null, goalId: m.goalId ?? null, notes: m.notes ?? storedNotes(m.feasibility) });
 
 // ═══ Intake (F2) ════════════════════════════════════════════════════════════
 
@@ -8642,6 +8655,12 @@ export const PLAN_EDIT_NO_DOMAINS = "A life-track Area has no Domains.";
 export const PLAN_EDIT_NOTHING = "Nothing to change.";
 // ── Ruling N24: a topic taken off at any time, behind the typed confirm ──
 export const PLAN_EDIT_TYPE_NAME = "Type the topic's name to remove it.";
+// Ruling N27 (the page): a parent picked on a locked layer (editPlan PICK_PARENT).
+export const PLAN_EDIT_PICK = "Pick the topic and what it builds on.";
+export const PLAN_EDIT_PARENT_TOPICS = "Only a topic plan's layers build on each other.";
+export const PLAN_EDIT_PARENT_LAYER_ONE = "A layer-1 topic builds on nothing before it.";
+export const PLAN_EDIT_PARENT_BEFORE = "A topic builds on topics of the layer just before it.";
+export const PLAN_EDIT_PARENT_STARTED = "This layer has started: it builds on what it had.";
 export const PLAN_EDIT_LAST_PAYING = "A started milestone keeps at least one paying topic: this one is its last.";
 export const PLAN_EDIT_BEHIND = "This milestone is behind you: its topics stay as they were.";
 export const PLAN_EDIT_SHARED = "This milestone counts that Domain together with others: re-plan to change it.";
@@ -8693,6 +8712,8 @@ function cleanPlanEditOf(raw: unknown): PlanEdit | string {
     // Ruling N24: a removal carries the name as typed in its confirm; the step checks it against the topic's.
     return typeof o.typed === "string" ? { kind: "REMOVE_TOPIC", milestoneId: o.milestoneId, domainId: o.domainId, typed: o.typed } : PLAN_EDIT_TYPE_NAME;
   }
+  // Ruling N27 (the page): a parent picked for a topic of an unstarted layer, by their keys.
+  if (o.kind === "PICK_PARENT") return ref(o.childKey) && ref(o.parentKey) ? { kind: "PICK_PARENT", childKey: o.childKey, parentKey: o.parentKey } : PLAN_EDIT_PICK;
   if (o.kind !== "ADD_TOPIC") return PLAN_EDIT_NOTHING;
   const nm = o.newMilestone && typeof o.newMilestone === "object" && !Array.isArray(o.newMilestone) ? (o.newMilestone as Record<string, unknown>) : null;
   const row = ref(o.milestoneId) ? o.milestoneId : null;
@@ -8718,6 +8739,11 @@ function cleanPlanEditOf(raw: unknown): PlanEdit | string {
  *   REMOVE_TOPIC  a sub-topic leaves the milestone (the Domain and its cards stay); a milestone keeps at least one.
  *                 Ruling N24: the live milestone too (in place on its row; its tasks on Today stay as they are), and
  *                 only with `typed`, the topic's name as typed in the confirm (topicNameMatchesOf).
+ *   PICK_PARENT   ruling N27 (the page): a topic of an unstarted layer (k ≥ 2) builds on a chosen topic of layer k − 1:
+ *                 a USER edge the gate counts (parentsOf, PREREQS_MET), as setParentsCore writes one on a draft; the
+ *                 lock's suggestion (a LINK vote under EDGE_DRAW) or the ▸'s, in one tap. TOPICS only; refused once
+ *                 the layer has started; within EDGE_PARENTS_MAX and EDGE_CHILDREN_MAX; nothing to change when it
+ *                 already builds on it.
  * The edit is accepted as version + 1 in one transaction; undoAcceptCore undoes it (its rows DISCARDED, the Domains
  * and rating as they were, a live removal's measures and items put back). Refused while a re-plan draft is open, on a
  * started or held milestone (an add), on a milestone behind you, and on a TOPICS depth milestone (its topics are the
@@ -8777,7 +8803,7 @@ interface EditedPlan {
   today: DayKey;
   /** The version's rows (status DRAFT or LATER as written; accepted PLANNED by the ops), ords and lineages set. */
   drafts: MilestoneDraft[];
-  /** Held rows (HELD_AT_START): lineage → their reached day. */
+  /** Held rows (HELD_AT_START), and rows reached on cards (ruling N26, the review round): lineage → their reached day. */
   held: Map<string, DayKey>;
   overAccepted: Map<string, boolean>;
   /** Rank index by lineage. */
@@ -8989,8 +9015,10 @@ async function planEditStepOf(
   const tree = await e.io.fieldTree();
   const goals = await carriedGoalsOf(e, userId, b);
   const unstarted = planRowsOf(b).filter((m) => !isCarried(m) && !dormantCopy(b, m, goals));
-  const target = ed.milestoneId != null ? (b.milestones.find((m) => m.id === ed.milestoneId) ?? null) : null;
-  if (ed.milestoneId != null) {
+  // A parent pick names its topics by key, never a milestone (its layer row is found from the child).
+  const msId = ed.kind === "PICK_PARENT" ? null : ed.milestoneId;
+  const target = msId != null ? (b.milestones.find((m) => m.id === msId) ?? null) : null;
+  if (msId != null) {
     if (!target) return fail(PLAN_EDIT_GONE);
     // Ruling N24: a topic comes off the live milestone too; rename and add stay with the unstarted ones.
     if (isCarried(target)) {
@@ -9001,7 +9029,7 @@ async function planEditStepOf(
   }
   // The Domain an add or a removal names: one of yours (any Field), or the one made for your new name.
   let domain: { id: string; name: string; cards: number } | null = null;
-  if (ed.kind !== "RENAME") {
+  if (ed.kind === "ADD_TOPIC" || ed.kind === "REMOVE_TOPIC") {
     if (b.roadmap.fieldId == null) return fail(PLAN_EDIT_NO_DOMAINS);
     const id = ed.kind === "ADD_TOPIC" ? (made?.id ?? ed.domainId ?? null) : ed.domainId;
     const facts = id ? domainFactsOf(tree).get(id) : undefined;
@@ -9014,6 +9042,7 @@ async function planEditStepOf(
       if (taken) return fail(DOMAIN_TAKEN(taken.slot));
     }
   }
+  if (ed.kind === "PICK_PARENT" && !topics) return fail(PLAN_EDIT_PARENT_TOPICS);
   const edited = topics ? await topicsPlanEditOf(e, userId, b, ed, now, target, domain, made != null, unstarted, tree) : await levelsPlanEditOf(e, userId, b, ed, now, target, domain, unstarted, goals, tree);
   if (!edited.ok) return edited;
   const ops = await editedPlanOps(e, deps, userId, edited.value, now);
@@ -9329,11 +9358,32 @@ async function topicsPlanEditOf(
     if (!label.ok) return fail(label.error);
     if (label.value === drafts[idx].title) return fail(PLAN_EDIT_NOTHING);
     drafts[idx] = { ...drafts[idx], title: label.value, titleOrigin: "USER", titleDecision: "EDITED" };
-    for (const m of unstarted) if (heldRow(m)) held.set(m.lineageId, m.reachedDay ?? today);
+    for (const m of unstarted) {
+      if (heldRow(m)) held.set(m.lineageId, m.reachedDay ?? today);
+      // Ruling N26 (the review round): a layer reached on cards keeps its day through the copy, as a held row does.
+      else if (cardsReachRow(m) && m.reachedDay) held.set(m.lineageId, m.reachedDay);
+    }
   } else {
-    if (!domain) return fail("Pick one of your Domains.");
     if (target && (target.chainRole !== "LAYER" || target.layer == null)) return fail(PLAN_EDIT_DEPTH_ROW);
-    if (ed.kind === "ADD_TOPIC") {
+    if (ed.kind === "PICK_PARENT") {
+      // Ruling N27 (the page): a USER edge from a chosen topic of the layer before to a topic of an unstarted layer, the
+      // one the gate counts (edgeCounts: a Gemini vote under EDGE_DRAW never does). The map holds one row per pair
+      // (ruling 48), so the pair's Gemini vote gives way to the pick (the suggestion goes with it; Undo brings the
+      // version before back). The layers are then rebuilt as any TOPICS edit rebuilds them.
+      const child = map.topics.find((x) => topicLive(x) && x.chosen && x.key === ed.childKey);
+      if (!child) return fail(TOPIC_GONE);
+      if (child.layer <= 1) return fail(PLAN_EDIT_PARENT_LAYER_ONE);
+      if (keptCarried.some((m) => m.chainRole === "LAYER" && m.layer === child.layer)) return fail(PLAN_EDIT_PARENT_STARTED);
+      const parent = map.topics.find((x) => topicLive(x) && x.chosen && x.key === ed.parentKey);
+      if (!parent || parent.layer !== child.layer - 1) return fail(PLAN_EDIT_PARENT_BEFORE);
+      const counting = map.edges.filter((x) => x.childLineageId === child.lineageId && edgeCounts(x));
+      if (counting.some((x) => x.parentLineageId === parent.lineageId)) return fail(PLAN_EDIT_NOTHING);
+      if (counting.length >= EDGE_PARENTS_MAX) return fail(`A topic builds on at most ${EDGE_PARENTS_MAX}.`);
+      if (map.edges.filter((x) => x.parentLineageId === parent.lineageId && edgeCounts(x)).length >= EDGE_CHILDREN_MAX) return fail(`A topic feeds at most ${EDGE_CHILDREN_MAX} in the next layer.`);
+      const picked: EdgeDraft = { id: null, parentLineageId: parent.lineageId, childLineageId: child.lineageId, parentDomainId: null, parentRoadmapId: null, origin: "USER", votes: 0, samples: 0, drawn: false, decision: "KEPT", match: "NONE" };
+      map = { ...map, edges: [...map.edges.filter((x) => !(x.childLineageId === child.lineageId && x.parentLineageId === parent.lineageId && x.origin === "GEMINI")), picked] };
+    } else if (!domain) return fail("Pick one of your Domains.");
+    else if (ed.kind === "ADD_TOPIC") {
       if (target && heldRow(target)) return fail(PLAN_EDIT_HELD);
       if (map.topics.some((t) => topicLive(t) && t.domainId === domain.id)) return fail(PLAN_EDIT_IN_PLAN);
       if (chosenLiveTopicsOf(map).length >= TOPICS_MAX) return fail(`A plan holds at most ${TOPICS_MAX} topics.`);
@@ -9422,6 +9472,9 @@ async function topicsPlanEditOf(
         status: (old?.status === "LATER" ? "LATER" : "DRAFT") as MilestoneStatus,
       };
       if (heldRow(row)) held.set(row.lineageId, old?.reachedDay ?? today);
+      // Ruling N26 (the review round): a layer reached on cards keeps its day at version + 1 (no note, still PLANNED), unless
+      // this edit adds a topic to that very layer (its paying terms change: the chain re-derives the reach).
+      else if (old && cardsReachRow(old) && old.reachedDay && !(ed.kind === "ADD_TOPIC" && target?.lineageId === old.lineageId)) held.set(row.lineageId, old.reachedDay);
       return row;
     });
     const cap = milestoneCapOf("TOPICS");
@@ -10499,7 +10552,8 @@ function rankInputOf(b: RoadmapBundle, rows: readonly MilestoneBundle[], today: 
   const coverageBelow = (feasibilityOfAcceptance(currentAcceptance(b))?.coverageChoices ?? []).length > 0;
   const depthRank = legacyOf(b) || b.roadmap.version < 1 ? null : depthRankInputOf(b, one.map(draftOf), coverageBelow);
   return {
-    milestones: one.map((m) => ({ ord: m.ord, rankIndex: m.rankIndex, reachedDay: m.reachedDay, reachPendingDay: m.reachPendingDay, scheduled: m.status !== "LATER", held: heldRow(m) })),
+    // Ruling N26: a layer reached on cards alone gives no rank, as a held row does (cardsReachRow).
+    milestones: one.map((m) => ({ ord: m.ord, rankIndex: m.rankIndex, reachedDay: m.reachedDay, reachPendingDay: m.reachPendingDay, scheduled: m.status !== "LATER", held: heldRow(m) || cardsReachRow(m) })),
     roadmapReachedDay: b.roadmap.reachedDay,
     // Revision 5, lane 8 (ruling 50): the plan kind's cap (TOPICS 8; LEVELS MAX_MILESTONES, as before).
     maxScheduled: Math.min(milestoneCapOf(kindOfRow(b.roadmap)) || MAX_MILESTONES, maxScheduledPositionsOf(b.milestones)),
@@ -10545,8 +10599,10 @@ function milestoneRowsOf(e: Env, v: ViewData, rank: AimRankView | null): Milesto
     else if (m.status === "STARTED" && due && due < v.today) state = "PAST_DUE";
     else if (m.status === "STARTED" && slipped(v, m)) state = "SLIPPED";
     else state = "CURRENT";
+    // Ruling N26: a reach on cards alone gave no rank (it reads REACHED, with `reachedOnCards`).
+    const onCards = cardsReachRow(m);
     const gave =
-      m.reachedDay && m.rankIndex != null && daysBetween(m.reachedDay, v.today) < RANK_NEW_DAYS && rank && rank.index >= m.rankIndex ? aimRankName(m.rankIndex) : null;
+      m.reachedDay && !onCards && m.rankIndex != null && daysBetween(m.reachedDay, v.today) < RANK_NEW_DAYS && rank && rank.index >= m.rankIndex ? aimRankName(m.rankIndex) : null;
     const titleStruck = struck.get(m.id);
     return {
       id: m.id,
@@ -10568,6 +10624,7 @@ function milestoneRowsOf(e: Env, v: ViewData, rank: AimRankView | null): Milesto
       stage: isStageKey(m.stage) ? m.stage : null,
       gateLevel: gateLevelOf(draftOf(m)),
       held: heldRow(m),
+      ...(onCards ? { reachedOnCards: true } : {}),
     };
   });
 }
@@ -11624,11 +11681,13 @@ function rowEditsOf(b: RoadmapBundle, tree: readonly TreeField[], templates: Rea
     const live = liveRowOf(b, m, templates);
     if (!live && (m.version !== b.roadmap.version || (m.status !== "PLANNED" && m.status !== "LATER") || dormantCopy(b, m, templates))) return r;
     const seen = new Set<string>();
-    const domains: { id: string; name: string }[] = [];
+    const domains: { id: string; name: string; geminiNamed?: boolean }[] = [];
     for (const i of [...m.items].sort((x, y) => x.ord - y.ord)) {
       if (i.kind !== "DOMAIN" || !liveItem(i) || !i.domainId || seen.has(i.domainId)) continue;
       seen.add(i.domainId);
-      domains.push({ id: i.domainId, name: facts.get(i.domainId)?.name ?? i.label });
+      // Ruling N29 (the review round): a Gemini-named Domain carries its mark here too (the sheet draws it, the tripwire reads it).
+      const mark = domainMarkOf(tree, i.domainId);
+      domains.push({ id: i.domainId, name: facts.get(i.domainId)?.name ?? i.label, ...(mark?.geminiNamed ? { geminiNamed: true } : {}) });
     }
     const canTopics = b.roadmap.fieldId != null && !heldRow(m) && (topics ? m.chainRole === "LAYER" && m.layer != null : depthOf(b.roadmap) != null);
     if (live) {
@@ -12058,6 +12117,8 @@ function aimCardOfData(
         titleClass,
         ...titleStruck,
         status: "PLANNED",
+        // Ruling N28: a TOPICS layer whose prerequisites are open offers no Start (it would refuse PREREQS_OPEN); the study is the action.
+        ...(kindOfRow(r) === "TOPICS" && cur.chainRole === "LAYER" && cur.layer != null && prereqsOpenOf(b, cur, v.tree) ? { locked: true } : {}),
         headline: null,
         percent: null,
         pace: null,
@@ -12102,6 +12163,9 @@ function aimCardOfData(
     }
   }
   const counts = wq && wq.view.total > 0 ? { done: wq.view.done, total: wq.view.total } : null;
+  // Ruling N28: the study while the current milestone is a planned TOPICS layer (locked or Start off): Today's and the
+  // phone's one action ("Study <topic> · 3 of 8 · 4 due"); null on LEVELS, once started, and with no topic left to do.
+  const study = cur && r.status === "ACTIVE" && cur.status === "PLANNED" && kindOfRow(r) === "TOPICS" && cur.chainRole === "LAYER" && cur.layer != null ? studyViewOf(b, planRows, cur, v.tree, today) : null;
   // A PAUSED goal's card reads as ACTIVE with `paused` set ("paused since 6 Oct", never "behind"; ruling 66): its
   // Proficiency frozen as last measured, no milestone line, no week quests.
   if (r.status === "PAUSED") {
@@ -12117,6 +12181,7 @@ function aimCardOfData(
     weekQuests: counts,
     // A writes-off server never schedules the fallback freeze.
     questWeekUnfrozen: !!wq && !wq.frozen && !wq.view.writesOff && !writesOff(deps),
+    ...(study ? { study } : {}),
   };
 }
 
@@ -13499,10 +13564,11 @@ export const ROADMAP_MONITOR_QUERIES: readonly { name: string; expect: string; s
       WHERE r."depth" IS NOT NULL AND m."status" IN ('PLANNED', 'STARTING', 'STARTED') AND (m."stage" IS NULL OR m."rankIndex" IS NULL OR m."rankIndex" NOT BETWEEN 1 AND 5)`,
   },
   {
+    // Ruling N26: a TOPICS layer row reached on cards alone (PLANNED, a reachedDay, no goal, no note) is not a fault.
     name: "held-rows",
     expect: "0 rows",
-    sql: `SELECT m."id" FROM "RoadmapMilestone" m WHERE m."status" = 'PLANNED' AND m."reachedDay" IS NOT NULL
-      AND (m."goalId" IS NOT NULL OR NOT (COALESCE(m."feasibility" -> 'notes', '[]'::jsonb) ? 'HELD_AT_START'))`,
+    sql: `SELECT m."id" FROM "RoadmapMilestone" m JOIN "Roadmap" r ON r."id" = m."roadmapId" WHERE m."status" = 'PLANNED' AND m."reachedDay" IS NOT NULL
+      AND (m."goalId" IS NOT NULL OR NOT (COALESCE(m."feasibility" -> 'notes', '[]'::jsonb) ? 'HELD_AT_START' OR (r."planKind" = 'TOPICS' AND m."chainRole" = 'LAYER')))`,
   },
   {
     name: "proficiency-v2-range",
@@ -14335,6 +14401,29 @@ function topicClassFor(t: TopicDraft): TopicClass {
 /** A Gemini name behind the count ("n not checked"): shown only once kept. */
 const topicHidden = (t: TopicDraft): boolean => topicLive(t) && topicClassFor(t) === "NOT_CHECKED";
 
+/** Rulings N30 and N31: a NOT_CHECKED or KEPT_NOT_CHECKED row's reason, inline beside its name (TopicRowView.hide; a NEAR_DUPLICATE names what it duplicates); {} on a shown row. */
+function hideViewOf(map: TopicMap, t: TopicDraft): { hide?: t5.TopicHideView } {
+  let reason: t5.TopicHideReason | null = null;
+  try {
+    reason = topicsLib.topicHideReasonOf(t);
+  } catch {
+    reason = null;
+  }
+  if (!reason) return {};
+  let dup: { name: string; kind: "SAME" | "PART" } | null = null;
+  if (reason === "NEAR_DUPLICATE") {
+    try {
+      dup = topicsLib.duplicateRelationOf(map, t);
+    } catch {
+      dup = null;
+    }
+  }
+  return { hide: { reason, ...(dup ? (dup.kind === "PART" ? { partOf: dup.name } : { sameAs: dup.name }) : {}) } };
+}
+
+/** Ruling N30: [Accept all] on a layer holding only names Google didn't check, none tapped (the sheet disables its button on the same rule). */
+export const ACCEPT_ALL_NOT_CHECKED = (layer: number): string => `Layer ${layer} holds only names Google didn't check: tap one to keep it.`;
+
 /** The edges that count as a topic's parents: yours, cross-goal, and Gemini's drawn ones, none removed. */
 const edgeCounts = (x: EdgeDraft): boolean => x.decision !== "REMOVED" && (x.origin !== "GEMINI" || x.drawn);
 
@@ -14434,10 +14523,14 @@ async function topicTakenDomainOf(e: Env, userId: string, roadmapId: string, dom
   return null;
 }
 
-/** Live recall-or-not cards at OPEN_LEVEL or above in a Domain (the floor's count; the PREREQS_MET guard counts the same rows). */
+/**
+ * Live recall cards at OPEN_LEVEL or above in a Domain (the floor's count; the PREREQS_MET guard counts the same rows).
+ * Ruling N25 as the review round reads it: a NON_RECALL_TYPES card (MULTI) never counts, as the paying key's `r` segment
+ * never counted it, so the gate, "n of 8" and the reach on cards (N26) read one number; a card with no type counts.
+ */
 function cardsAtOpenOf(tree: readonly TreeField[], domainId: string | null): number {
   if (!domainId) return 0;
-  for (const f of tree) for (const d of f.domains) if (d.id === domainId) return d.cards.filter((c) => c.level >= OPEN_LEVEL).length;
+  for (const f of tree) for (const d of f.domains) if (d.id === domainId) return d.cards.filter((c) => c.level >= OPEN_LEVEL && (c.type == null || isRecallType(c.type))).length;
   return 0;
 }
 
@@ -15374,50 +15467,61 @@ const sameNameSet = (a: readonly string[], b: readonly string[]): boolean => {
 const pendingShownLinkOf = (shown: ReadonlySet<string>) => (x: EdgeDraft): boolean => x.origin === "GEMINI" && x.drawn && x.decision === "PENDING" && shown.has(x.childLineageId);
 
 /**
- * A layer's not-checked Gemini names that [Accept all] takes when the layer shows nothing else (the user's live map,
- * ruling N17: the last milestone held only names Google hadn't checked, so keeping the shown ones left it empty and
- * accept refused "Keep every layer first."): PENDING, behind the fold for GROUND's verdict only (never one the
- * agreement hid: a region, an unchecked language or a whole field).
+ * A layer's not-checked Gemini names behind the fold (ruling N30; N17 took them only for a layer showing nothing else,
+ * and kept them): PENDING, unbound, hidden for GROUND's verdict only (never one the agreement hid: a region, an
+ * unchecked language, a whole field, a duplicate). [Accept all] lists them unticked, each with its reason and a per-name
+ * tap (chooseTopic keeps and ticks it); it never keeps or ticks one itself, so no Domain is made from a not-checked
+ * name without your own tap.
  */
-function uncheckedForEmptyLayerOf(settled: TopicMap, layer: number): TopicDraft[] {
-  const inLayer = settled.topics.filter((t) => topicLive(t) && t.layer === layer);
-  if (inLayer.some((t) => !topicHidden(t))) return [];
-  return inLayer.filter((t) => t.nameOrigin === "GEMINI" && t.decision === "PENDING" && !t.bound && !topicsLib.hiddenByAgreement(t));
+function notCheckedListedOf(settled: TopicMap, layer: number): TopicDraft[] {
+  return settled.topics.filter((t) => topicLive(t) && t.layer === layer && topicHidden(t) && t.nameOrigin === "GEMINI" && t.decision === "PENDING" && !t.bound && !topicsLib.hiddenByAgreement(t));
+}
+
+/** Ruling N30: the first layer [Accept all] cannot keep because nothing in it is checked or kept (only not-checked names, none tapped), else null. */
+function acceptAllBareLayerOf(settled: TopicMap): number | null {
+  const deepest = Math.max(settled.layers, ...settled.topics.filter(topicLive).map((t) => t.layer));
+  for (let layer = 1; layer <= deepest; layer++) {
+    const inLayer = settled.topics.filter((t) => topicLive(t) && t.layer === layer);
+    if (inLayer.length > 0 && inLayer.every(topicHidden) && notCheckedListedOf(settled, layer).length > 0) return layer;
+  }
+  return null;
 }
 
 /**
  * [Accept all]'s list (TopicMapView.acceptAll, the one source the sheet shows and sends): per layer, its shown PENDING
- * Gemini names and the drawn Gemini links still PENDING into its shown topics, and (a layer showing nothing) its
- * not-checked names as `unchecked`; only the layers holding any. keptAllOf compares exactly this set. Ruling N17:
- * accepting all puts every listed name in the plan (kept and ticked), so each layer of the breakdown is a milestone.
+ * Gemini names (LINKED and LINKED_ONE: kept and ticked, ruling N17), the drawn Gemini links still PENDING into its shown
+ * topics, and its not-checked names as `unchecked` (ruling N30: key, name and reason; listed unticked, never kept by
+ * it); only the layers holding any. keptAllOf compares exactly the names and the links.
  */
-function acceptAllListOfMap(settled: TopicMap): { layer: number; names: string[]; links: number; unchecked?: string[] }[] {
+function acceptAllListOfMap(settled: TopicMap): { layer: number; names: string[]; links: number; unchecked?: t5.AcceptAllUncheckedView[]; tapped?: t5.AcceptAllUncheckedView[] }[] {
   const deepest = Math.max(settled.layers, ...settled.topics.filter(topicLive).map((t) => t.layer));
-  const out: { layer: number; names: string[]; links: number; unchecked?: string[] }[] = [];
+  const out: { layer: number; names: string[]; links: number; unchecked?: t5.AcceptAllUncheckedView[]; tapped?: t5.AcceptAllUncheckedView[] }[] = [];
   for (let layer = 1; layer <= deepest; layer++) {
     const shown = settled.topics.filter((t) => topicLive(t) && t.layer === layer && !topicHidden(t));
     const names = shown.filter((t) => t.decision === "PENDING" && t.nameOrigin === "GEMINI").map((t) => t.name);
     const links = settled.edges.filter(pendingShownLinkOf(new Set(shown.map((t) => t.lineageId)))).length;
-    const unchecked = uncheckedForEmptyLayerOf(settled, layer).map((t) => t.name);
-    if (names.length > 0 || links > 0 || unchecked.length > 0) out.push({ layer, names, links, ...(unchecked.length > 0 ? { unchecked } : {}) });
+    const listed = (t: TopicDraft): t5.AcceptAllUncheckedView => ({ key: t.key, name: t.name, reason: hideViewOf(settled, t).hide?.reason ?? "NOT_RUN" });
+    const unchecked = notCheckedListedOf(settled, layer).map(listed);
+    // The review round: a not-checked name you tapped (KEPT_NOT_CHECKED, chosen) stays listed, ticked, so its layer never drops off the sheet.
+    const tapped = settled.topics.filter((t) => topicLive(t) && t.layer === layer && t.chosen && topicClassFor(t) === "KEPT_NOT_CHECKED").map(listed);
+    if (names.length > 0 || links > 0 || unchecked.length > 0 || tapped.length > 0) out.push({ layer, names, links, ...(unchecked.length > 0 ? { unchecked } : {}), ...(tapped.length > 0 ? { tapped } : {}) });
   }
   return out;
 }
 
 /**
- * [Accept all] (AcceptTopicChoices.keepAll): every unkept layer kept as its list showed it (acceptAllListOfMap: names,
- * the not-checked ones of an otherwise empty layer, and links), each listed Gemini name ticked into the plan (ruling
- * N17), or null when the list no longer reads so (`names` carries the unchecked ones too).
+ * [Accept all] (AcceptTopicChoices.keepAll): every unkept layer kept as its list showed it (acceptAllListOfMap: the
+ * shown names and the links), each listed Gemini name ticked into the plan (ruling N17), or null when the list no
+ * longer reads so. A not-checked name is never kept or ticked here (ruling N30): a tap on it is chooseTopic's.
  */
 function keptAllOf(map: TopicMap, keepAll: { names: string[]; links: number }): TopicMap | null {
   const settled = settledTopicMapOf(map);
   const list = acceptAllListOfMap(settled);
-  const names = list.flatMap((x) => [...x.names, ...(x.unchecked ?? [])]);
+  const names = list.flatMap((x) => x.names);
   const links = list.reduce((n, x) => n + x.links, 0);
   if (!sameNameSet(names, Array.isArray(keepAll.names) ? keepAll.names : []) || keepAll.links !== links) return null;
   const shown = settled.topics.filter((t) => topicLive(t) && !topicHidden(t));
-  const unchecked = new Set(list.flatMap((x) => uncheckedForEmptyLayerOf(settled, x.layer)).map((t) => t.lineageId));
-  const keep = new Set([...shown.filter((t) => t.decision === "PENDING").map((t) => t.lineageId), ...unchecked]);
+  const keep = new Set(shown.filter((t) => t.decision === "PENDING").map((t) => t.lineageId));
   const tick = (t: TopicDraft): boolean => keep.has(t.lineageId) && t.nameOrigin === "GEMINI";
   const linkKept = pendingShownLinkOf(new Set(shown.map((t) => t.lineageId)));
   return {
@@ -15468,6 +15572,9 @@ async function acceptTopicsStep(
     const kept = keptAllOf(map, tc.keepAll);
     if (!kept) return fail(RACED);
     map = settledTopicMapOf(kept);
+    // Ruling N30: a layer holding only not-checked names, none tapped, is named (acceptRefusalOf would say LAYER_UNKEPT).
+    const bare = acceptAllBareLayerOf(map);
+    if (bare != null) return fail(ACCEPT_ALL_NOT_CHECKED(bare));
   }
   // Trailing empty bands trim before the refusals run (ruling 58): K is the layers you filled.
   map = { ...map, layers: Math.max(LAYERS_MIN, filledBandsOf(map) || map.layers) };
@@ -15836,26 +15943,54 @@ function topicUndoOf(b: RoadmapBundle, acc: AcceptanceRec, version: number): { r
 // ── Gating (F-R5-10; the PREREQS_MET guard) ──
 
 /**
+ * Ruling N27 (contracts §22.20): the parents a TOPICS layer milestone waits on, as the PREREQS_MET guard reads them
+ * (§22.14): null when the row is never held back (layer 1, a depth milestone, every LEVELS row) or milestone k is
+ * reached (or held, or reached on cards: ruling N26); else each parent once, the ones not met first. A parent is a
+ * chosen topic parent of a chosen layer-(k + 1) topic (met at TOPIC_FLOOR_CARDS live cards at OPEN_LEVEL, cardsAtOpenOf,
+ * or HELD_AT_START, or skipped) or a cross-goal parent Domain (met at its floor); the parents are the counting links
+ * (yours, cross-goal, or Gemini's drawn one, none removed), else the whole layer before (`wholeLayer`).
+ */
+function lockParentsOf(b: RoadmapBundle, row: MilestoneRec, tree: readonly TreeField[]): { afterLayer: number; wholeLayer: boolean; parents: MilestoneLockParentView[] } | null {
+  if (kindOfRow(b.roadmap) !== "TOPICS" || row.chainRole !== "LAYER" || row.layer == null || row.layer <= 1) return null;
+  const k = row.layer - 1;
+  if (b.milestones.some((m) => m.roadmapId === row.roadmapId && m.chainRole === "LAYER" && m.layer === k && m.reachedDay != null && m.status !== "DISCARDED")) return null;
+  const map = mapOfVersion(b, row.version);
+  const children = map.topics.filter((t) => topicLive(t) && t.chosen && t.layer === row.layer);
+  const parents = new Map<string, MilestoneLockParentView>();
+  let wholeLayer = children.length > 0;
+  for (const child of children) {
+    const set = parentsInMapOf(map, child);
+    if (!set.layer) wholeLayer = false;
+    for (const p of set.topics) {
+      // The SQL joins the layer before alone (p.layer = c.layer - 1): a link to another layer never counts here either (the review round).
+      if (!p.chosen || p.layer !== k || parents.has(p.key)) continue;
+      const d = domainMarkOf(tree, p.domainId);
+      const cards = cardsAtOpenOf(tree, p.domainId);
+      const held = p.heldDay != null;
+      const skipped = p.skippedDay != null;
+      parents.set(p.key, { key: p.key, name: d?.name ?? p.name, domainId: p.domainId, cards, floor: TOPIC_FLOOR_CARDS, held, skipped, met: held || skipped || cards >= TOPIC_FLOOR_CARDS, geminiNamed: d?.geminiNamed ?? false });
+    }
+    for (const c of set.crossGoal) {
+      const key = `${CROSS_GOAL_PARENT_PREFIX}${c.domainId}`;
+      if (parents.has(key)) continue;
+      const d = domainMarkOf(tree, c.domainId);
+      const cards = cardsAtOpenOf(tree, c.domainId);
+      parents.set(key, { key, name: d?.name ?? "", domainId: c.domainId, cards, floor: TOPIC_FLOOR_CARDS, held: false, skipped: false, met: cards >= TOPIC_FLOOR_CARDS, geminiNamed: d?.geminiNamed ?? false });
+    }
+  }
+  const list = Array.from(parents.values());
+  return { afterLayer: k, wholeLayer, parents: [...list.filter((p) => !p.met), ...list.filter((p) => p.met)] };
+}
+
+/**
  * A TOPICS layer milestone's prerequisites (F-R5-10, §22.14's PREREQS_MET): open (true: Start refuses PREREQS_OPEN)
  * unless milestone k is reached (or held), or every parent of every chosen layer-(k + 1) topic is at level 6 over its
  * floor, HELD_AT_START or skipped, and every cross-goal parent Domain at level 6 over its floor. Layer 1, a depth
- * milestone and every LEVELS row are never held back here.
+ * milestone and every LEVELS row are never held back here. One list with the page's lock (lockParentsOf, ruling N27).
  */
 function prereqsOpenOf(b: RoadmapBundle, row: MilestoneRec, tree: readonly TreeField[]): boolean {
-  if (kindOfRow(b.roadmap) !== "TOPICS" || row.chainRole !== "LAYER" || row.layer == null || row.layer <= 1) return false;
-  const k = row.layer - 1;
-  if (b.milestones.some((m) => m.roadmapId === row.roadmapId && m.chainRole === "LAYER" && m.layer === k && m.reachedDay != null && m.status !== "DISCARDED")) return false;
-  const map = mapOfVersion(b, row.version);
-  for (const child of map.topics.filter((t) => topicLive(t) && t.chosen && t.layer === row.layer)) {
-    const parents = parentsInMapOf(map, child);
-    for (const p of parents.topics) {
-      if (!p.chosen) continue;
-      if (p.skippedDay || p.heldDay) continue;
-      if (cardsAtOpenOf(tree, p.domainId) < TOPIC_FLOOR_CARDS) return true;
-    }
-    for (const c of parents.crossGoal) if (cardsAtOpenOf(tree, c.domainId) < TOPIC_FLOOR_CARDS) return true;
-  }
-  return false;
+  const lock = lockParentsOf(b, row, tree);
+  return lock != null && lock.parents.some((p) => !p.met);
 }
 
 /** Start's refusal on a TOPICS layer whose prerequisites are open (PREREQS_OPEN); null otherwise. */
@@ -15867,6 +16002,122 @@ function topicStartRefusal(b: RoadmapBundle, row: MilestoneRec, tree: readonly T
 function topicStartGuards(b: RoadmapBundle, row: MilestoneRec): StoreOp[] {
   if (kindOfRow(b.roadmap) !== "TOPICS" || row.chainRole !== "LAYER" || row.layer == null || row.layer <= 1) return [];
   return [{ op: "guard", guard: { g: "PREREQS_MET", roadmapId: b.roadmap.id, milestoneId: row.id } }];
+}
+
+/** The order of topic keys (S, then U, then T, each by number), for the lock's suggestions. */
+const byKeyOrder = (a: string, b: string): number => {
+  const ka = topicKeyOrder(a);
+  const kb = topicKeyOrder(b);
+  return ka[0] - kb[0] || ka[1] - kb[1];
+};
+
+/**
+ * Ruling N27: the lock a locked layer row shows (null while its prerequisites are met): lockParentsOf's parents and the
+ * LINK votes under EDGE_DRAW for this layer's chosen topics (a GEMINI edge not drawn and not removed, to a chosen
+ * topic of the layer before that no counting edge of the same child already names), as parents to pick: by votes,
+ * most first, then by child and parent key.
+ */
+function lockViewOf(b: RoadmapBundle, row: MilestoneRec, tree: readonly TreeField[], today: DayKey): MilestoneLockView | null {
+  const lock = lockParentsOf(b, row, tree);
+  if (!lock || !lock.parents.some((p) => !p.met)) return null;
+  const map = mapOfVersion(b, row.version);
+  const suggestions: MilestoneLockSuggestionView[] = [];
+  for (const child of map.topics.filter((t) => topicLive(t) && t.chosen && t.layer === row.layer)) {
+    const cd = domainMarkOf(tree, child.domainId);
+    for (const s of topicSuggestionsOf(map, child, tree)) suggestions.push({ child: { key: child.key, name: cd?.name ?? child.name, geminiNamed: cd?.geminiNamed ?? false }, ...s });
+  }
+  suggestions.sort((x, y) => y.votes - x.votes || byKeyOrder(x.child.key, y.child.key) || byKeyOrder(x.key, y.key));
+  // The page's parents carry their cards due today beside the gate's list (the hero's "Review <parent>" chip, ruling N27).
+  return { ...lock, parents: lock.parents.map((p) => ({ ...p, due: dueCardsOf(tree, p.domainId, today) })), suggestions };
+}
+
+/**
+ * Ruling N27 (the page): one topic's LINK votes under EDGE_DRAW (a GEMINI edge not drawn and not removed) to chosen
+ * topics of the layer before that no counting edge of this topic already names, by votes, most first, then by key:
+ * the parents to pick in one tap (the lock's suggestions and TopicRowView.suggestions read the same list).
+ */
+function topicSuggestionsOf(map: TopicMap, t: TopicDraft, tree: readonly TreeField[]): { key: string; name: string; domainId: string | null; geminiNamed: boolean; votes: number; samples: number }[] {
+  const out: { key: string; name: string; domainId: string | null; geminiNamed: boolean; votes: number; samples: number }[] = [];
+  for (const x of map.edges) {
+    if (x.childLineageId !== t.lineageId || x.origin !== "GEMINI" || x.drawn || x.decision === "REMOVED") continue;
+    const p = map.topics.find((y) => y.lineageId === x.parentLineageId && topicLive(y) && y.chosen && y.layer === t.layer - 1);
+    if (!p || map.edges.some((y) => y !== x && y.childLineageId === x.childLineageId && y.parentLineageId === x.parentLineageId && edgeCounts(y))) continue;
+    const pd = domainMarkOf(tree, p.domainId);
+    out.push({ key: p.key, name: pd?.name ?? p.name, domainId: p.domainId, geminiNamed: pd?.geminiNamed ?? false, votes: x.votes, samples: x.samples });
+  }
+  out.sort((a, b) => b.votes - a.votes || byKeyOrder(a.key, b.key));
+  return out;
+}
+
+/**
+ * Ruling N28: the study while the current milestone is a planned TOPICS layer: the first topic of its layer not done,
+ * else the first not done of the next planned layer rows in order (the Study card's rule, N14's P15 note: a layer whose
+ * topics are all done waits for its reach on cards, N26). The same counts as the layer rows' topics (layerTopicsOf). On a
+ * locked layer (ruling N27, the review round) the study is the lock's first unmet parent instead, `locked: true`.
+ */
+function studyViewOf(b: RoadmapBundle, planRows: readonly MilestoneBundle[], cur: MilestoneBundle, tree: readonly TreeField[], today: DayKey): AimStudyView | null {
+  const map = mapOfVersion(b, b.roadmap.version);
+  const fieldId = b.roadmap.fieldId ?? null;
+  // Ruling N27 (the review round): a locked layer's one action is the lock's first unmet parent, the hero's LOCKED primary
+  // ("Add n cards to <parent>"): Today, the phone and the hero read one list (lockParentsOf, the gate's own).
+  const lock = cur.status === "PLANNED" && cur.reachedDay == null ? lockViewOf(b, cur, tree, today) : null;
+  if (lock) {
+    const parent = lock.parents.find((p) => !p.met);
+    // A parent with no Domain cannot take a card (the hero says so as a line): Today's card then says the milestone is planned.
+    if (parent && !parent.domainId) return null;
+    if (parent) return { key: parent.key, name: parent.name, domainId: parent.domainId as string, fieldId, cards: parent.cards, floor: parent.floor, due: parent.due ?? 0, layer: lock.afterLayer, geminiNamed: parent.geminiNamed, locked: true };
+  }
+  const later = planRows.filter((m) => m.chainRole === "LAYER" && m.layer != null && m.status === "PLANNED" && m.reachedDay == null && m.ord > cur.ord && !superseded(b, m)).sort((x, y) => x.ord - y.ord);
+  for (const row of [cur, ...later]) {
+    const t = layerTopicsOf(map, row.layer as number, tree, today, topicFloorsOfRow(row)).find((x) => !x.done && x.domainId);
+    if (t) return { key: t.key, name: t.name, domainId: t.domainId as string, fieldId, cards: t.cards, floor: t.floor, due: t.due, layer: row.layer as number, geminiNamed: t.geminiNamed };
+  }
+  return null;
+}
+
+/** Cards due today or before in a Domain (day-granular, as the Review hub counts its due cards). */
+function dueCardsOf(tree: readonly TreeField[], domainId: string | null, today: DayKey): number {
+  if (!domainId) return 0;
+  for (const f of tree) for (const d of f.domains) if (d.id === domainId) return d.cards.filter((c) => c.dueDay <= today).length;
+  return 0;
+}
+
+/**
+ * Ruling N25 (the review round): each topic's paying floor from its layer row's PAYS CARDS_AT_LEVEL measure (realism's
+ * topicMeasureOf: TOPIC_FLOOR_CARDS for a base topic, n_d for the last layer's specialisation, §22.12), by lineage, so
+ * the shown "n of 8" is the floor the row pays at ("n of 25" on a DEEP topic); a topic with no measure on the row reads
+ * TOPIC_FLOOR_CARDS. The lock's parents keep TOPIC_FLOOR_CARDS: a DEEP topic is never a LAYER row's parent.
+ */
+function topicFloorsOfRow(m: { measures: readonly { kind: string; role: string; topicLineageId?: string | null; target: number }[] } | null | undefined): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  for (const x of m?.measures ?? []) if (x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS" && x.topicLineageId && Number.isFinite(x.target) && x.target > TOPIC_FLOOR_CARDS) out.set(x.topicLineageId, Math.round(x.target));
+  return out;
+}
+
+/** Ruling N25: a layer's chosen topics with "n of 8" (cardsAtOpenOf, the gate's count; `floors`: the row's paying targets, topicFloorsOfRow), their due cards and the Gemini mark, in the map's order. */
+function layerTopicsOf(map: TopicMap, layer: number, tree: readonly TreeField[], today: DayKey, floors: ReadonlyMap<string, number> = new Map()): MilestoneTopicView[] {
+  return map.topics
+    .filter((t) => topicLive(t) && t.chosen && t.layer === layer)
+    .map((t) => {
+      const d = domainMarkOf(tree, t.domainId);
+      const cards = cardsAtOpenOf(tree, t.domainId);
+      const floor = floors.get(t.lineageId) ?? TOPIC_FLOOR_CARDS;
+      const held = t.heldDay != null;
+      const skipped = t.skippedDay != null;
+      return {
+        key: t.key,
+        lineageId: t.lineageId,
+        name: d?.name ?? t.name,
+        domainId: t.domainId,
+        cards,
+        floor,
+        due: dueCardsOf(tree, t.domainId, today),
+        held,
+        skipped,
+        done: held || skipped || topicDoneOf(cards, floor),
+        geminiNamed: d?.geminiNamed ?? false,
+      };
+    });
 }
 
 // ── Re-plans of a TOPICS plan (ruling 50) and clearing a draft of another kind (ruling 49) ──
@@ -16038,9 +16289,9 @@ const TOPIC_NAME_FREE_KEYS: ReadonlySet<string> = new Set(["topicMap", "library"
  *   - a kept Gemini-named Domain's name (geminiNamedOf) appears outside a NamedPart with geminiNamed: true (a string
  *     with a `…Parts` sibling, title and titleParts, label and labelParts, is read through its parts; an object
  *     holding geminiNamed: true carries the mark for its own name).
- * THROW (checks): ModelTextError. REDACT (production): the text is replaced with code's words ("Layer {k}" where the
- * row names its layer, else "this topic") and one line is logged with no model text. The payload otherwise returns as
- * given.
+ * Either way (ruling N29: a missing mark is redacted in production too, never only logged), THROW (checks):
+ * ModelTextError. REDACT (production): the text is replaced with code's words ("Layer {k}" where the row names its
+ * layer, else "this topic") and one line is logged with no model text. The payload otherwise returns as given.
  */
 export function assertTopicNames(payload: unknown, ctx: { topics: readonly TopicDraft[]; domains: readonly TopicNameDomain[] }, mode: "THROW" | "REDACT"): unknown {
   const quarantined = quarantinedNamesOf(ctx.topics, ctx.domains);
@@ -16057,12 +16308,10 @@ export function assertTopicNames(payload: unknown, ctx: { topics: readonly Topic
       if (quarantined.some((n) => holdsName(v, n))) return fire(path, "a Gemini topic name not kept by you", holder);
       const parted = holder != null && Array.isArray(holder[`${key}Parts`]);
       const carriesMark = holder != null && holder.geminiNamed === true;
-      if (!parted && !carriesMark && marked.some((n) => holdsName(v, n))) {
-        // A kept Gemini-named Domain's name is the user's Domain, not quarantined text: in production the line is logged
-        // and the words stay (a missing mark is a render fault, never a leak); checks throw.
-        if (mode === "THROW") return fire(path, "a Gemini-named Domain outside its mark", holder);
-        console.warn(JSON.stringify({ evt: "roadmap.topicTripwire", path: path.slice(0, 120), reason: "a Gemini-named Domain outside its mark" }));
-      }
+      // A kept Gemini-named Domain's name outside its mark (no …Parts sibling, no geminiNamed: true on its holder) is a
+      // render fault, and reads as code's words in production as a quarantined name does (ruling N29: Gemini's words are
+      // never shown unmarked); checks throw. The Domain stays yours, in the library.
+      if (!parted && !carriesMark && marked.some((n) => holdsName(v, n))) return fire(path, "a Gemini-named Domain outside its mark", holder);
       return v;
     }
     if (Array.isArray(v)) {
@@ -16143,8 +16392,18 @@ function domainMarkOf(tree: readonly TreeField[], id: string | null): { id: stri
   return null;
 }
 
-/** RatingRecord.milestones as stored (ruling N8), read defensively: each a layer with a title, re-cut to the caps. */
-function storedMilestonesOf(rating: RatingRecord | null): t5.LayerMilestone[] {
+/** Ruling N29 (the review round): the gate a stored milestone line passes on read, as the MAP step builds it before storage (the names' label context, the figure strip). */
+function milestoneGateOf(b: RoadmapBundle, tree: readonly TreeField[]): topicsLib.MilestoneGate {
+  return { label: labelContextOf(b, tree, "TOPIC"), strip: evidence.stripFiguresOf };
+}
+
+/**
+ * RatingRecord.milestones as stored (ruling N8), read defensively: each a layer with a title, re-cut to the caps and, with
+ * a gate (ruling N29, the review round), passed through the figure strip and checkLabel on read exactly as a fresh MAP's
+ * lines are before storage, so a map stored before N29 shows no figure, claim or resource Gemini wrote either (a failing
+ * title leaves its layer untitled, "Layer k"; a failing hurdle or target goes alone). Without a gate: the stored words re-cut.
+ */
+function storedMilestonesOf(rating: RatingRecord | null, gate: topicsLib.MilestoneGate | null = null): t5.LayerMilestone[] {
   const raw = rating && Array.isArray(rating.milestones) ? (rating.milestones as unknown[]) : [];
   const out: t5.LayerMilestone[] = [];
   for (const m of raw) {
@@ -16152,9 +16411,9 @@ function storedMilestonesOf(rating: RatingRecord | null): t5.LayerMilestone[] {
     const r = m as Record<string, unknown>;
     const layer = r.layer;
     if (typeof layer !== "number" || !Number.isInteger(layer) || layer < t5.LAYERS_MIN || layer > t5.LAYERS_MAX || out.some((x) => x.layer === layer)) continue;
-    const title = topicsLib.milestoneTextOf(r.title, t5.MILESTONE_TITLE_MAX);
+    const title = topicsLib.milestoneTextOf(r.title, t5.MILESTONE_TITLE_MAX, gate);
     if (title === "") continue;
-    out.push({ layer, title, hurdle: topicsLib.milestoneTextOf(r.hurdle, t5.MILESTONE_LINE_MAX), target: topicsLib.milestoneTextOf(r.target, t5.MILESTONE_LINE_MAX) });
+    out.push({ layer, title, hurdle: topicsLib.milestoneTextOf(r.hurdle, t5.MILESTONE_LINE_MAX, gate), target: topicsLib.milestoneTextOf(r.target, t5.MILESTONE_LINE_MAX, gate) });
   }
   return out.sort((a, b) => a.layer - b.layer);
 }
@@ -16191,6 +16450,9 @@ function topicMapViewOf(
     : { layers: map.layers, origin: "YOURS", geminiLayers: null, mapFilled: null, unsure: null, oneReply: null, replies: [], breadth: "MEDIUM", room: { ...BREADTH_TABLE.MEDIUM }, reasons: [], cautions: [], changes: [], tail: DEPTH_TAIL[opts.depth], appEstimate: map.layers };
   // A live plan's layer states read its milestones: reached DONE, held HELD, the next one open OPEN, the rest AFTER.
   const rows = opts.draft ? [] : planRowsOf(b).filter((m) => m.chainRole === "LAYER");
+  // Ruling N25 (the review round): a plan's rows carry each topic's paying floor (n_d on the last layer); a draft reads the chain's (topicFloorOf).
+  const rowFloors = new Map<string, number>();
+  for (const m of rows) if (!superseded(b, m)) for (const [l, n] of topicFloorsOfRow(m)) rowFloors.set(l, n);
   const stateOf = (layer: number): TopicLayerView["state"] => {
     if (opts.draft) return layer === 1 ? "OPEN" : "AFTER";
     const m = rows.find((r) => r.layer === layer && !superseded(b, r));
@@ -16231,6 +16493,8 @@ function topicMapViewOf(
       canChoose: !(t.layer === 1 && startsChosen),
       role: t.role,
       level: levelOf(),
+      // Ruling N25: "n of 8" (cardsAtOpenOf, the gate's count) beside the level.
+      ...(t.domainId ? { cards: cardsAtOpenOf(tree, t.domainId), floor: rowFloors.get(t.lineageId) ?? topicFloorOf(tree, t) } : {}),
       parents: parents.layer
         ? { kind: "LAYER", layer: t.layer - 1 }
         : {
@@ -16243,6 +16507,8 @@ function topicMapViewOf(
           },
       children: childKeys,
       votes: t.nameOrigin === "GEMINI" ? { form: t.formVotes, samples: t.samples } : null,
+      // Ruling N27 (the page): the LINK votes under EDGE_DRAW, as parents to pick in one tap (none on layer 1).
+      ...(t.layer > 1 ? { suggestions: topicSuggestionsOf(map, t, tree).map((s) => ({ key: s.key, name: s.name, votes: s.votes, samples: s.samples })) } : {}),
       // The sources Google linked: a LINKED name's, a LINKED_ONE name's one (ruling N3), and a kept one's in its ▸.
       sources: cls === "LINKED" || cls === "LINKED_ONE" || cls === "KEPT" ? t.sources.slice(0, GROUND_SOURCES_SHOWN) : [],
       placed: t.placedBy,
@@ -16250,11 +16516,14 @@ function topicMapViewOf(
       skipped: t.skippedDay != null,
       notes: [...t.notes],
       domain,
+      // Rulings N30 and N31: why a name sits behind the fold, inline (a NEAR_DUPLICATE names what it duplicates).
+      ...hideViewOf(map, t),
     };
   };
   const layers: TopicLayerView[] = [];
   let hiddenAll = 0;
-  const milestones = storedMilestonesOf(opts.rating);
+  // Ruling N29 (the review round): a stored line passes the gate on read too (a map stored before the ruling shows no figure of Gemini's).
+  const milestones = storedMilestonesOf(opts.rating, milestoneGateOf(b, tree));
   for (let layer = 1; layer <= map.layers; layer++) {
     const inLayer = map.topics.filter((t) => topicLive(t) && t.layer === layer);
     const shown = inLayer.filter((t) => !topicHidden(t));
@@ -16354,14 +16623,39 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
       if (!m) return r;
       const lineages = Array.from(new Set(m.measures.map((x) => x.topicLineageId).filter((l): l is string => !!l)));
       const known = lineages.length > 0 && lineages.every((l) => liveMap.topics.some((t) => t.lineageId === l && (t.skippedDay != null || t.heldDay != null)));
-      const locked = m.chainRole === "LAYER" && m.status === "PLANNED" && m.reachedDay == null && m.layer != null && prereqsOpenOf(b, m, tree);
-      return { ...r, layer: m.layer ?? null, chainRole: (m.chainRole === "LAYER" || m.chainRole === "DEPTH" ? m.chainRole : null) as t5.ChainRole | null, opensAfter: locked ? (m.layer as number) - 1 : null, titleParts: namedPartsOf(r.title, marks), known };
+      // Rulings N25 and N27: a layer row's topics with "n of 8", and its lock (the parents prereqsOpenOf reads) while it is locked.
+      const lock = m.chainRole === "LAYER" && m.status === "PLANNED" && m.reachedDay == null && m.layer != null ? lockViewOf(b, m, tree, today) : null;
+      const locked = lock != null;
+      const topics = m.chainRole === "LAYER" && m.layer != null ? layerTopicsOf(liveMap, m.layer, tree, today, topicFloorsOfRow(m)) : null;
+      return {
+        ...r,
+        layer: m.layer ?? null,
+        chainRole: (m.chainRole === "LAYER" || m.chainRole === "DEPTH" ? m.chainRole : null) as t5.ChainRole | null,
+        opensAfter: locked ? (m.layer as number) - 1 : null,
+        titleParts: namedPartsOf(r.title, marks),
+        known,
+        ...(topics ? { topics } : {}),
+        ...(m.chainRole === "LAYER" && m.status === "PLANNED" && m.reachedDay == null ? { lock } : {}),
+      };
     });
     // The current view's measure rows are its milestone's measures less the checkpoint's, in order (currentViewOf).
     const specs = out.current ? out.current.milestone.measures.filter((x) => x.kind !== "CHECKPOINT") : [];
+    const curRow = out.current?.milestone.id ? (rowById.get(out.current.milestone.id) ?? null) : null;
+    // Ruling N29 (the review round): the current milestone's title in parts and each item that names a kept Gemini-named
+    // Domain (its own DOMAIN item, a practice's or a step's words) in parts too, so no such name is bare on the payload
+    // (the Now section draws both from the library's marks); an item naming none is as it was.
+    const partedItem = (i: ItemDraft): ItemDraft => {
+      const parts = namedPartsOf(i.label, marks);
+      return parts.some((p) => p.geminiNamed) ? { ...i, labelParts: parts } : i;
+    };
     const current = out.current
       ? {
           ...out.current,
+          milestone: {
+            ...out.current.milestone,
+            titleParts: namedPartsOf(out.current.milestone.title, marks),
+            items: out.current.milestone.items.map(partedItem),
+          },
           measures: out.current.measures.map((x, i) => {
             const spec = specs[i];
             const lineage = spec?.topicLineageId ?? null;
@@ -16369,6 +16663,10 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
             const climbing = spec && spec.role === "CONTEXT" && t && !t.skippedDay && !t.heldDay && spec.minLevel != null && spec.minLevel < BASE_LEVEL ? BASE_LEVEL : null;
             return { ...x, topicLineageId: lineage, climbing, ...(typeof x.label === "string" ? { labelParts: namedPartsOf(x.label, marks) } : {}) };
           }),
+          // Rulings N25 and N27: the current layer's topics with "n of 8", and its lock while its prerequisites are open.
+          ...(curRow?.chainRole === "LAYER" && curRow.layer != null
+            ? { topics: layerTopicsOf(liveMap, curRow.layer, tree, today, topicFloorsOfRow(curRow)), lock: curRow.status === "PLANNED" && curRow.reachedDay == null ? lockViewOf(b, curRow, tree, today) : null }
+            : {}),
         }
       : out.current;
     // "Toward the aim" names the plan's Domains in its measure labels: a kept Gemini-named one carries its mark there too.
@@ -17943,6 +18241,8 @@ async function runMapStep(s: StepRun): Promise<void> {
     freeDomains: chainFreeDomainsOf(s.c, map, cross.held),
     takenNames: cross.takenNames,
     label: labelContextOf(s.c.b, s.c.tree, "TOPIC"),
+    // Ruling N29: the milestone lines pass the figure strip and checkLabel's flags before they are stored.
+    stripFigures: evidence.stripFiguresOf,
     countryNamed: chainCountryNamedOf([intake.aim, intake.constraints, intake.examLabel, ...chainOutlineOf(intake)]),
     makeId: s.c.e.makeId,
   });

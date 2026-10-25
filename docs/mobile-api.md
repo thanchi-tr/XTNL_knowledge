@@ -711,7 +711,9 @@ quest's key results, the daily quests stay the musts, and Today's three stay mom
       "titleNote": "Gemini suggestion · not checked" | null, "titleStruck": [[0, 2]],
       "status": "PLANNED" | "STARTED" | "REACHED" | "PENDING_REACH" | "PAST_DUE",
       "percent": 42 | null, "dueDay": "2026-11-08" | null } | null,
-    "startOnWeb": false, "suggest": true } | null,
+    "startOnWeb": false, "suggest": true,
+    "study": { "name": "Markov chains", "domainId": "…", "cards": 3, "floor": 8, "due": 4, "layer": 1, "geminiNamed": true,
+      "line": "Study Markov chains · 3 of 8 · 4 due", "webHref": "/review?view=run&domain=…" } | null } | null,
   "sprint": { "label": "This week's sprint", "milestoneOrd": 2, "weekStart": "2026-10-19", "weekEnd": "2026-10-25",
     "state": "OPEN" | "HELD" | "PAST_DUE", "done": 2, "total": 5,
     "status": "live" | "provisional" | "settling", "line": "provisional · final Wed 04:00" | null,
@@ -732,7 +734,19 @@ quest's key results, the daily quests stay the musts, and Today's three stay mom
   suggestions are turned off). Null when it couldn't be read.
 - `startOnWeb`: a planned milestone can be started on the web. **Start and every plan edit stay on the web**: the app
   never starts a milestone. Start is offered only while `ROADMAP_GOALS_LIVE` is on, so `startOnWeb` is false while the
-  switch is off (a planned milestone then reads "Milestone 1 is planned.").
+  switch is off (a planned milestone then reads "Milestone 1 is planned."), and false on a topic plan's layer whose
+  prerequisites are still open (roadmap contracts ruling N28).
+- `study` (roadmap contracts ruling N28): while the main quest's milestone is a planned layer of a topic plan (locked, or
+  Start off), the one thing to do, as Today's Main quest card says it: the topic to study now (the first of the layer
+  not done, else the next planned layer's), its `cards` at level 6 of the `floor` ("3 of 8": the gate's count, the same
+  the roadmap page shows), its cards `due` today, its `layer`, whether Gemini named its Domain (`geminiNamed`: the
+  web's mark), the web's `line` ("Study Markov chains · 3 of 8 · 4 due", or "Add an idea to Markov chains" with none
+  due) and `webHref`, the web link the card goes to (that Domain's review run, `/review?view=run&domain=<id>`, never the
+  bare review page; or the add flow placed in the Domain). The run itself stays on the web: the app says the line. On a
+  locked layer (its prerequisites open, roadmap contracts ruling N27) it is the lock's first unmet parent, the roadmap
+  hero's own primary: `line` "Add 3 cards to <parent>", `webHref` the add flow placed in that Domain, `layer` the layer
+  before. `geminiNamed` is the web's mark on the name: the app says "named by Gemini" under the line. Null on a LEVELS
+  plan, once the milestone has started, and with no topic left to do.
 - `sprint`: this life week's sprint of the main quest's started milestone (frozen just after Monday 04:00), null with
   none (a planned milestone has none). `done` of `total` counts its rows done. `status` says when the numbers are from:
   `live` while the week runs; `provisional` on its Sunday, with `line` "provisional · final Wed 04:00"; `settling`

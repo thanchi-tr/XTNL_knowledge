@@ -19,6 +19,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/Button";
 import { pushToast } from "@/components/ui/toast-store";
 import { ActionError } from "@/components/home/ActionError";
+import { DomainName } from "@/components/glyph/NamedMark";
 import { ACCEPT_UNDO_MS, STAGE_KEYS, STAGE_LEVEL, STAGE_NAMES, topicNameMatchesOf, type LibraryDomain, type MilestoneRowView, type PlanEdit, type PlanEditResult, type PlanEditView } from "@/lib/roadmap-types";
 import { useRoadmapAction } from "./roadmap-runtime";
 
@@ -30,7 +31,8 @@ const plural = (n: number, w: string) => `${n} ${n === 1 ? w : `${w}s`}`;
 /** The toast's title for an edit's answer: the cards it counted ("+38 cards counted"), else what changed. */
 export function planEditToastTitle(edit: PlanEdit, r: PlanEditResult): string {
   if (edit.kind === "ADD_TOPIC") return r.counted != null && r.counted > 0 ? `+${plural(r.counted, "card")} counted` : "Topic added";
-  return edit.kind === "RENAME" ? "Title saved" : "Topic off this milestone";
+  // Ruling N27 (the page): the lock's pick names its parent in its own toast (pickedParentToast); this is the fallback.
+  return edit.kind === "RENAME" ? "Title saved" : edit.kind === "PICK_PARENT" ? "Builds on it now" : "Topic off this milestone";
 }
 
 /** The gate stage's name at a level ("Retained"), for the level chips. */
@@ -138,7 +140,10 @@ export function PlanEditBody({ row, plan, library, onClose }: { row: MilestoneRo
           {domains.map((d) => (
             <li key={d.id} className="rm-pe-topic">
               <span className="rm-pick-t">
-                <b data-wc="name">{d.name}</b>
+                {/* Ruling N29 (the review round): a Gemini-named Domain carries its mark here (pv.named), never a bare name. */}
+                <b>
+                  <DomainName name={d.name} geminiNamed={d.geminiNamed === true} />
+                </b>
                 {cardsOf.has(d.id) && <span className="t-meta">{plural(cardsOf.get(d.id) as number, "card")}</span>}
               </span>
               {removeOn && (

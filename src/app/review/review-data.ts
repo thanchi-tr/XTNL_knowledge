@@ -17,7 +17,7 @@ import { cached } from "@/lib/cache";
 import { dateColumn, dayKeyOf, keyOfDateColumn, type DayKey } from "@/lib/life-day";
 import type { HistoryRow } from "@/lib/review-facts";
 import { studyFocusOf, type StudyFocus } from "@/lib/roadmap-study";
-import type { LayerMilestone } from "@/lib/roadmap-types";
+import { TOPIC_FLOOR_CARDS, cardsAtOpenCountOf, type LayerMilestone } from "@/lib/roadmap-types";
 
 export interface ReviewDay {
   /** REVIEW rows today: the quest's progress (today-board.ts reads the same count). */
@@ -95,8 +95,9 @@ export function loadLastSeen(userId: string): Promise<LastSeen> {
 /** The rows the hub's roadmap focus reads (ruling N14), fetched in the page's first wave; null with no accepted TOPICS goal. */
 export interface StudyFocusRows {
   roadmap: { id: string; aim: string; label: string | null; version: number; fieldId: string | null; rating: unknown };
-  topics: { key: string; layer: number; name: string; domainId: string | null; chosen: boolean; decision: string; skippedDay: Date | null; heldDay: Date | null }[];
-  milestones: { layer: number | null; title: string; status: string; reachedDay: Date | null }[];
+  topics: { key: string; lineageId: string; layer: number; name: string; domainId: string | null; chosen: boolean; decision: string; skippedDay: Date | null; heldDay: Date | null }[];
+  /** Each layer row with its paying card measures (ruling N25, the review round: a topic's floor is the row's target, n_d on the last layer). */
+  milestones: { layer: number | null; title: string; status: string; reachedDay: Date | null; measures: { topicLineageId: string | null; target: number }[] }[];
 }
 
 /**
@@ -115,12 +116,12 @@ export async function loadStudyFocusRows(userId: string): Promise<StudyFocusRows
       prisma.roadmapTopic.findMany({
         where: { roadmapId: roadmap.id, version: roadmap.version },
         orderBy: [{ layer: "asc" }, { createdAt: "asc" }],
-        select: { key: true, layer: true, name: true, domainId: true, chosen: true, decision: true, skippedDay: true, heldDay: true },
+        select: { key: true, lineageId: true, layer: true, name: true, domainId: true, chosen: true, decision: true, skippedDay: true, heldDay: true },
       }),
       prisma.roadmapMilestone.findMany({
         where: { roadmapId: roadmap.id, chainRole: "LAYER", status: { in: ["PLANNED", "STARTING", "STARTED"] } },
         orderBy: [{ version: "desc" }],
-        select: { layer: true, title: true, status: true, reachedDay: true },
+        select: { layer: true, title: true, status: true, reachedDay: true, measures: { where: { kind: "CARDS_AT_LEVEL", role: "PAYS" }, select: { topicLineageId: true, target: true } } },
       }),
     ]);
     return { roadmap, topics, milestones };
@@ -130,16 +131,18 @@ export async function loadStudyFocusRows(userId: string): Promise<StudyFocusRows
   }
 }
 
-/** The focus from its rows and the Field tree the page holds (the Domains' levels and due counts). Pure; never throws. */
+/** The focus from its rows and the Field tree the page holds (each Domain's recall cards at OPEN_LEVEL, ruling N25, and its due count; each topic's floor from its row's paying measure). Pure; never throws. */
 export function studyFocusFromRows(
   rows: StudyFocusRows | null,
-  fields: readonly { id: string; name: string; domains: readonly { id: string; name: string; level: number; ideas: readonly { dueDate: Date }[] }[] }[],
+  fields: readonly { id: string; name: string; domains: readonly { id: string; name: string; ideas: readonly { dueDate: Date; level: number; questionType?: string | null }[] }[] }[],
   isDue: (d: Date) => boolean
 ): StudyFocus | null {
   if (!rows) return null;
   const r = rows.roadmap;
   const field = fields.find((f) => f.id === r.fieldId) ?? null;
-  const domains = fields.flatMap((f) => f.domains.map((d) => ({ id: d.id, name: d.name, level: d.level, cards: d.ideas.length, due: d.ideas.filter((i) => isDue(i.dueDate)).length })));
+  const domains = fields.flatMap((f) =>
+    f.domains.map((d) => ({ id: d.id, name: d.name, atOpen: cardsAtOpenCountOf(d.ideas.map((i) => ({ level: i.level, questionType: i.questionType }))), cards: d.ideas.length, due: d.ideas.filter((i) => isDue(i.dueDate)).length }))
+  );
   // One row per layer: the newest version's.
   const seen = new Set<number>();
   const layerRows = rows.milestones.filter((m): m is typeof m & { layer: number } => {
@@ -147,6 +150,9 @@ export function studyFocusFromRows(
     seen.add(m.layer);
     return true;
   });
+  // Ruling N25 (the review round): a topic's floor is its layer row's paying target (n_d on the last layer's specialisation), else TOPIC_FLOOR_CARDS.
+  const floors = new Map<string, number>();
+  for (const m of layerRows) for (const x of m.measures ?? []) if (x.topicLineageId && Number.isFinite(x.target) && x.target > TOPIC_FLOOR_CARDS) floors.set(x.topicLineageId, Math.round(x.target));
   const rating = r.rating && typeof r.rating === "object" && !Array.isArray(r.rating) ? (r.rating as { milestones?: unknown }) : null;
   const geminiMilestones = (Array.isArray(rating?.milestones) ? rating.milestones : []).filter(
     (m): m is LayerMilestone => !!m && typeof m === "object" && typeof (m as LayerMilestone).layer === "number" && typeof (m as LayerMilestone).title === "string"
@@ -156,7 +162,7 @@ export function studyFocusFromRows(
     goal: r.label?.trim() || r.aim,
     fieldId: r.fieldId,
     fieldName: field?.name ?? null,
-    topics: rows.topics.map((t) => ({ key: t.key, layer: t.layer, name: t.name, domainId: t.domainId, chosen: t.chosen, decision: t.decision, skipped: t.skippedDay != null, held: t.heldDay != null })),
+    topics: rows.topics.map((t) => ({ key: t.key, layer: t.layer, name: t.name, domainId: t.domainId, chosen: t.chosen, decision: t.decision, skipped: t.skippedDay != null, held: t.heldDay != null, ...(floors.has(t.lineageId) ? { floor: floors.get(t.lineageId) } : {}) })),
     milestones: layerRows.map((m) => ({ layer: m.layer, title: m.title, status: m.status, reached: m.reachedDay != null })),
     geminiMilestones,
     domains,

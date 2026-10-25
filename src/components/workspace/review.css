@@ -33,6 +33,9 @@
   .rv-focus-map { display: inline-grid; place-items: center; width: 40px; height: 40px; margin: -8px -8px -8px 0; color: var(--ink-1); border-radius: 10px; flex: none; }
   .rv-focus-map:hover { color: var(--ink-0); }
   .rv-focus-title { margin: 0; font: 600 18px/24px var(--font-display); overflow-wrap: anywhere; }
+  /* roadmap ruling N29: Gemini's milestone title is never bare: its mark (LayerBand's pv.suggest) sits beside the words */
+  .rv-focus-title[data-gemini] { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .rv-focus-title[data-gemini] > svg { flex: none; color: var(--ink-1); }
   .rv-focus-now { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line-1); border-radius: 12px; min-width: 0; }
   .rv-focus-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   .rv-focus-name { flex: 1; min-width: 0; font: 600 16px/22px var(--font-ui); overflow-wrap: anywhere; }

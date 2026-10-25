@@ -101,6 +101,16 @@ import "./_no-model";
  *
  * Cases that exercise another lane's real code (R1's readings, lane L's
  * prepareRoadmapGoalClose) go green at integration in those lanes' checks.
+ *
+ * Roadmap rework 1, P1 (contracts §22.20 rulings N25–N27; 2026-10-25): every
+ * source this check slices or greps is read with LF line ends (readLf, as
+ * roadmap-quests-check reads), so the pins that slice on "\n}\n" hold on a
+ * CRLF checkout too (the 4 that read false there read true); the layer rows'
+ * topics with "n of 8" (N25); a reach on cards alone (N26: a PLANNED layer
+ * row with a reachedDay and no HELD_AT_START note reads REACHED with no rank,
+ * never pays, and opens the next layer); the lock payload (N27: the parents
+ * prereqsOpenOf reads, equal to the fake store's PREREQS_MET on drawn, picked
+ * and whole-layer parents; LINK votes under EDGE_DRAW surfaced).
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -255,8 +265,10 @@ const WRITES_OFF = { NODE_ENV: "development" };
 const CODE_ORIGIN = ORIGINS[1];
 
 if (todayKey(NOW) !== TODAY) throw new Error(`fixture clock: ${todayKey(NOW)}`);
+/** A source file's text with its line ends read as LF, so the slices on "\n}\n" and the greps hold whichever ends a checkout or an editor wrote (as roadmap-quests-check reads). */
+const readLf = (p: string): string => readFileSync(join(process.cwd(), p), "utf8").replace(/\r\n/g, "\n");
 /** roadmap-server.ts as written (the revision-5 re-pins read it before main's own SERVER_SRC). */
-const SERVER_SRC_TOP = readFileSync(join(process.cwd(), "src/lib/roadmap-server.ts"), "utf8");
+const SERVER_SRC_TOP = readLf("src/lib/roadmap-server.ts");
 
 // ═══ The in-memory store ════════════════════════════════════════════════════
 
@@ -431,10 +443,10 @@ class FakeWorld {
     return true;
   }
 
-  /** Live cards at OPEN_LEVEL (6) or above in a Domain of the fixture tree, as the PREREQS_MET SQL counts Idea rows. */
+  /** Live recall cards at OPEN_LEVEL (6) or above in a Domain of the fixture tree, as the PREREQS_MET SQL counts Idea rows (a MULTI card never: ruling N25, the review round). */
   private cardsAtOpen(domainId: string | null): number {
     if (!domainId) return 0;
-    for (const f of this.tree) for (const d of f.domains) if (d.id === domainId) return d.cards.filter((c) => c.level >= 6).length;
+    for (const f of this.tree) for (const d of f.domains) if (d.id === domainId) return d.cards.filter((c) => c.level >= 6 && c.type !== "MULTI").length;
     return 0;
   }
 
@@ -2216,28 +2228,28 @@ async function main() {
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/(^|\s)\/\/[^\n]*/g, "$1")
         .replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""');
-    const files = srcFilesOf("src").map((f) => ({ f, code: codeOnly(readFileSync(join(process.cwd(), f), "utf8")) }));
+    const files = srcFilesOf("src").map((f) => ({ f, code: codeOnly(readLf(f)) }));
     const startCallers = files.filter((x) => /\b(?:startMilestoneCore|finishStartCore)\s*\(/.test(x.code)).map((x) => x.f).sort();
     eq("P14: only the Start sheet's actions (and roadmap-server itself) call startMilestoneCore or finishStartCore", startCallers, ["src/app/actions/roadmap.ts", "src/lib/roadmap-server.ts"]);
     const gateReaders = files.filter((x) => /\bROADMAP_GOALS_LIVE\b/.test(x.code)).map((x) => x.f);
     eq("P14: ROADMAP_GOALS_LIVE is read only through roadmapGoalsLive (roadmap-types)", gateReaders, ["src/lib/roadmap-types.ts"]);
     check(
       "P14: roadmap-server's default gate is roadmapGoalsLive(deps.env), and the Ideas page reads roadmapGoalsLive()",
-      /goalsLive: deps\.goalsLive \?\? roadmapGoalsLive\(deps\.env\),/.test(readFileSync(join(process.cwd(), "src/lib/roadmap-server.ts"), "utf8")) &&
-        /goalsLive: roadmapGoalsLive\(\),/.test(readFileSync(join(process.cwd(), "src/app/review/page.tsx"), "utf8"))
+      /goalsLive: deps\.goalsLive \?\? roadmapGoalsLive\(deps\.env\),/.test(readLf("src/lib/roadmap-server.ts")) &&
+        /goalsLive: roadmapGoalsLive\(\),/.test(readLf("src/app/review/page.tsx"))
     );
     // The lead's rehearsal (scripts/roadmap-rehearse.ts) writes, so it runs on the local Docker database only and in no
     // check chain: its guard runs before Prisma or any core loads (every static import from src is `import type`).
-    const rehearse = readFileSync(join(process.cwd(), "scripts/roadmap-rehearse.ts"), "utf8");
+    const rehearse = readLf("scripts/roadmap-rehearse.ts");
     check(
-      "P14: the rehearsal refuses a non-local host, any supabase URL and production, sets XTNL_LIFE_JUDGE=1, guards before Prisma loads, and is in no check chain",
+      "P14: the rehearsal refuses a non-local host, any supabase URL and production, sets XTNL_LIFE_JUDGE=1, guards before Prisma loads (the --dry branch returns before any core loads), and is in no check chain",
       /const LOCAL_HOSTS = new Set\(\["localhost", "127\.0\.0\.1", "\[::1\]", "::1"\]\);/.test(rehearse) &&
         /if \(\/supabase\/i\.test\(raw\)\) return /.test(rehearse) &&
         /if \(!LOCAL_HOSTS\.has\(u\.hostname\.toLowerCase\(\)\)\) return /.test(rehearse) &&
         /if \(process\.env\.NODE_ENV === "production"\) problems\.push\(/.test(rehearse) &&
         /process\.env\.XTNL_LIFE_JUDGE = "1";/.test(rehearse) &&
         !/^import (?!type\b)[^\n]*from "\.\.\/src\//m.test(rehearse) &&
-        /\bguard\(\);\s*M = await loadModules\(\);/.test(rehearse) &&
+        /\bguard\(\);\s*if \(DRY\) \{[\s\S]*?\n\s*return;\s*\}\s*M = await loadModules\(\);/.test(rehearse) &&
         !/roadmap-rehearse/.test(readFileSync(join(process.cwd(), "package.json"), "utf8"))
     );
   }
@@ -2254,8 +2266,8 @@ async function main() {
     const born = w.templates.filter((t) => t.captureKey?.startsWith("rm:"));
     check("Start defers no task at all: no sizing of a plan-born template", st.ok && tasks.length === 0 && born.length >= 3, json([st.ok, tasks.length, born.length]));
     check("…every plan-born template keeps the catalog's minutes (a practice's estMinutes from its band), never a model's", born.filter((t) => t.kind === "HABIT").every((t) => (t.parsed?.estMinutes ?? 0) > 0), json(born.map((t) => [t.kind, t.parsed?.estMinutes])));
-    const src = readFileSync(join(process.cwd(), "src/lib/roadmap-server.ts"), "utf8");
-    const actions = readFileSync(join(process.cwd(), "src/app/actions/roadmap.ts"), "utf8");
+    const src = readLf("src/lib/roadmap-server.ts");
+    const actions = readLf("src/app/actions/roadmap.ts");
     check("…and neither roadmap-server nor its actions reach life-sizing (no applySizing call or import)", !/applySizing\(/.test(src) && !/from "\.\/life-sizing"|from "@\/lib\/life-sizing"/.test(src + actions), "");
   }
   {
@@ -3341,8 +3353,8 @@ async function main() {
       this.values.delete(name);
     }
   }
-  const SERVER_SRC = readFileSync(join(process.cwd(), "src/lib/roadmap-server.ts"), "utf8");
-  const ACTIONS_SRC = readFileSync(join(process.cwd(), "src/app/actions/roadmap.ts"), "utf8");
+  const SERVER_SRC = readLf("src/lib/roadmap-server.ts");
+  const ACTIONS_SRC = readLf("src/app/actions/roadmap.ts");
 
   console.log("— rev 4: the aim invitation (F-R4-1, F-R4-2, F-R4-3, F-R4-5) —");
   {
@@ -3431,7 +3443,7 @@ async function main() {
     ]);
     check("…never a title or label in the step", !json(step).includes("to level 6+"), json(step));
     void b;
-    check("closing a ROADMAP goal revalidates 'roadmap' (goals-server), so START shows on the next render", /if \(isRoadmap\) invalidate\("roadmap"\)/.test(readFileSync(join(process.cwd(), "src/lib/goals-server.ts"), "utf8")));
+    check("closing a ROADMAP goal revalidates 'roadmap' (goals-server), so START shows on the next render", /if \(isRoadmap\) invalidate\("roadmap"\)/.test(readLf("src/lib/goals-server.ts")));
   }
 
   console.log("— rev 4: the intake (F-R4-4, F-R4-9, F-R4-16, F-R4-24) —");
@@ -3643,7 +3655,7 @@ async function main() {
     check("the grep: no milestone or item insert outside writeRoadmapRows", start > 0 && end > start && inserts.length === 0, inserts.join(" | "));
     check("…no update that writes title, label, origin, titleOrigin, catalogKey, proposedName or rawLabel outside it", textUpdates.length === 0, textUpdates.map((m) => m[0].slice(0, 120)).join(" | "));
     check("…the generic row update sends text fields through the writer (updateOne's TEXT_FIELDS guard)", /if \(TEXT_FIELDS\.some\(\(k\) => k in data\)\)/.test(SERVER_SRC));
-    const srcFiles = ["src/lib/roadmap-server.ts", "src/lib/roadmap-readings.ts", "src/lib/roadmap-quests-server.ts", "src/lib/tasks.ts", "src/lib/goals-server.ts"].map((f) => readFileSync(join(process.cwd(), f), "utf8")).join("\n");
+    const srcFiles = ["src/lib/roadmap-server.ts", "src/lib/roadmap-readings.ts", "src/lib/roadmap-quests-server.ts", "src/lib/tasks.ts", "src/lib/goals-server.ts"].map(readLf).join("\n");
     check("…and no prisma.roadmapItem / roadmapMilestone create, createMany, update, updateMany or upsert anywhere", !/prisma\.roadmap(Item|Milestone)\.(create|createMany|update|updateMany|upsert)\(/.test(srcFiles));
   }
   {
@@ -4263,7 +4275,7 @@ async function main() {
     );
     const none = await plan({ accM: 1.5, cards: false });
     eq("…and with no card at the depth, neither the acceptance nor the ledger is read", [none.w.acceptanceReads.length, none.w.reviewReads.length], [0, 0]);
-    const src = readFileSync(join(process.cwd(), "src/lib/roadmap-server.ts"), "utf8");
+    const src = readLf("src/lib/roadmap-server.ts");
     const storeRead = /async acceptanceMultiplier\(userId, roadmapId\) \{[\s\S]{0,400}?\n {2}\},/.exec(src)?.[0] ?? "";
     check(
       "the Prisma store reads the current acceptance as R1 does: the user's roadmap, undone ones skipped, acceptanceOrderBy (newest version, then newest record)",
@@ -5441,7 +5453,7 @@ async function main() {
         /practiceFamily: r\.fieldId != null \? practiceFamilyOfCoverage\(r\.coverage\)/.test(SERVER_SRC) &&
         /coverage: coverageJsonOf\(i\.coverage \?\? null, i\.activities \?\? null, /.test(SERVER_SRC)
     );
-    const ACTION_SRC = readFileSync(join(__dirname, "../src/app/actions/roadmap.ts"), "utf8");
+    const ACTION_SRC = readLf("src/app/actions/roadmap.ts");
     check(
       "the action takes an ActivityCardAnswer and cleans its shape (a string key, an array of strings, a boolean); the earlier per-kind list is refused, never read as an answer",
       /export async function setActivityVerdicts\(roadmapId: string, answer: ActivityCardAnswer\)/.test(ACTION_SRC) &&
@@ -7238,8 +7250,14 @@ async function main() {
     const marked = { topics: [], domains: [{ id: "d-gem", name: NAME, nameOrigin: "GEMINI", originName: NAME }] };
     const bare = { current: { measures: [{ label: `${NAME} · cards at level 6+` }] } };
     const parted = { current: { measures: [{ label: `${NAME} · cards at level 6+`, labelParts: [{ text: NAME, geminiNamed: true }, { text: " · cards at level 6+", geminiNamed: false }] }] } };
+    // Ruling N29 (roadmap rework 1, P3): a missing mark is redacted in production as a quarantined name is ("Layer k" where
+    // the holder names its layer, else "this topic"), never only logged; the marked and parted shapes still pass as given.
+    const bareRedacted = S.assertTopicNames(bare, marked, "REDACT") as typeof bare;
+    const layered = { rows: [{ layer: 3, label: `${NAME} · cards at level 6+` }] };
+    const layeredRedacted = S.assertTopicNames(layered, marked, "REDACT") as typeof layered;
+    const holderMarked = { rows: [{ layer: 3, label: NAME, geminiNamed: true }] };
     check(
-      "tripwire: assertTopicNames refuses a Gemini name not kept by you in a plan view (a milestone title: THROW in checks, 'Layer 2' under REDACT), passes it inside the map and once kept, and a kept Gemini-named Domain only through its mark",
+      "tripwire: assertTopicNames refuses a Gemini name not kept by you in a plan view (a milestone title: THROW in checks, 'Layer 2' under REDACT), passes it inside the map and once kept, and a kept Gemini-named Domain only through its mark (ruling N29: a missing mark is redacted under REDACT too, 'this topic' or 'Layer 3', while a geminiNamed holder and labelParts pass as given)",
       thrown(() => S.assertTopicNames(leaked, { topics: [unchecked], domains: noDomains }, "THROW")) === "tripwire" &&
         S.assertTopicNames(inMap, { topics: [unchecked], domains: noDomains }, "THROW") === inMap &&
         redacted.milestones[0].title === "Layer 2" &&
@@ -7247,8 +7265,13 @@ async function main() {
         leaked.milestones[0].title.startsWith(NAME) &&
         S.assertTopicNames(leaked, { topics: [kept], domains: noDomains }, "THROW") === leaked &&
         thrown(() => S.assertTopicNames(bare, marked, "THROW")) === "tripwire" &&
-        S.assertTopicNames(parted, marked, "THROW") === parted,
-      json([redacted.milestones[0].title, thrown(() => S.assertTopicNames(bare, marked, "THROW"))])
+        S.assertTopicNames(parted, marked, "THROW") === parted &&
+        bareRedacted.current.measures[0].label === "this topic" &&
+        bare.current.measures[0].label.startsWith(NAME) &&
+        layeredRedacted.rows[0].label === "Layer 3" &&
+        S.assertTopicNames(parted, marked, "REDACT") === parted &&
+        S.assertTopicNames(holderMarked, marked, "REDACT") === holderMarked,
+      json([redacted.milestones[0].title, thrown(() => S.assertTopicNames(bare, marked, "THROW")), bareRedacted.current.measures[0].label, layeredRedacted.rows[0].label])
     );
     const rowsTitled = (title: string, titleOrigin: MilestoneDraft["titleOrigin"]): MilestoneDraft[] => [
       { id: null, lineageId: "lin-tw", version: 1, ord: 1, title, titleOrigin, titleDecision: "PENDING", windowStart: null, dueDay: null, status: "DRAFT", rankIndex: null, overAccepted: false, items: [], measures: [], notes: [], stage: "FAMILIAR" },
@@ -7329,8 +7352,13 @@ async function main() {
       "Loan Refinancing": "Interest Rates",
     };
     const P3_REPLY = P3.replies[0] as Recorded & { parsed: { names: Record<string, { name: string; scope: string }[]> } };
-    /** Ruling N8: the milestone this check's MAP reply writes for a layer key (P3 holds none). */
-    const MILESTONE_OF = (l: string) => ({ title: `Stage ${l} of the household plan`, hurdle: `The ${l} hurdle`, target: `The ${l} target` });
+    /**
+     * Ruling N8: the milestone this check's MAP reply writes for a layer key (P3 holds none). Re-pinned for ruling N29
+     * (roadmap rework 1, P3): the lines now pass the figure strip and checkLabel before storage, and a layer key ("L1") is
+     * a key shape the strip removes, so each layer's lines differ by a plain word instead.
+     */
+    const STAGE_WORD: Readonly<Record<string, string>> = { L1: "budget", L2: "mortgage", L3: "portfolio", L4: "buffer", L5: "pension", L6: "legacy" };
+    const MILESTONE_OF = (l: string) => ({ title: `Stage ${STAGE_WORD[l] ?? l} of the household plan`, hurdle: `The ${STAGE_WORD[l] ?? l} hurdle`, target: `The ${STAGE_WORD[l] ?? l} target` });
     const P5_META = P5.parts.metadata as { groundingChunks: { web: { title: string; uri: string } }[]; groundingSupports: Support[]; webSearchQueries: string[] };
     const P5_TERMS = P5.terms as Term[];
     const P5_LINES = (P5.parts.parts[0].text as string).split("\n");
@@ -7653,9 +7681,9 @@ async function main() {
       const start2 = m2 ? errOf(await S.startMilestoneCore(USER, m2.id, START_ALL, d.later(), d.deps)) : "no layer-2 milestone";
       eq(`names e2e (${tag}): milestone 2 refuses Start before milestone 1 is reached (PREREQS_OPEN)`, start2, PREREQS_OPEN);
       // The accepted plan's page as production loads it (the tripwire in REDACT mode: a kept Gemini-named Domain's name
-      // outside its mark is logged, never thrown). "Toward the aim" names the plan's Domains: each such label carries
-      // its mark (labelParts). The paths the tripwire still logs (the current milestone's title and item labels: the
-      // live fix's open item, no parts there yet) are listed in the detail, not passed as marked.
+      // outside its mark is redacted and logged, never thrown). "Toward the aim" names the plan's Domains: each such label
+      // carries its mark (labelParts); the current milestone's title (titleParts) and its DOMAIN items (geminiNamed) and the
+      // plan-edit rows' Domains carry theirs too (the review round), so the tripwire logs nothing anywhere on the page.
       const logged: string[] = [];
       const warn0 = console.warn;
       const mode0 = process.env.ROADMAP_CHECK;
@@ -7672,11 +7700,11 @@ async function main() {
       const towardRows = (planView?.toward?.measures ?? []).filter((x) => typeof x.label === "string" && [...marks].some((n) => (x.label as string).includes(n)));
       const tripPaths = logged.map((l) => (JSON.parse(l) as { path?: string }).path ?? l);
       check(
-        `names e2e (${tag}): the accepted plan's page loads; "Toward the aim" shows each kept Gemini-named Domain with its mark (labelParts, geminiNamed), and the tripwire logs nothing there`,
+        `names e2e (${tag}): the accepted plan's page loads; "Toward the aim" shows each kept Gemini-named Domain with its mark (labelParts, geminiNamed), and the tripwire logs nothing anywhere on the page (the review round: no path is redacted in production)`,
         planView?.state === "ACTIVE" &&
           towardRows.length > 0 &&
           towardRows.every((x) => (x.labelParts ?? []).some((p) => p.geminiNamed && marks.has(p.text))) &&
-          !tripPaths.some((p) => p.startsWith("toward.")),
+          tripPaths.length === 0,
         json({ toward: towardRows.map((x) => x.labelParts), tripwireStillLogs: tripPaths })
       );
     };
@@ -7966,9 +7994,15 @@ async function main() {
     names = fresh;
   });
 
-  // ═══ Ruling N17: [Accept all] on the live map's shape ════════════════════════════════════════════════════════
-  console.log("— ruling N17: Accept all —");
-  await topicBlock("Accept all puts every listed name in the plan (ruling N17)", async () => {
+  // ═══ Ruling N17, as ruling N30 reads it: [Accept all] on the live map's shape ════════════════════════════════
+  //
+  // N17 (2026-10-08) made [Accept all] keep and tick the not-checked names of a layer that showed nothing else, so no
+  // milestone was empty. N30 (roadmap rework 1, P3, 2026-10-25) reverses that half: a not-checked name is listed under
+  // its layer with its key and reason and a per-name tap (chooseTopic), never kept or ticked by [Accept all] itself; no
+  // Domain is made from one without your own tap; a layer holding only not-checked names waits for a tap
+  // (ACCEPT_ALL_NOT_CHECKED). N17's other half stands: every shown Gemini name (LINKED, LINKED_ONE) is kept and ticked.
+  console.log("— rulings N17 and N30: Accept all —");
+  await topicBlock("Accept all ticks every shown name; a not-checked name is listed with its reason and waits for your tap (ruling N17 as ruling N30 reads it)", async () => {
     const TMM = await import("../src/components/roadmap/topic-map-model");
     const { LAYER_UNKEPT } = await import("../src/lib/roadmap-types");
     const w = world();
@@ -7988,30 +8022,73 @@ async function main() {
     const tm = view.draft?.topicMap;
     if (!tm) throw new Error("no topic map");
     eq(
-      "N17 list: each layer's shown Gemini names, and the last layer's not-checked ones as `unchecked` (it shows nothing else)",
-      tm.acceptAll?.map((x) => [x.layer, [...x.names].sort(), x.unchecked ?? []]),
+      "N30 list: each layer's shown Gemini names (ticked by it), and every layer's not-checked ones as `unchecked` with their key and reason (GROUND's verdict), listed unticked",
+      tm.acceptAll?.map((x) => [x.layer, [...x.names].sort(), (x.unchecked ?? []).map((u) => [u.key, u.name, u.reason])]),
       [
         [2, ["Risk Tolerance Profile", "Strategic Asset Allocation"], []],
         [3, ["Loan To Value Ratio"], []],
         [4, ["Liquidity Buffer"], []],
-        [5, [], ["Rebalancing Bands", "Withdrawal Rate"]],
+        [5, [], [["T34", "Rebalancing Bands", "NONE"], ["T35", "Withdrawal Rate", "NONE"]]],
       ]
+    );
+    eq(
+      "N30 rows: the view's not-checked rows carry their reason inline (TopicRowView.hide); a shown row carries none",
+      [tm.layers.find((l) => l.layer === 5)?.topics.map((r) => [r.key, r.cls, r.hide ?? null]), tm.layers.find((l) => l.layer === 4)?.topics.map((r) => [r.key, r.hide ?? null])],
+      [[["T34", "NOT_CHECKED", { reason: "NONE" }], ["T35", "NOT_CHECKED", { reason: "NONE" }]], [["T33", null]]]
     );
     const over = !!view.draft?.feasibility?.over || view.draft?.dateCheck?.verdict === "OVER";
     const plain = await S.acceptCore(USER, id, { overAccepted: over, topicMap: TMM.acceptTopicChoicesOf(tm, { keepAll: false, aftercare: null }) }, NOW, deps);
     eq("N17: a plain accept on that map still asks you to keep every layer first", plain.ok ? "ok" : plain.error, LAYER_UNKEPT);
-    const choices = TMM.acceptTopicChoicesOf(tm, { keepAll: true, aftercare: null });
+    const choices0 = TMM.acceptTopicChoicesOf(tm, { keepAll: true, aftercare: null });
+    const bare = await S.acceptCore(USER, id, { overAccepted: over, topicMap: choices0 }, NOW, deps);
+    eq(
+      "N30: [Accept all] with layer 5's names untapped is refused by name (ACCEPT_ALL_NOT_CHECKED(5)), nothing written; keepAll carries the shown names only, `create` counts those 4, and the sheet's bare layers name layer 5",
+      { res: bare.ok ? "ok" : bare.error, names: [...(choices0.keepAll?.names ?? [])].sort(), create: choices0.create, status: (w.t.roadmap.find((r) => r.id === id) as RoadmapRec).status, bare: TMM.acceptAllBareLayersOf(tm, TMM.acceptAllListOf(tm)) },
+      { res: S.ACCEPT_ALL_NOT_CHECKED(5), names: ["Liquidity Buffer", "Loan To Value Ratio", "Risk Tolerance Profile", "Strategic Asset Allocation"], create: 4, status: "DRAFT", bare: [5] }
+    );
+    // The per-name tap (chooseTopic): Rebalancing Bands is kept and ticked by you (KEPT_NOT_CHECKED); Withdrawal Rate stays listed, unticked.
+    must(await S.chooseTopicCore(USER, id, "T34", true, NOW, deps), "tap Rebalancing Bands");
+    const view2 = await S.loadRoadmapView(USER, NOW, deps, id);
+    const tm2 = view2.draft?.topicMap;
+    if (!tm2) throw new Error("no topic map after the tap");
+    eq(
+      "N30 after the tap: layer 5 lists Withdrawal Rate alone as not checked and Rebalancing Bands as tapped (the review round: listed ticked, so the layer never drops off the sheet); Rebalancing Bands is KEPT_NOT_CHECKED and chosen; no layer is bare",
+      { list: tm2.acceptAll?.find((x) => x.layer === 5)?.unchecked?.map((u) => u.name), tapped: tm2.acceptAll?.find((x) => x.layer === 5)?.tapped?.map((u) => [u.key, u.name, u.reason]), rows: tm2.layers.find((l) => l.layer === 5)?.topics.map((r) => [r.name, r.cls, r.chosen]), bare: TMM.acceptAllBareLayersOf(tm2, TMM.acceptAllListOf(tm2)) },
+      { list: ["Withdrawal Rate"], tapped: [["T34", "Rebalancing Bands", "NONE"]], rows: [["Rebalancing Bands", "KEPT_NOT_CHECKED", true], ["Withdrawal Rate", "NOT_CHECKED", false]], bare: [] }
+    );
+    // Both tapped: the layer holds no unticked name and stays listed with its two ticked ones (the model's fallback reads the rows the same way); then one untapped again.
+    must(await S.chooseTopicCore(USER, id, "T35", true, NOW, deps), "tap Withdrawal Rate");
+    const tmBoth = (await S.loadRoadmapView(USER, NOW, deps, id)).draft?.topicMap;
+    eq(
+      "N30 (the review round): with both of layer 5's names tapped the layer stays on [Accept all]'s list with no unticked name and two ticked ones; the model's fallback (a fixture's rows, an unkept layer) lists the tapped name the same way",
+      [tmBoth?.acceptAll?.find((x) => x.layer === 5)?.unchecked ?? null, tmBoth?.acceptAll?.find((x) => x.layer === 5)?.tapped?.map((u) => u.key), TMM.acceptAllListOf({ layers: tm2.layers }).find((x) => x.layer === 5)?.tapped?.map((u) => u.key)],
+      [null, ["T34", "T35"], ["T34"]]
+    );
+    must(await S.chooseTopicCore(USER, id, "T35", false, NOW, deps), "untap Withdrawal Rate");
+    const choices = TMM.acceptTopicChoicesOf(tm2, { keepAll: true, aftercare: null });
     const res = await S.acceptCore(USER, id, { overAccepted: over, topicMap: choices }, NOW, deps);
     const row = w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
     const named = (n: string) => w.t.roadmapTopic.find((t) => t.roadmapId === id && t.name === n && t.version === row.version);
-    const names = ["Risk Tolerance Profile", "Strategic Asset Allocation", "Loan To Value Ratio", "Liquidity Buffer", "Rebalancing Bands", "Withdrawal Rate"];
+    const names = ["Risk Tolerance Profile", "Strategic Asset Allocation", "Loan To Value Ratio", "Liquidity Buffer", "Rebalancing Bands"];
     check(
-      "N17: [Accept all] accepts it — every listed name kept and ticked into the plan, the last layer's not-checked ones too (each a Domain made for it), the plan ACTIVE with 5 layers",
-      res.ok && row.status === "ACTIVE" && names.every((n) => named(n)?.chosen === true && named(n)?.decision === "KEPT" && !!named(n)?.domainId) && choices.create === 6,
-      json({ res: res.ok ? res.value : res.error, status: row.status, create: choices.create, rows: names.map((n) => [n, named(n)?.chosen, named(n)?.decision, !!named(n)?.domainId]) })
+      "N30: [Accept all] then accepts: every shown name kept and ticked into the plan with a Domain, the tapped not-checked name too (5 Domains, the confirm's \"Creates 5 Domains\"), Withdrawal Rate never chosen and given no Domain; the plan ACTIVE with 5 layers",
+      res.ok && row.status === "ACTIVE" && names.every((n) => named(n)?.chosen === true && named(n)?.decision === "KEPT" && !!named(n)?.domainId) && named("Withdrawal Rate")?.chosen !== true && !named("Withdrawal Rate")?.domainId && choices.create === 5,
+      json({ res: res.ok ? res.value : res.error, status: row.status, create: choices.create, rows: [...names, "Withdrawal Rate"].map((n) => [n, named(n)?.chosen, named(n)?.decision, !!named(n)?.domainId]) })
     );
     const layers = Array.from(new Set(rowsOf(w, id, row.version).filter((m) => m.chainRole === "LAYER").map((m) => m.layer))).sort();
     eq("N17: one layer milestone for each of the 5 layers", layers, [1, 2, 3, 4, 5]);
+    // Ruling N29 (the review round): the accepted plan's page under the tripwire's THROW mode (the checks' mode): every path carries its
+    // mark: the plan-edit rows' Domains (geminiNamed), the current milestone's title (titleParts) and its DOMAIN items (geminiNamed).
+    const viewT = await S.loadRoadmapView(USER, NOW, deps, id);
+    check(
+      "N29 (the review round): the accepted plan's page loads under THROW with 5 Gemini-named Domains: the plan-edit rows' Domains carry geminiNamed (your own Inference bare), the current milestone's title its titleParts, and each of its items naming a Gemini-named Domain its labelParts (layer 1's name your own here: none)",
+      viewT.state === "ACTIVE" &&
+        viewT.milestones.filter((r) => (r.edit?.domains ?? []).length > 0).length >= 5 &&
+        viewT.milestones.every((r) => (r.edit?.domains ?? []).every((d) => d.geminiNamed === true || d.name === "Inference")) &&
+        Array.isArray(viewT.current?.milestone.titleParts) &&
+        (viewT.current?.milestone.items ?? []).every((i) => !Array.isArray(i.labelParts) || i.labelParts.some((p) => p.geminiNamed)),
+      json({ edits: viewT.milestones.map((r) => r.edit?.domains), parts: viewT.current?.milestone.titleParts, items: viewT.current?.milestone.items.map((i) => [i.kind, i.label, i.labelParts ?? null]) })
+    );
   });
 
   // ═══ Ruling N18: edits of an accepted plan (rename, a topic added or removed, a new milestone; undo) ═══════════
@@ -8612,6 +8689,282 @@ async function main() {
       levels.every((l) => l === S.LEVELS_PATH_ON_TOPICS) && rows5().length === before5,
       json(levels)
     );
+  });
+
+  // ═══ Roadmap rework 1, P1 (contracts §22.20 rulings N25–N27) ═══════════════════════════════════════════════════════
+  await topicBlock("roadmap rework 1, P1: 'n of 8' on the layer rows (N25), the lock payload equal to PREREQS_MET (N27), a reach on cards alone (N26)", async () => {
+    const w = world();
+    const id = await writtenTopics(w, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains", "Hidden Markov models"]);
+    const deps = topicDepsFor(w);
+    // Two more layer-3 topics, so layer 4's one topic can have a picked, a drawn and an undrawn parent.
+    must(await S.addTopicCore(USER, id, 3, "Kalman filters", NOW, deps), "add Kalman filters");
+    must(await S.addTopicCore(USER, id, 3, "Monte Carlo methods", NOW, deps), "add Monte Carlo methods");
+    must(await S.acceptCore(USER, id, topicAccept(5), NOW, deps), "accept the topic plan");
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const v = row().version;
+    const topicOf = (name: string) => w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === v && t.name === name) as TopicRowRec;
+    const layerRow = (layer: number) => rowsOf(w, id, v).find((m) => m.chainRole === "LAYER" && m.layer === layer) as MilestoneRec;
+    const fill = (domainId: string | null, n: number) => {
+      const d = w.tree.flatMap((f) => f.domains).find((x) => x.id === domainId);
+      if (d) d.cards.push(...Array.from({ length: n }, () => card(d.id, 6)));
+    };
+    /** The store's PREREQS_MET guard on a layer row, as Start would run it. */
+    const guard = (layer: number) => w.applyNow(USER, [{ op: "guard", guard: { g: "PREREQS_MET", roadmapId: id, milestoneId: layerRow(layer).id } }]);
+    const view = () => S.loadRoadmapView(USER, NOW, deps, id);
+    const node = (vw: Awaited<ReturnType<typeof S.loadRoadmapView>>, layer: number) => vw.milestones.find((r) => r.id === layerRow(layer).id);
+    const [t1, t2, t4, t5, t3] = ["Bayes rule", "Markov chains", "Kalman filters", "Monte Carlo methods", "Hidden Markov models"].map(topicOf);
+    const edge = (parent: TopicRowRec, child: TopicRowRec, origin: string, drawn: boolean, votes: number): EdgeRowRec => ({
+      id: w.makeId(),
+      roadmapId: id,
+      version: v,
+      parentLineageId: parent.lineageId,
+      childLineageId: child.lineageId,
+      parentDomainId: null,
+      parentRoadmapId: null,
+      origin,
+      votes,
+      samples: 3,
+      drawn,
+      decision: origin === "USER" ? "KEPT" : "PENDING",
+      match: "NONE",
+      createdAt: NOW,
+    });
+    // Hidden Markov models (layer 4): a parent you picked (Markov chains), one Gemini drew 3 of 3 (Kalman filters), one it voted 2 of 3 (Monte Carlo methods).
+    w.t.roadmapTopicEdge.push(edge(t2, t3, "USER", false, 0), edge(t4, t3, "GEMINI", true, 3), edge(t5, t3, "GEMINI", false, 2));
+    const v0 = await view();
+    const l1 = node(v0, 1);
+    const l2 = node(v0, 2);
+    const l3 = node(v0, 3);
+    const l4 = node(v0, 4);
+    eq(
+      "N25: each layer row carries its chosen topics with 'n of 8' (cardsAtOpenOf: live cards at level 6 or above, of TOPIC_FLOOR_CARDS), their due cards and done flag; a Domain made at accept reads 0 of 8; the current milestone (layer 1) carries the same topics and no lock",
+      [l1?.topics?.map((t) => [t.key, t.name, t.cards, t.floor, t.due, t.done]), l3?.topics?.map((t) => [t.name, t.cards, t.floor, t.done]), v0.current?.topics?.map((t) => [t.key, t.cards]), v0.current?.lock, l1?.lock, l1?.opensAfter],
+      [[["U1", "Inference", 4, 8, 4, false]], [["Markov chains", 0, 8, false], ["Kalman filters", 0, 8, false], ["Monte Carlo methods", 0, 8, false]], [["U1", 4]], null, null, null]
+    );
+    // The review round (ruling N25): the last filled layer's topic is the specialisation (DEEP): its floor is the row's paying target n_d
+    // (the coverage floor, 25), shown as "n of 25" on the layer row and the map's row alike; the base layers' topics read 8.
+    eq(
+      "N25 (the review round): layer 4's Hidden Markov models is DEEP: its floor is the row's paying target (25), 'n of 25', on the layer row and the map's row; the base layers' topics read 8",
+      [l4?.topics?.map((t) => [t.name, t.cards, t.floor, t.done]), v0.topicMap?.layers.find((l) => l.layer === 4)?.topics.map((r) => [r.name, r.floor]), l3?.topics?.map((t) => t.floor)],
+      [[["Hidden Markov models", 0, 25, false]], [["Hidden Markov models", 25]], [8, 8, 8]]
+    );
+    // Ruling N29 (the review round): a stored milestone line passes the gate on read too (a map stored before the ruling): a title holding a
+    // figure Gemini wrote leaves its layer untitled; a clean stored title stays.
+    const ratingRow = row() as unknown as { rating: Record<string, unknown> | null };
+    const rating0 = ratingRow.rating;
+    ratingRow.rating = { ...(rating0 ?? {}), milestones: [{ layer: 2, title: "Answer 40 practice questions on inference", hurdle: "", target: "" }, { layer: 3, title: "Build the filter toolkit", hurdle: "", target: "" }] };
+    const vg = await view();
+    eq(
+      "N29 (the review round): a stored title holding a figure Gemini wrote is dropped on read (layer 2 untitled), a clean stored title stays (layer 3)",
+      [vg.topicMap?.layers.find((l) => l.layer === 2)?.milestone ?? null, vg.topicMap?.layers.find((l) => l.layer === 3)?.milestone?.title ?? null],
+      [null, "Build the filter toolkit"]
+    );
+    ratingRow.rating = rating0;
+    // The review round: the hero (nextActionOf), Today's Main quest card (studyMainQuestActionOf over the Aim card's study) and GET /quests'
+    // line (the same builder) say the same on every shape: the study, and the lock's first unmet parent on a locked layer.
+    const NA = await import("../src/components/roadmap/next-action");
+    const MQ = await import("../src/components/today/main-quest-card");
+    // With Start off (ROADMAP_GOALS_LIVE false, as it is): Start live and unlocked, both say "Start milestone k" (START; MainQuest.startable).
+    const depsOff = topicDepsFor(w, { goalsLive: false });
+    const sameStep = async (label: string, want: [string, string | null, boolean]) => {
+      const vw = await S.loadRoadmapView(USER, NOW, depsOff, id);
+      const c = (await S.loadAimCards(USER, NOW, depsOff)).find((x) => x.roadmapId === id);
+      const td = c?.study ? MQ.studyMainQuestActionOf(c.study) : null;
+      eq(`N27/N28 (the review round), ${label}: the hero's primary and Today's one action (GET /quests' line) say the same`, [NA.nextActionOf(vw).primary.label, td?.label ?? null, c?.study?.locked === true], want);
+    };
+    await sameStep("as accepted (layer 1 current, Inference at 4 of 8 with 4 due)", ["Study Inference · 4 of 8 · 4 due", "Study Inference · 4 of 8 · 4 due", false]);
+    w.templates.push({ id: "g-l1-short", title: "layer 1", normTitle: "layer 1", kind: "GOAL", recurrence: null, parentId: null, archivedAt: null, closedScore: 0.5, completedAt: null, dueDay: null, stated: 6, captureKey: null, link: null, parsed: null, horizon: "MID" });
+    Object.assign(layerRow(1), { status: "STARTED", goalId: "g-l1-short" });
+    await sameStep("layer 1 closed short, layer 2 the current milestone locked on Inference", ["Add 4 cards to Inference", "Add 4 cards to Inference", true]);
+    Object.assign(layerRow(1), { status: "PLANNED", goalId: null });
+    // The review round: what keeps prereqsOpenOf and the PREREQS_MET SQL equivalent, pinned: every counting local edge of the accepted map
+    // spans exactly one layer (the SQL joins p.layer = c.layer - 1; lockParentsOf skips any other), and no CROSS_GOAL edge row lacks its parentDomainId.
+    const edgesV = w.t.roadmapTopicEdge.filter((x) => x.roadmapId === id && x.version === v);
+    const topicByLineage = new Map(w.t.roadmapTopic.filter((t) => t.roadmapId === id && t.version === v).map((t) => [t.lineageId, t] as const));
+    check(
+      "N27 (the review round): every counting local edge of the map spans exactly one layer and no CROSS_GOAL edge lacks its parentDomainId; lockParentsOf skips a parent off the layer before, as the SQL's join does",
+      edgesV.filter((x) => x.origin !== "CROSS_GOAL" && x.decision !== "REMOVED" && (x.origin !== "GEMINI" || x.drawn)).every((x) => (topicByLineage.get(x.parentLineageId)?.layer ?? -9) === (topicByLineage.get(x.childLineageId)?.layer ?? 9) - 1) &&
+        edgesV.filter((x) => x.origin === "CROSS_GOAL").every((x) => typeof x.parentDomainId === "string") &&
+        /if \(!p\.chosen \|\| p\.layer !== k \|\| parents\.has\(p\.key\)\) continue;/.test(readLf("src/lib/roadmap-server.ts")) &&
+        /p\."layer" = c\."layer" - 1/.test(readLf("src/lib/roadmap-server.ts")),
+      json(edgesV.map((x) => [x.origin, x.drawn, topicByLineage.get(x.parentLineageId)?.layer, topicByLineage.get(x.childLineageId)?.layer]))
+    );
+    eq(
+      "N27: layer 2 waits on the whole layer before (Inference, 4 of 8, not met); layer 3 on Bayes rule (0 of 8); layer 4's Hidden Markov models has a picked (USER) and a drawn GEMINI parent, so its lock lists those two and never the undrawn one, which is its one suggestion ('2 of 3 samples'); opensAfter names the layer each waits on",
+      [
+        l2?.lock && { after: l2.lock.afterLayer, whole: l2.lock.wholeLayer, parents: l2.lock.parents.map((p) => [p.key, p.name, p.cards, p.floor, p.met]), suggestions: l2.lock.suggestions.length },
+        l3?.lock && { whole: l3.lock.wholeLayer, parents: l3.lock.parents.map((p) => [p.key, p.cards, p.met]) },
+        l4?.lock && { after: l4.lock.afterLayer, whole: l4.lock.wholeLayer, parents: l4.lock.parents.map((p) => [p.key, p.name, p.met]), suggestions: l4.lock.suggestions.map((s) => [s.child.key, s.key, s.name, s.votes, s.samples]) },
+        [l2?.opensAfter, l3?.opensAfter, l4?.opensAfter],
+      ],
+      [
+        { after: 1, whole: true, parents: [["U1", "Inference", 4, 8, false]], suggestions: 0 },
+        { whole: true, parents: [["T1", 0, false]] },
+        { after: 3, whole: false, parents: [["T2", "Markov chains", false], ["T4", "Kalman filters", false]], suggestions: [["T3", "T5", "Monte Carlo methods", 2, 3]] },
+        [1, 2, 3],
+      ]
+    );
+    // One list for the gate and the page: on every layer row the lock is null exactly when the store's guard holds.
+    const agree = async (label: string) => {
+      const vw = await view();
+      const got = [2, 3, 4].map((layer) => [layer, node(vw, layer)?.lock == null, guard(layer) === "ok"]);
+      check(`N27 ${label}: on every layer row the lock is null exactly when the store's PREREQS_MET guard holds`, got.every(([, open, met]) => open === met), json(got));
+      return vw;
+    };
+    await agree("as accepted (every layer from 2 locked)");
+    // The review round (ruling N25): a MULTI card never counts, in the view, the lock and the guard alike (the paying key never counted it).
+    fill(t1.domainId, 7);
+    (w.tree.flatMap((f) => f.domains).find((x) => x.id === t1.domainId) as TreeField["domains"][number]).cards.push({ ...card(t1.domainId as string, 6), type: "MULTI" });
+    const vm = await agree("Bayes rule at 7 recall cards of 8 beside one MULTI card (a MULTI card never counts)");
+    eq("N25 (the review round): Bayes rule reads 7 of 8 with its MULTI card uncounted, and layer 3 stays locked on it", [node(vm, 2)?.topics?.map((t) => [t.cards, t.done]), node(vm, 3)?.lock?.parents.map((p) => [p.key, p.cards, p.met])], [[[7, false]], [["T1", 7, false]]]);
+    fill(t1.domainId, 1);
+    await agree("Bayes rule at 8 of 8 (layer 3 opens; layer 2 still waits on Inference)");
+    fill(t2.domainId, 8);
+    const v2 = await agree("Markov chains at 8 of 8 (layer 4 still waits on Kalman filters: its picked parent is met, its drawn one is not)");
+    eq("N27: the lock lists the parents not met first, each with its count", node(v2, 4)?.lock?.parents.map((p) => [p.key, p.cards, p.met]), [["T4", 0, false], ["T2", 8, true]]);
+    fill(t4.domainId, 8);
+    const v3 = await agree("Kalman filters at 8 of 8 (layer 4 opens)");
+    eq("N27: layers 3 and 4 open (lock null, opensAfter null), layer 2 still locked on Inference", [node(v3, 4)?.lock, node(v3, 4)?.opensAfter, node(v3, 3)?.lock, node(v3, 2)?.lock?.parents.map((p) => p.key)], [null, null, null, ["U1"]]);
+    // Ruling N26: a reach on cards alone, as the readings writer stamps it (reachedDay on the PLANNED layer row, nothing else).
+    const rankBefore = [v3.rank?.index, v3.rank?.name, v3.rank?.newSince ?? null, json(v3.rank?.top)];
+    (w.t.roadmapMilestone.find((m) => m.id === layerRow(1).id) as MilestoneRec).reachedDay = TODAY;
+    const v4 = await view();
+    const n1 = node(v4, 1);
+    check(
+      "N26: a PLANNED layer row with a reachedDay and no HELD_AT_START note reads REACHED with reachedOnCards, not held, gives no rank (the Aim rank, its day and its top as before; the ladder's next row moves on as it does past a held row) and no 'gave rank' line, and its topic-map layer reads DONE; the current milestone moves to layer 2, with its topics and no lock",
+      n1?.state === "REACHED" &&
+        n1.reachedOnCards === true &&
+        n1.gaveRank === null &&
+        !n1.held &&
+        json([v4.rank?.index, v4.rank?.name, v4.rank?.newSince ?? null, json(v4.rank?.top)]) === json(rankBefore) &&
+        v4.rank?.ladder.every((r) => r.milestoneOrd !== n1.ord) === true &&
+        v4.current?.milestone.id === layerRow(2).id &&
+        v4.current.lock === null &&
+        json(v4.current.topics?.map((t) => [t.key, t.cards, t.done])) === json([["T1", 8, true]]) &&
+        v4.topicMap?.layers.find((l) => l.layer === 1)?.state === "DONE",
+      json({ state: n1?.state, onCards: n1?.reachedOnCards, gave: n1?.gaveRank, held: n1?.held, rank: v4.rank, cur: v4.current?.milestone.id, curLock: v4.current?.lock, curTopics: v4.current?.topics, layer1: v4.topicMap?.layers.find((l) => l.layer === 1)?.state })
+    );
+    eq(
+      "N26: the layer after a reach on cards opens (lock null, opensAfter null) in the view and in the store's guard alike, with Inference still at 4 of 8; the held-rows monitor names the TOPICS layer row as no fault",
+      [node(v4, 2)?.lock, node(v4, 2)?.opensAfter, guard(2), node(v4, 2)?.topics?.map((t) => t.cards), /"planKind" = 'TOPICS' AND m\."chainRole" = 'LAYER'/.test(S.ROADMAP_MONITOR_QUERIES.find((q) => q.name === "held-rows")?.sql ?? "")],
+      [null, null, "ok", [8], true]
+    );
+    // The review round: layer 2's one topic done (Bayes rule at 8 of 8) but its row not yet stamped: the hero reads the next layer's
+    // first topic to do through the view's OUTLINE row, as Today does through studyViewOf (one rule).
+    await sameStep("layer 2's one topic done, its row not yet stamped: the next layer's first topic to do", ["Add an idea to Monte Carlo methods", "Add an idea to Monte Carlo methods", false]);
+  });
+
+  await topicBlock("roadmap rework 1, P2: a parent picked on a locked layer (ruling N27's page: editPlan PICK_PARENT, version + 1 with Undo)", async () => {
+    const w = world();
+    const id = await writtenTopics(w, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains", "Hidden Markov models"]);
+    const deps = topicDepsFor(w);
+    must(await S.addTopicCore(USER, id, 3, "Kalman filters", NOW, deps), "add Kalman filters");
+    must(await S.addTopicCore(USER, id, 3, "Monte Carlo methods", NOW, deps), "add Monte Carlo methods");
+    must(await S.acceptCore(USER, id, topicAccept(5), NOW, deps), "accept the topic plan");
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const v = row().version;
+    const topicOf = (name: string, version = v) => w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === version && t.name === name) as TopicRowRec;
+    const layerRow = (layer: number, version = row().version) => rowsOf(w, id, version).find((m) => m.chainRole === "LAYER" && m.layer === layer) as MilestoneRec;
+    const [t1, t2, t4, t5, t3] = ["Bayes rule", "Markov chains", "Kalman filters", "Monte Carlo methods", "Hidden Markov models"].map((n) => topicOf(n));
+    const edge = (parent: TopicRowRec, child: TopicRowRec, origin: string, drawn: boolean, votes: number): EdgeRowRec => ({ id: w.makeId(), roadmapId: id, version: v, parentLineageId: parent.lineageId, childLineageId: child.lineageId, parentDomainId: null, parentRoadmapId: null, origin, votes, samples: 3, drawn, decision: origin === "USER" ? "KEPT" : "PENDING", match: "NONE", createdAt: NOW });
+    // Hidden Markov models (layer 4): a parent you picked (Markov chains), one Gemini drew 3 of 3 (Kalman filters), one it voted 2 of 3 (Monte Carlo methods).
+    w.t.roadmapTopicEdge.push(edge(t2, t3, "USER", false, 0), edge(t4, t3, "GEMINI", true, 3), edge(t5, t3, "GEMINI", false, 2));
+    const view = () => S.loadRoadmapView(USER, NOW, deps, id);
+    const lock4 = (vw: Awaited<ReturnType<typeof S.loadRoadmapView>>) => vw.milestones.find((r) => r.chainRole === "LAYER" && r.layer === 4)?.lock ?? null;
+    const guard4 = () => w.applyNow(USER, [{ op: "guard", guard: { g: "PREREQS_MET", roadmapId: id, milestoneId: layerRow(4).id } }]);
+    const v0 = await view();
+    const hmm = v0.topicMap?.layers.find((l) => l.layer === 4)?.topics.find((t) => t.key === t3.key);
+    eq(
+      "N27 page: the lock's parents carry their cards due (0 here) beside the gate's list, and the topic ▸'s row reads the one vote under EDGE_DRAW as its suggestion (Monte Carlo methods, 2 of 3), never the drawn or the picked one",
+      [lock4(v0)?.parents.map((p) => [p.key, p.met, p.due]), lock4(v0)?.suggestions.map((s) => [s.child.key, s.key, s.votes, s.samples]), hmm?.suggestions, v0.topicMap?.layers.find((l) => l.layer === 1)?.topics[0]?.suggestions ?? "absent"],
+      [[[t2.key, false, 0], [t4.key, false, 0]], [[t3.key, t5.key, 2, 3]], [{ key: t5.key, name: "Monte Carlo methods", votes: 2, samples: 3 }], "absent"]
+    );
+    // Refusals first, nothing written: a layer-1 child, a parent not of the layer just before, a LEVELS plan.
+    const one = await S.editPlanCore(USER, id, { kind: "PICK_PARENT", childKey: topicOf("Inference").key, parentKey: t2.key }, NOW, deps);
+    const far = await S.editPlanCore(USER, id, { kind: "PICK_PARENT", childKey: t3.key, parentKey: t1.key }, NOW, deps);
+    const gone = await S.editPlanCore(USER, id, { kind: "PICK_PARENT", childKey: "T99", parentKey: t5.key }, NOW, deps);
+    eq("N27 page: a layer-1 child, a parent two layers up and an unknown key are refused with nothing written (the version stays)", [editErr(one), editErr(far), editErr(gone), row().version], [S.PLAN_EDIT_PARENT_LAYER_ONE, S.PLAN_EDIT_PARENT_BEFORE, "That topic is no longer on the map.", v]);
+    // The pick: version + 1, a USER edge KEPT the gate counts, the lock listing the new parent and no suggestion left; the guard still waits (no cards).
+    const picked = await S.editPlanCore(USER, id, { kind: "PICK_PARENT", childKey: t3.key, parentKey: t5.key }, NOW, deps);
+    const v1 = row().version;
+    const newEdge = w.t.roadmapTopicEdge.find((x) => x.roadmapId === id && x.version === v1 && x.parentLineageId === t5.lineageId && x.childLineageId === t3.lineageId && x.origin === "USER");
+    const vw1 = await view();
+    check(
+      "N27 page: the pick is accepted as version + 1 (domainId null, nothing counted) with a USER edge KEPT from Monte Carlo methods to Hidden Markov models; the pair's Gemini vote row gives way to it (one row per pair, ruling 48); layer 4's lock now lists the three parents, not met first, with no suggestion; the guard still waits; layers 1-3 keep their lineages",
+      picked.ok &&
+        picked.value.version === v + 1 &&
+        v1 === v + 1 &&
+        picked.value.domainId === null &&
+        picked.value.counted === null &&
+        !!newEdge &&
+        newEdge.decision === "KEPT" &&
+        newEdge.drawn === false &&
+        !w.t.roadmapTopicEdge.some((x) => x.roadmapId === id && x.version === v1 && x.parentLineageId === t5.lineageId && x.childLineageId === t3.lineageId && x.origin === "GEMINI") &&
+        w.t.roadmapTopicEdge.some((x) => x.roadmapId === id && x.version === v && x.parentLineageId === t5.lineageId && x.childLineageId === t3.lineageId && x.origin === "GEMINI" && !x.drawn && x.votes === 2) &&
+        json(lock4(vw1)?.parents.map((p) => [p.key, p.met])) === json([[t2.key, false], [t4.key, false], [t5.key, false]]) &&
+        lock4(vw1)?.suggestions.length === 0 &&
+        guard4() !== "ok" &&
+        json([1, 2, 3].map((k) => layerRow(k, v1).lineageId)) === json([1, 2, 3].map((k) => layerRow(k, v).lineageId)) &&
+        vw1.milestones.find((r) => r.chainRole === "LAYER" && r.layer === 4)?.opensAfter === 3,
+      json({ res: editErr(picked), v1, edge: newEdge && [newEdge.origin, newEdge.decision, newEdge.drawn], lock: lock4(vw1)?.parents.map((p) => [p.key, p.met]), suggestions: lock4(vw1)?.suggestions.length, guard: guard4() })
+    );
+    eq("N27 page: picking it again is nothing to change", editErr(await S.editPlanCore(USER, id, { kind: "PICK_PARENT", childKey: t3.key, parentKey: t5.key }, NOW, deps)), S.PLAN_EDIT_NOTHING);
+    // The gate reads the pick: once the three parents hold their floor, layer 4 opens in the view and in the guard alike.
+    for (const t of [t2, t4, t5]) {
+      const d = w.tree.flatMap((f) => f.domains).find((x) => x.id === t.domainId);
+      if (d) d.cards.push(...Array.from({ length: 8 }, () => card(d.id, 6)));
+    }
+    const vw2 = await view();
+    eq("N27 page: with the picked parent at 8 of 8 beside the others, layer 4 opens (lock null, guard ok)", [lock4(vw2), guard4()], [null, "ok"]);
+    // Undo: the edit's version goes, the map is as it was (two parents, the suggestion back).
+    for (const t of [t2, t4, t5]) {
+      const d = w.tree.flatMap((f) => f.domains).find((x) => x.id === t.domainId);
+      if (d) d.cards.splice(0, d.cards.length);
+    }
+    const undo = await S.undoAcceptCore(USER, id, v1, NOW, deps);
+    const vw3 = await view();
+    eq(
+      "N27 page: the accept's Undo takes the pick back: the version as before, no USER edge at the undone version, the lock on the two parents and the suggestion offered again",
+      [undo.ok, row().version, w.t.roadmapTopicEdge.some((x) => x.roadmapId === id && x.version === v1), lock4(vw3)?.parents.map((p) => p.key), lock4(vw3)?.suggestions.map((s) => s.key)],
+      [true, v, false, [t2.key, t4.key], [t5.key]]
+    );
+    // Ruling N26 (the review round): a plan edit copies a layer reached on cards with its day (PICK_PARENT and RENAME alike), so the rail,
+    // the current milestone and the Study focus never fall back to it; Undo restores the version before intact.
+    (w.t.roadmapMilestone.find((m) => m.id === layerRow(1).id) as MilestoneRec).reachedDay = TODAY;
+    const picked2 = await S.editPlanCore(USER, id, { kind: "PICK_PARENT", childKey: t3.key, parentKey: t5.key }, NOW, deps);
+    const v2p = row().version;
+    const vw4 = await view();
+    const l1v2 = layerRow(1, v2p);
+    // The store mutates its rows in place (the RENAME below supersedes this one): its state at version + 1, read now.
+    const l1v2At = [l1v2?.status, l1v2?.reachedDay] as const;
+    const renamed = await S.editPlanCore(USER, id, { kind: "RENAME", milestoneId: layerRow(2, v2p).id, title: "Bayes, my way" }, NOW, deps);
+    const v3p = row().version;
+    const l1v3 = layerRow(1, v3p);
+    const n1v3 = (await view()).milestones.find((r) => r.id === l1v3?.id);
+    check(
+      "N26 (the review round): after a reach on cards, PICK_PARENT and then RENAME each carry layer 1's reachedDay to the version + 1 row (still PLANNED), which reads REACHED with reachedOnCards; the current milestone stays layer 2 with no lock",
+      picked2.ok &&
+        v2p === v + 1 &&
+        l1v2At[0] === "PLANNED" &&
+        l1v2At[1] === TODAY &&
+        vw4.milestones.find((r) => r.id === l1v2.id)?.state === "REACHED" &&
+        vw4.milestones.find((r) => r.id === l1v2.id)?.reachedOnCards === true &&
+        vw4.current?.milestone.id === layerRow(2, v2p).id &&
+        vw4.current.lock === null &&
+        renamed.ok &&
+        v3p === v + 2 &&
+        l1v3?.status === "PLANNED" &&
+        l1v3.reachedDay === TODAY &&
+        n1v3?.state === "REACHED" &&
+        n1v3.reachedOnCards === true,
+      json({ picked2: editErr(picked2), renamed: editErr(renamed), l1v2: l1v2At, l1v3: l1v3 && [l1v3.status, l1v3.reachedDay], cur: vw4.current?.milestone.id, cur2: layerRow(2, v2p)?.id, n1v3: n1v3 && [n1v3.state, n1v3.reachedOnCards] })
+    );
+    const undo2 = await S.undoAcceptCore(USER, id, v3p, NOW, deps);
+    eq("N26 (the review round): Undo restores the version before with layer 1 still reached on cards", [undo2.ok, row().version, layerRow(1, v + 1)?.reachedDay], [true, v + 1, TODAY]);
+    // A LEVELS plan never picks a parent.
+    const lw = world();
+    const lid = await accepted(lw);
+    eq("N27 page: a LEVELS plan refuses a parent pick", editErr(await S.editPlanCore(USER, lid, { kind: "PICK_PARENT", childKey: "T1", parentKey: "T2" }, NOW, depsFor(lw))), S.PLAN_EDIT_PARENT_TOPICS);
   });
 
   if (failed > 0) {

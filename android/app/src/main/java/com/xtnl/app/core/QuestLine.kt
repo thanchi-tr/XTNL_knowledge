@@ -23,6 +23,8 @@ object QuestLine {
     const val THREE = "Today's three"
     /** A sprint row whose task is ticked today, before the week's count is met: said, never shown as done. */
     const val TICKED_TODAY = "ticked today"
+    /** The web's spoken words for its Gemini mark on a Domain name (pv.named): said under the study line when the server marks the name. */
+    const val NAMED_BY_GEMINI = "named by Gemini"
 
     /** One row of the card in words: its label, its detail, and whether it reads done (the kept mark, the dimmed label). */
     data class Row(val label: String, val detail: String, val done: Boolean)
@@ -77,6 +79,12 @@ object QuestLine {
 
     /** Start lives on the web: said only when the server offers it there (never while ROADMAP_GOALS_LIVE is off). */
     fun startLine(m: MainQuest): String? = if (m.startOnWeb && m.milestone != null) "Start milestone ${m.milestone.ord} on the web" else null
+
+    /** Ruling N28: the planned layer's study in the web's words ("Study Markov chains · 3 of 8 · 4 due"); null with none. The run stays on the web. */
+    fun studyLine(m: MainQuest): String? = m.study?.line?.takeIf { it.isNotBlank() }
+
+    /** Ruling N28 (the review round): the study's Domain was named by Gemini (`study.geminiNamed`, the web's mark): said as a line under the study, as [titleNote] is said under the title; null otherwise. */
+    fun studyNote(m: MainQuest): String? = if (m.study?.geminiNamed == true && studyLine(m) != null) NAMED_BY_GEMINI else null
 
     /** Whether the sprint part shows: not while its milestone is past its day (the quest's line asks to close or reschedule it), as the web card. */
     fun showsSprint(s: Sprint): Boolean = s.state != "PAST_DUE"
@@ -145,6 +153,8 @@ object QuestLine {
             titleNote(m)?.let { parts += it }
             line(m)?.let { parts += it }
             startLine(m)?.let { parts += it }
+            studyLine(m)?.let { parts += it }
+            studyNote(m)?.let { parts += it }
         }
         q.sprint?.takeIf { showsSprint(it) }?.let { parts += sprintLine(it) }
         q.three?.takeIf { it.quests.isNotEmpty() }?.let { t -> parts += threeLine(t) }

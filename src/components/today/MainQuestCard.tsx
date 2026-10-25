@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Icon } from "@/components/ui/Icon";
 import { SectionHeader } from "@/components/ui/Tabs";
+import { DomainName } from "@/components/glyph/NamedMark";
 import { MainQuestSeek } from "./MainQuestSeek";
 import { MilestoneTitle } from "./MilestoneTitle";
 import type { MainQuestCardView } from "./main-quest-card";
@@ -16,6 +17,19 @@ export const MAIN_QUEST_HEADING_ID = "main-quest-h";
  * board never reads the roadmap. Read only: no tick, no Start, no count, never red. A practice's or a step's row is a
  * seek button (MainQuestSeek: the board finds the task in place), every other action a link.
  */
+/** An action's words with its Domain name marked (a Gemini-named Domain carries pv.named here as on the roadmap's hero: the review round); the plain words when it names none. */
+function ActionWords({ action }: { action: { label: string; name?: string; geminiNamed?: boolean } }) {
+  const at = action.name ? action.label.indexOf(action.name) : -1;
+  if (at < 0 || !action.name) return action.label;
+  return (
+    <>
+      {action.label.slice(0, at)}
+      <DomainName name={action.name} geminiNamed={action.geminiNamed === true} />
+      {action.label.slice(at + action.name.length)}
+    </>
+  );
+}
+
 export function MainQuestCard({ view }: { view: MainQuestCardView | null }) {
   if (!view) return null;
   const action = view.action;
@@ -43,7 +57,9 @@ export function MainQuestCard({ view }: { view: MainQuestCardView | null }) {
             <MainQuestSeek label={action.label} templateId={action.seek} />
           ) : (
             <Link className="mq-act" href={action.href}>
-              <span>{action.label}</span>
+              <span>
+                <ActionWords action={action} />
+              </span>
               <Icon name="chev" size={16} />
             </Link>
           ))}

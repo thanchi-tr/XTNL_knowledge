@@ -341,7 +341,7 @@ import {
   type AimLineView,
 } from "../src/lib/roadmap-types";
 import { BODY_SAFE_KINDS, catalogEntryOf } from "../src/lib/roadmap-catalog";
-import { AIM_NOT_NOW_SET_LABEL, aimLineCopy } from "../src/components/roadmap/roadmap-copy";
+import { AIM_NOT_NOW_SET_LABEL, GEMINI_MILESTONE_LABEL, aimLineCopy } from "../src/components/roadmap/roadmap-copy";
 
 const TZ = "Australia/Sydney";
 // Thursday 1 October 2026 (AEST; Sydney's DST starts Sunday 4 October).
@@ -3358,6 +3358,21 @@ asyncChecks.push(
     !leadSrc.includes("data-template-id") &&
       /onSeekTemplate\(\(\{ templateId \}\) => router\.push\(todayTaskHref\(templateId\)\)\)/.test(code(read("src/app/review/SeekToToday.tsx")))
   );
+  // Roadmap ruling N29 (roadmap rework 1, P3): Gemini's milestone title on the Review hub's Study card is never bare: the
+  // visible mark (LayerBand's pv.suggest) and its spoken «Gemini's milestone · not checked» ride with it, only when the
+  // title is Gemini's, and review.css selects data-gemini so the attribute is never a bare hook. The source here (this
+  // check loads no stylesheet-bearing component); the render is pinned in roadmap-ui-check ("roadmap focus (ruling N29)").
+  {
+    const focusSrc = code(read("src/components/workspace/RoadmapFocus.tsx"));
+    check(
+      "roadmap focus (ruling N29): the h2 marks Gemini's title with LayerBand's visible mark (pv.suggest) and the spoken «Gemini's milestone · not checked», only when the title is Gemini's (code's \"Layer k\" stays bare); review.css selects .rv-focus-title[data-gemini]",
+      /<h2 id="rv-focus-h" className="rv-focus-title" data-gemini=\{focus\.geminiTitle \? "" : undefined\}>\s*\{focus\.geminiTitle \? \(\s*<>\s*<span data-wc="name">\{focus\.title\}<\/span>\s*<Mark glyph="pv\.suggest" size=\{12\} \/>\s*<span className="sr-only">\{GEMINI_MILESTONE_LABEL\}<\/span>\s*<\/>\s*\) : \(\s*focus\.title\s*\)\}\s*<\/h2>/.test(focusSrc) &&
+        /import \{ GEMINI_MILESTONE_LABEL \} from "@\/components\/roadmap\/roadmap-copy";/.test(focusSrc) &&
+        GEMINI_MILESTONE_LABEL === "Gemini's milestone · not checked" &&
+        /\.rv-focus-title\[data-gemini\] \{ display: flex; align-items: center; flex-wrap: wrap; gap: 6px; \}/.test(read("src/components/workspace/review.css")),
+      "RoadmapFocus.tsx / review.css"
+    );
+  }
   // Today's one slot now is the strip: it only renders, and never reaches buildBoard, the counts or the Asks.
   const slotLines = boardSrc.split(/\r?\n/).filter((l) => l.includes("elsewhere"));
   // Re-pinned for blueprint P32: the props line now also takes the week's calibration slot (nextWeek), after mainQuest.
@@ -5461,6 +5476,28 @@ asyncChecks.push(
     "P15 card: with ROADMAP_GOALS_LIVE off no Start anywhere ('Open roadmap'); on, 'Start milestone 1' links to the roadmap page's Now (Start itself stays there)",
     JSON.stringify(off.action) === JSON.stringify({ label: OPEN_ROADMAP_WORD, href: "/you/roadmap" }) && !/start/i.test(JSON.stringify(off)) && JSON.stringify(on.action) === JSON.stringify({ label: "Start milestone 1", href: "/you/roadmap#now" })
   );
+  // Roadmap rework 1, P2 (ruling N28): a planned TOPICS layer's study is the card's one action while it is locked or Start is off.
+  const study = { key: "T3", name: "Markov chains", domainId: "d1", fieldId: "f1", cards: 3, floor: 8, due: 4, layer: 1, geminiNamed: true };
+  const plannedStudy = (goalsLive: boolean, locked: boolean, due = 4) => mainQuestOf(card({ state: "ACCEPTED", goalsLive, milestone: ms({ id: "ms1", ord: 1, status: "PLANNED", percent: null, dueDay: null, ...(locked ? { locked: true } : {}) }), study: { ...study, due } }), week([practice]), WED);
+  eq(
+    "N28 mainQuestOf: a planned layer carries its study while Start is off, or while the layer is locked even with Start live (startable false, 'is planned.'); with Start offered the study is null (Start is the action); never a sprint",
+    [plannedStudy(false, false), plannedStudy(true, true), plannedStudy(true, false)].map((q) => [q.state, q.line, q.startable, q.study?.name ?? null, q.sprint]),
+    [["PLANNED", "Milestone 1 is planned.", false, "Markov chains", null], ["PLANNED", "Milestone 1 is planned.", false, "Markov chains", null], ["PLANNED", "Milestone 1 is ready to start.", true, null, null]]
+  );
+  // Ruling N27 as the review round reads it: on a locked layer the server's study is the lock's first unmet parent (AimStudyView.locked), so the card's
+  // action is the roadmap hero's own primary, "Add n cards to <parent>" to the add flow placed in that Domain.
+  const lockedParent = mainQuestOf(card({ state: "ACCEPTED", goalsLive: true, milestone: ms({ id: "ms2", ord: 2, status: "PLANNED", percent: null, dueDay: null, locked: true }), study: { key: "T1", name: "Bayes rule", domainId: "d0", fieldId: "f1", cards: 5, floor: 8, due: 2, layer: 1, geminiNamed: false, locked: true } }), week([practice]), WED);
+  eq(
+    "N28 card: the one action is 'Study Markov chains · 3 of 8 · 4 due' to that Domain's review run (never the bare /review), with the Domain's name and its Gemini mark for the card to draw (the review round); 'Add an idea to Markov chains' to /add placed in the Domain with none due; a locked layer's study is the lock's parent and the action the hero's own, 'Add 3 cards to Bayes rule' to /add placed in that Domain (ruling N27); Start live and unlocked keeps 'Start milestone 1'",
+    [mainQuestCardOf(plannedStudy(false, false), null)!.action, mainQuestCardOf(plannedStudy(true, true), null)!.action, mainQuestCardOf(plannedStudy(false, false, 0), null)!.action, mainQuestCardOf(lockedParent, null)!.action, mainQuestCardOf(plannedStudy(true, false), null)!.action],
+    [
+      { label: "Study Markov chains · 3 of 8 · 4 due", href: "/review?view=run&domain=d1", name: "Markov chains", geminiNamed: true },
+      { label: "Study Markov chains · 3 of 8 · 4 due", href: "/review?view=run&domain=d1", name: "Markov chains", geminiNamed: true },
+      { label: "Add an idea to Markov chains", href: "/add?field=f1&domain=d1", name: "Markov chains", geminiNamed: true },
+      { label: "Add 3 cards to Bayes rule", href: "/add?field=f1&domain=d0", name: "Bayes rule", geminiNamed: false },
+      { label: "Start milestone 1", href: "/you/roadmap#now" },
+    ]
+  );
   eq(
     "P15 card: no main quest — a quiet 'none yet' with 'Set a main quest', or nothing once the aim suggestions are off; a draft says 'Check the draft'",
     [mainQuestCardOf(mainQuestOf(card({ state: "EMPTY", roadmapId: null }), null, WED), null), mainQuestCardOf(mainQuestOf(card({ state: "EMPTY", roadmapId: null, aimSuggestions: false }), null, WED), null), mainQuestCardOf(mainQuestOf(card({ state: "DRAFT", draftItems: 0 }), null, WED), null)?.action?.label],
@@ -5481,6 +5518,16 @@ asyncChecks.push(
   const { MilestoneTitle } = await import("../src/components/today/MilestoneTitle");
   const html = text(renderToStaticMarkup(createElement(MainQuestCard, { view: v })));
   const offHtml = text(renderToStaticMarkup(createElement(MainQuestCard, { view: off })));
+  // Ruling N28: the planned layer's study as the card's one link (the Domain's run), rendered.
+  const studyHtml = text(renderToStaticMarkup(createElement(MainQuestCard, { view: mainQuestCardOf(plannedStudy(false, false), null) })));
+  check(
+    "N28 render: the card's one link is the Domain's run with the study line, the Domain's name a name with its pv.named mark (DomainName, 'named by Gemini' spoken: the review round), its milestone line 'Milestone 1 is planned.' kept, and nothing says Start",
+    /<a class="mq-act" href="\/review\?view=run&amp;domain=d1"><span>Study <span data-wc="name" data-named="">Markov chains<span class="mg-nm" aria-hidden="true" data-pm="named">[\s\S]*?<span class="sr-only">named by Gemini<\/span><\/span> · 3 of 8 · 4 due<\/span>/.test(studyHtml) &&
+      studyHtml.includes("Milestone 1 is planned.") &&
+      !/start/i.test(studyHtml.replace(/Study/g, "")) &&
+      (studyHtml.match(/<a /g) ?? []).length === 1,
+    studyHtml.slice(0, 600)
+  );
   check(
     "P15 render: a section labelled 'Main quest' (the kit's SectionHeader h2), data-wc-block, the quest's lines, the sprint with its flag, one link and nothing else to press",
     /^<section class="today-quest" aria-labelledby="main-quest-h" data-wc-block="main-quest"><div class="sec-h">[\s\S]*?<h2 id="main-quest-h">Main quest<\/h2>/.test(html) &&

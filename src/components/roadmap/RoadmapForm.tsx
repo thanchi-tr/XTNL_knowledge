@@ -52,6 +52,11 @@
  * GEMINI_NOTHING_TO_ASK_LINE. Otherwise
  * [Build from my numbers] and [Write it myself] with NO_KEY_LINE. The area
  * suggestions switch shows only while ROADMAP_GAPS_LIVE.
+ * On a Field Area while TOPIC_PLANS_LIVE (ruling N33) the primary is [Write
+ * the topics] (no model), [Break it down] beside it while the topic map's
+ * Gemini chain is on (ruling N11), and those level-plan paths, their lanes and
+ * their chips sit behind one ▸ ("Level plan", a 44 px summary): two taps. A
+ * track Area keeps the level plan's paths as its primary.
  *
  * On mount, with no open DRAFT, an aim handed over from /you, a long goal,
  * the capture sheet or a plan made before revision 4 (takeAimHandoff, a
@@ -233,7 +238,7 @@ import { geminiAsksOf, intakeActivityOf } from "./roadmap-ui-model";
 import type { LiveGates } from "./GapPanel";
 // ── Revision 5, lane 9: the TOPICS paths ([Write the topics]; [Break it down] only while topicSwitchesOf().rate), behind TOPIC_PLANS_LIVE ──
 import { topicGeminiOn, topicPlansOn } from "./topic-map-model";
-import { BREAK_IT_DOWN_WORD, TOPIC_PATHS_LABEL, WRITE_TOPICS_LINE, WRITE_TOPICS_WORD } from "./roadmap-copy";
+import { BREAK_IT_DOWN_WORD, LEVEL_PATHS_WORD, TOPIC_PATHS_LABEL, WRITE_TOPICS_LINE, WRITE_TOPICS_WORD } from "./roadmap-copy";
 import "@/components/library/study.css";
 import "./roadmap.css";
 
@@ -1501,6 +1506,76 @@ export function RoadmapForm({
         : "The app ticks the practice types your constraints seem to rule out, quoting your words; nothing is left out until you say so.";
   // Gemini's lane lists only what the run will ask (geminiAsksOf), in the draft header's order: Domains, order, picks (D25).
   const laneItems = asks ? [...(asks.needs ? [GEMINI_LANE_ITEM.needs] : []), ...(asks.lines > 0 ? [GEMINI_LANE_ITEM.order] : []), ...(asks.picks ? [GEMINI_LANE_ITEM.picks] : [])] : [];
+  // Ruling N33: on a Field Area the topic paths are the primary row and the level plan's paths sit behind one ▸.
+  const topicPrimary = topicsLive && field != null;
+  // Who does what on each path (D25): the lanes, with what Gemini will do one tap away (behind the ▸ on a Field Area).
+  const lanes = askGemini ? (
+    <div className="rm-in-lanes">
+      <GlyphLane who="gemini" items={laneItems} />
+      <GlyphLane who="app" items={APP_LANE_ITEMS} />
+      <InfoTip topic="drafting with Gemini">{geminiArrangesLine(asks)}</InfoTip>
+    </div>
+  ) : geminiLive ? (
+    <div className="rm-in-lanes">
+      <GlyphLane who="app" items={APP_LANE_ITEMS} />
+      {/* Nothing for Gemini to decide (contracts §20.5: the schema would have no property): only the app's build, and why. */}
+      <InfoTip topic="building from your numbers">{GEMINI_NOTHING_TO_ASK_LINE}</InfoTip>
+    </div>
+  ) : null;
+  /** The level plan's paths: the form's own submit first on a track Area (`primary`); plain buttons behind the ▸ on a Field Area (ruling N33). */
+  const levelPaths = (primary: boolean) => {
+    const build = primary ? (
+      <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
+        {busy === "STARTER" ? "Building…" : "Build from my numbers"}
+      </Button>
+    ) : (
+      <Button size="lg" disabled={busy != null} onClick={() => void submit("STARTER")}>
+        {busy === "STARTER" ? "Building…" : "Build from my numbers"}
+      </Button>
+    );
+    if (askGemini)
+      return (
+        <>
+          {primary ? (
+            <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
+              {busy === "GEMINI" ? "Saving…" : "Draft with Gemini"}
+            </Button>
+          ) : (
+            <Button size="lg" disabled={busy != null} onClick={() => void submit("GEMINI")}>
+              {busy === "GEMINI" ? "Saving…" : "Draft with Gemini"}
+            </Button>
+          )}
+          <Button size="lg" disabled={busy != null} onClick={() => void submit("STARTER")}>
+            {busy === "STARTER" ? "Building…" : "Build from my numbers"}
+          </Button>
+          {view.keyTier === "FREE" && (
+            <Chips className="rm-in-path">
+              <HonestyChip
+                kind="data"
+                label={SHORT_DATA}
+                full={
+                  <>
+                    {privacyLine(PACK_SECTIONS)} {FREE_TIER_LINE}
+                  </>
+                }
+              />
+            </Chips>
+          )}
+        </>
+      );
+    if (geminiLive) return build;
+    return (
+      <>
+        {build}
+        <Button size="lg" disabled={busy != null} onClick={() => void submit("MANUAL")}>
+          {busy === "MANUAL" ? "Opening…" : "Write it myself"}
+        </Button>
+        <Chips className="rm-in-path">
+          <HonestyChip kind="no-key" label={SHORT_NO_KEY} full={NO_KEY_LINE} />
+        </Chips>
+      </>
+    );
+  };
 
   // Ruling N15: every seat taken (GOALS_MAX open goals) and no draft to edit: a new goal can't save, so say so first.
   const seatsFull = !view.draft && view.goalsMax != null && (view.seats ?? []).filter((x) => x.roadmapId).length >= view.goalsMax;
@@ -1577,7 +1652,7 @@ export function RoadmapForm({
         className="rm-form"
         onSubmit={(e) => {
           e.preventDefault();
-          void submit(askGemini ? "GEMINI" : "STARTER");
+          void submit(topicPrimary ? "TOPICS" : askGemini ? "GEMINI" : "STARTER");
         }}
       >
         <section className="card rm-fs" aria-label="The aim">
@@ -2043,75 +2118,39 @@ export function RoadmapForm({
           </FormKey>
         </section>
 
-        {/* Who does what on each path (D25): the lanes, with what Gemini will do one tap away. */}
-        {askGemini && (
-          <div className="rm-in-lanes">
-            <GlyphLane who="gemini" items={laneItems} />
-            <GlyphLane who="app" items={APP_LANE_ITEMS} />
-            <InfoTip topic="drafting with Gemini">{geminiArrangesLine(asks)}</InfoTip>
-          </div>
-        )}
-        {geminiLive && !askGemini && (
-          <div className="rm-in-lanes">
-            <GlyphLane who="app" items={APP_LANE_ITEMS} />
-            {/* Nothing for Gemini to decide (contracts §20.5: the schema would have no property): only the app's build, and why. */}
-            <InfoTip topic="building from your numbers">{GEMINI_NOTHING_TO_ASK_LINE}</InfoTip>
-          </div>
-        )}
+        {/* Who does what on each path (D25): the lanes above the bar on a track Area; behind the ▸ on a Field Area (ruling N33). */}
+        {!topicPrimary && lanes}
 
         <div className="rm-sticky" data-kb={inset > 0 ? "1" : undefined} style={inset > 0 ? ({ ["--kb" as string]: `${inset}px` } as CSSProperties) : undefined}>
-          {askGemini ? (
+          {topicPrimary ? (
+            // Revision 5, lane 9, as ruling N33 reads it: on a Field Area the topic paths are the primary row (2–4 words each):
+            // [Write the topics] is the form's submit (no model), [Break it down] beside it while the chain is on (ruling N11),
+            // and the level plan's paths, lanes and chips sit behind one ▸ (two taps).
             <>
-              <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
-                {busy === "GEMINI" ? "Saving…" : "Draft with Gemini"}
-              </Button>
-              <Button size="lg" disabled={busy != null} onClick={() => void submit("STARTER")}>
-                {busy === "STARTER" ? "Building…" : "Build from my numbers"}
-              </Button>
-              {view.keyTier === "FREE" && (
-                <Chips className="rm-in-path">
-                  <HonestyChip
-                    kind="data"
-                    label={SHORT_DATA}
-                    full={
-                      <>
-                        {privacyLine(PACK_SECTIONS)} {FREE_TIER_LINE}
-                      </>
-                    }
-                  />
-                </Chips>
-              )}
-            </>
-          ) : geminiLive ? (
-            <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
-              {busy === "STARTER" ? "Building…" : "Build from my numbers"}
-            </Button>
-          ) : (
-            <>
-              <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
-                {busy === "STARTER" ? "Building…" : "Build from my numbers"}
-              </Button>
-              <Button size="lg" disabled={busy != null} onClick={() => void submit("MANUAL")}>
-                {busy === "MANUAL" ? "Opening…" : "Write it myself"}
-              </Button>
-              <Chips className="rm-in-path">
-                <HonestyChip kind="no-key" label={SHORT_NO_KEY} full={NO_KEY_LINE} />
-              </Chips>
-            </>
-          )}
-          {topicsLive && field && (
-            // Revision 5, lane 9: the topic paths for a Field Area (2–4 words each); the level plan stays the primary path above.
-            <div className="rm-in-topics" role="group" aria-label={TOPIC_PATHS_LABEL}>
-              {breakDownLive && (
-                <Button size="lg" disabled={busy != null} onClick={() => void submit("BREAKDOWN")}>
-                  {busy === "BREAKDOWN" ? "Saving…" : BREAK_IT_DOWN_WORD}
+              <div className="rm-in-topics" role="group" aria-label={TOPIC_PATHS_LABEL}>
+                <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
+                  {busy === "TOPICS" ? "Opening…" : WRITE_TOPICS_WORD}
                 </Button>
-              )}
-              <Button size="lg" disabled={busy != null} onClick={() => void submit("TOPICS")}>
-                {busy === "TOPICS" ? "Opening…" : WRITE_TOPICS_WORD}
-              </Button>
-              <InfoTip topic={WRITE_TOPICS_WORD.toLowerCase()}>{WRITE_TOPICS_LINE}</InfoTip>
-            </div>
+                {breakDownLive && (
+                  <Button size="lg" disabled={busy != null} onClick={() => void submit("BREAKDOWN")}>
+                    {busy === "BREAKDOWN" ? "Saving…" : BREAK_IT_DOWN_WORD}
+                  </Button>
+                )}
+                <InfoTip topic={WRITE_TOPICS_WORD.toLowerCase()}>{WRITE_TOPICS_LINE}</InfoTip>
+              </div>
+              <details className="rm-adv rm-in-more" data-level-paths="">
+                <summary>
+                  <Icon name="chev" />
+                  {LEVEL_PATHS_WORD}
+                </summary>
+                <div className="rm-adv-b">
+                  {lanes}
+                  {levelPaths(false)}
+                </div>
+              </details>
+            </>
+          ) : (
+            levelPaths(true)
           )}
           {view.activeRoadmapId && !d.replaces && (
             <>

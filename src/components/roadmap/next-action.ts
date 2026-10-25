@@ -14,8 +14,15 @@
  *     3. FINISH_START      Start didn't finish                                               (runs finishStarting)
  *     4. MARK_DONE         the aim is reached on its readings                                (the Mark done sheet)
  *     5. PAST_DUE          the current milestone is past due: Reschedule, or close it on Tasks
- *     6. START             the current milestone is planned and Start is live                (the Start sheet)
- *        START_LATER       … and Start is not live yet: a line, no button (never a disabled Start)
+ *     6. LOCKED            a planned TOPICS layer whose prerequisites are open (ruling N27): "Add 5 cards to <parent>",
+ *                          the parent that still lacks cards (the lock lists the unmet ones first)      → /add?domain=
+ *                          chips: KNOWN "I know this" (skipTopic on that parent) and REVIEW_TOPIC "Review <parent> · k due"
+ *                          (its Domain's review run, reviewRunHref) while it has cards due
+ *        START             the current milestone is planned and Start is live                (the Start sheet)
+ *        STUDY             … and Start is not live yet (ruling N28): "Study <topic> · 3 of 8 · 4 due", the first topic of
+ *                          the layer not done, else the next planned layer's (N14's P15 rule)  → the Domain's review run
+ *        ADD_IDEA          … with no card due in it: "Add an idea to <topic>"                  → /add?domain=
+ *        START_LATER       … and no topic is left to study: a line, no button (never a disabled Start)
  *     7. this week's open week quests, in this order, each with its figure:
  *          ADD             "Add 3 cards to <Domain>": the part with the most left       → /add?field=&domain=
  *          REVIEW          "Review 2 cards in <Domain>": cards to bring to the level    → the week quests (their due days);
@@ -31,9 +38,9 @@
  * cards come due. Secondary chips are week-quest kinds (and "Close it on Tasks" beside Reschedule), one per kind,
  * never the primary's own kind.
  */
-import type { CurrentMilestoneView, ItemDraft, RoadmapView, WeekQuestRow } from "@/lib/roadmap-types";
-import { DRAFT_IT_AGAIN_WORD, START_AGAIN_AT_DEPTH_WORD, nextActionLabelOf, nextChipLabelOf } from "./roadmap-copy";
-import { addCardHref, ROADMAP_NEW_HREF, TODAY_HREF, todayTaskHref } from "./roadmap-links";
+import { CROSS_GOAL_PARENT_PREFIX, geminiNamedOf, type CurrentMilestoneView, type ItemDraft, type MilestoneLockParentView, type MilestoneTopicView, type RoadmapView, type WeekQuestRow } from "@/lib/roadmap-types";
+import { DRAFT_IT_AGAIN_WORD, START_AGAIN_AT_DEPTH_WORD, knownChipLabel, nextActionLabelOf, nextChipLabelOf, reviewTopicLabel, studyActionLabel } from "./roadmap-copy";
+import { addCardHref, ROADMAP_NEW_HREF, TODAY_HREF, reviewRunHref, todayTaskHref } from "./roadmap-links";
 import { activityAsksOf, practiceNameOf, weekQuestProgressOf } from "./roadmap-ui-model";
 
 export type NextActionKind =
@@ -47,7 +54,12 @@ export type NextActionKind =
   | "MARK_DONE"
   | "PAST_DUE"
   | "CLOSE_ON_TASKS"
+  | "LOCKED"
+  | "KNOWN"
+  | "REVIEW_TOPIC"
   | "START"
+  | "STUDY"
+  | "ADD_IDEA"
   | "START_LATER"
   | "ADD"
   | "REVIEW"
@@ -63,6 +75,8 @@ export type NextActionDo =
   | { kind: "reveal"; target: "week-quests" | "replan" | "rm-activities" }
   | { kind: "sheet"; sheet: "start" | "checkpoint" | "markDone" | "reschedule" | "replan" }
   | { kind: "run"; run: "finishStart" }
+  /** Ruling N27: "I know this" on the lock's parent (the existing skip core, skipTopic, on that topic's key). */
+  | { kind: "run"; run: "knowTopic"; key: string }
   | { kind: "none" };
 
 export interface NextAction {
@@ -76,6 +90,8 @@ export interface NextAction {
   unit: "card" | "session" | "step" | null;
   /** A Domain, practice or step name inside `label` (a name for the word count, §3.1); null: none. */
   name: string | null;
+  /** `name` is a Domain's that carries the Gemini mark (geminiNamedOf): NextLabel and Today's card draw pv.named after it (§22.11, ruling 67; the review round). */
+  geminiNamed?: boolean;
   do: NextActionDo;
 }
 
@@ -85,19 +101,90 @@ export interface NextActions {
   secondary: NextAction[];
 }
 
-/** The kinds a secondary chip can be. */
-export const NEXT_CHIP_KINDS: ReadonlySet<NextActionKind> = new Set(["ADD", "REVIEW", "PRACTICE", "STEP", "CHECKPOINT", "CLOSE_ON_TASKS"]);
+/** The kinds a secondary chip can be (the week-quest kinds, Close it on Tasks, and the lock's two: ruling N27). */
+export const NEXT_CHIP_KINDS: ReadonlySet<NextActionKind> = new Set(["ADD", "REVIEW", "PRACTICE", "STEP", "CHECKPOINT", "CLOSE_ON_TASKS", "KNOWN", "REVIEW_TOPIC"]);
 /** At most this many chips beside the primary. */
 export const NEXT_SECONDARY_MAX = 2;
 /** The order open week quests are offered in (ADD first: it has somewhere to go). */
 export const NEXT_ROW_ORDER: readonly WeekQuestRow["kind"][] = ["ADD", "RAISE", "PRACTICE", "STEP", "CHECKPOINT"];
 
-function action(kind: NextActionKind, doIt: NextActionDo, p: { n?: number | null; unit?: NextAction["unit"]; name?: string | null; ord?: number | null; label?: string } = {}): NextAction {
+function action(kind: NextActionKind, doIt: NextActionDo, p: { n?: number | null; unit?: NextAction["unit"]; name?: string | null; geminiNamed?: boolean; ord?: number | null; label?: string; short?: string } = {}): NextAction {
   const n = p.n ?? null;
   const unit = p.unit ?? null;
   const name = p.name && p.name.trim() ? p.name.trim() : null;
   const label = p.label ?? nextActionLabelOf({ kind, n, unit, name, ord: p.ord ?? null });
-  return { kind, label, short: p.label ?? nextChipLabelOf({ kind, n }), n, unit, name, do: doIt };
+  return { kind, label, short: p.short ?? p.label ?? nextChipLabelOf({ kind, n }), n, unit, name, ...(name && p.geminiNamed ? { geminiNamed: true } : {}), do: doIt };
+}
+
+// ── Roadmap rework 1, P2: the locked milestone (ruling N27) and the planned layer's study (ruling N28) ──
+
+/** The parent a locked milestone waits on: the first not met (the lock lists them first), or null when none is open. */
+export function lockedParentOf(current: Pick<CurrentMilestoneView, "lock">): MilestoneLockParentView | null {
+  const lock = current.lock;
+  if (!lock) return null;
+  return lock.parents.find((p) => !p.met) ?? null;
+}
+
+/** The Field the add flow preselects for a Domain: the library's, else the plan's (PlanEditView.fieldId), else none. */
+function fieldOfDomain(view: Pick<RoadmapView, "library" | "planEdit">, domainId: string | null): string | null {
+  return (domainId ? view.library?.find((d) => d.id === domainId)?.fieldId : null) ?? view.planEdit?.fieldId ?? null;
+}
+
+/**
+ * The topic to study now while the current milestone is a planned TOPICS layer (ruling N28; the Study card's rule, N14 and
+ * its P15 note): the first of the current layer's topics not done, else the first not done of the next planned layer rows
+ * in order (a layer whose topics are all done waits for its reach on cards, N26). The view marks the first planned row
+ * PLANNED and every later one OUTLINE (milestoneRowsOf), so a later row is read by either state, unreached and not held:
+ * one rule with the server's studyViewOf (the review round). Null on a LEVELS plan or with none left.
+ */
+export function studyTopicOf(view: Pick<RoadmapView, "milestones">, current: Pick<CurrentMilestoneView, "milestone" | "topics">): MilestoneTopicView | null {
+  const todo = (topics: readonly MilestoneTopicView[] | undefined): MilestoneTopicView | null => topics?.find((t) => !t.done && t.domainId) ?? null;
+  if (current.topics === undefined) return null;
+  const own = todo(current.topics);
+  if (own) return own;
+  const later = view.milestones
+    .filter((r) => r.ord > current.milestone.ord && r.chainRole === "LAYER" && (r.state === "PLANNED" || r.state === "OUTLINE") && r.reachedDay == null && !r.held && r.topics)
+    .sort((a, b) => a.ord - b.ord);
+  for (const r of later) {
+    const t = todo(r.topics);
+    if (t) return t;
+  }
+  return null;
+}
+
+/**
+ * Ruling N27: the locked milestone's primary, "Add n cards to <parent>" (n = floor − cards, at least 1) to the add flow
+ * placed in the parent's Domain (`fieldId`: the Field it preselects). One builder for the hero and Today's card (the
+ * review round: studyMainQuestActionOf reads it when the study is the lock's parent, AimStudyView.locked, so the hero,
+ * Today and GET /quests say the same). A parent with no Domain (a draft topic not yet accepted) cannot take a card: the
+ * line says what it waits on.
+ */
+export function lockedPrimaryOf(parent: Pick<MilestoneLockParentView, "name" | "domainId" | "cards" | "floor" | "geminiNamed">, fieldId: string | null): NextAction {
+  const left = Math.max(1, parent.floor - parent.cards);
+  const href = parent.domainId ? addCardHref(fieldId, parent.domainId) : null;
+  return action("LOCKED", href ? { kind: "href", href } : { kind: "none" }, { n: left, unit: "card", name: parent.name, geminiNamed: parent.geminiNamed });
+}
+
+/** Ruling N27: the locked milestone's actions: the primary and its two chips, in order. */
+function lockedActionsOf(view: RoadmapView, parent: MilestoneLockParentView): NextAction[] {
+  const out: NextAction[] = [lockedPrimaryOf(parent, fieldOfDomain(view, parent.domainId))];
+  // A cross-goal parent (another goal's Domain) has no topic key here to mark known.
+  if (!parent.key.startsWith(CROSS_GOAL_PARENT_PREFIX)) out.push(action("KNOWN", { kind: "run", run: "knowTopic", key: parent.key }, { name: parent.name, geminiNamed: parent.geminiNamed, label: knownChipLabel(parent.name), short: nextChipLabelOf({ kind: "KNOWN", n: null }) }));
+  const due = parent.due ?? 0;
+  if (due > 0 && parent.domainId) out.push(action("REVIEW_TOPIC", { kind: "href", href: reviewRunHref(parent.domainId) }, { n: due, unit: "card", name: parent.name, geminiNamed: parent.geminiNamed, label: reviewTopicLabel(parent.name, due), short: nextChipLabelOf({ kind: "REVIEW_TOPIC", n: due }) }));
+  return out;
+}
+
+/**
+ * Ruling N28: the study as one action: the topic's review run while it has cards due, else an idea filed in its Domain
+ * (`fieldId`: the Field the add flow preselects). Today's Main quest card and GET /quests call it with the plan's Field.
+ */
+export function studyActionOf(t: Pick<MilestoneTopicView, "name" | "domainId" | "cards" | "floor" | "due"> & { geminiNamed?: boolean; locked?: boolean }, fieldId: string | null): NextAction {
+  // The review round: a locked layer's study is the lock's first unmet parent (AimStudyView.locked): the hero's LOCKED primary.
+  if (t.locked) return lockedPrimaryOf({ name: t.name, domainId: t.domainId, cards: t.cards, floor: t.floor, geminiNamed: t.geminiNamed === true }, fieldId);
+  const domainId = t.domainId as string;
+  if (t.due > 0) return action("STUDY", { kind: "href", href: reviewRunHref(domainId) }, { n: t.due, unit: "card", name: t.name, geminiNamed: t.geminiNamed, label: studyActionLabel(t.name, t.cards, t.floor, t.due) });
+  return action("ADD_IDEA", { kind: "href", href: addCardHref(fieldId, domainId) }, { name: t.name, geminiNamed: t.geminiNamed });
 }
 
 /** What a row still asks (its count less its verified progress), never below 0. */
@@ -147,11 +234,12 @@ export function rowActionOf(row: WeekQuestRow, view: Pick<RoadmapView, "library"
       const domainId = part?.domainId ?? queryOf(row.href, "domain");
       const fieldId = queryOf(row.href, "field") ?? (domainId ? (view.library?.find((d) => d.id === domainId)?.fieldId ?? null) : null);
       // The Domain the add flow preselects (the row's own pick): adding there counts, whichever of the row's Domains it is.
-      const name = part ? String(part.name) : ((domainId ? view.library?.find((d) => d.id === domainId)?.name : null) ?? namesOfLabel(row.label)[0] ?? null);
+      const lib = domainId ? view.library?.find((d) => d.id === domainId) : undefined;
+      const name = part ? String(part.name) : (lib?.name ?? namesOfLabel(row.label)[0] ?? null);
       const n = part ? Math.max(0, part.count - part.progress) : left;
       const href = domainId ? addCardHref(fieldId, domainId) : (row.href ?? null);
       if (!href) return null;
-      return action("ADD", { kind: "href", href }, { n, unit: "card", name });
+      return action("ADD", { kind: "href", href }, { n, unit: "card", name, geminiNamed: lib ? geminiNamedOf(lib) : false });
     }
     case "RAISE": {
       // A part names its own Domain; a v1 row names one only when it has one (its cards may sit in any of them).
@@ -159,7 +247,8 @@ export function rowActionOf(row: WeekQuestRow, view: Pick<RoadmapView, "library"
       const named = namesOfLabel(row.label);
       const name = part ? String(part.name) : named.length === 1 ? named[0] : null;
       const n = part ? Math.max(0, part.count - part.progress) : left;
-      return action("REVIEW", { kind: "reveal", target: "week-quests" }, { n, unit: "card", name });
+      const lib = part?.domainId ? view.library?.find((d) => d.id === part.domainId) : undefined;
+      return action("REVIEW", { kind: "reveal", target: "week-quests" }, { n, unit: "card", name, geminiNamed: lib ? geminiNamedOf(lib) : false });
     }
     case "PRACTICE": {
       const href = row.href ?? (row.seekTemplateId ? todayTaskHref(row.seekTemplateId) : TODAY_HREF);
@@ -217,7 +306,20 @@ function activeActionsOf(view: RoadmapView): NextAction[] {
   }
   // Not started: Start (or its line), never a week quest or a score before the milestone runs (FINISH_START is above).
   if (!started) {
-    if (!current.starting) out.push(view.goalsLive ? action("START", { kind: "sheet", sheet: "start" }, { ord: m.ord }) : action("START_LATER", { kind: "none" }));
+    if (current.starting) return out;
+    // Ruling N27: a locked layer before Start (Start would refuse PREREQS_OPEN): the parent that still lacks cards.
+    const parent = lockedParentOf(current);
+    if (parent) {
+      out.push(...lockedActionsOf(view, parent));
+      return out;
+    }
+    if (view.goalsLive) {
+      out.push(action("START", { kind: "sheet", sheet: "start" }, { ord: m.ord }));
+      return out;
+    }
+    // Ruling N28: Start not live: the study is the one action while a topic of the planned layers is left to do.
+    const topic = studyTopicOf(view, current);
+    out.push(topic ? studyActionOf(topic, fieldOfDomain(view, topic.domainId)) : action("START_LATER", { kind: "none" }));
     return out;
   }
   out.push(...weekActionsOf(view, current));

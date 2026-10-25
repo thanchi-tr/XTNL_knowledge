@@ -9,18 +9,21 @@
  * the task's place, scrolls to it and flashes it), never a '#t-' link: on Today a same-page hash does nothing once the
  * board has mounted. Start and every plan edit stay on the roadmap page: the card links there, and says "Start
  * milestone n" only while ROADMAP_GOALS_LIVE is on (MainQuest.startable); with the switch off a planned milestone reads
- * "Milestone 1 is planned." and the link is "Open roadmap". Never red, never a verdict: the sprint's share on its
+ * "Milestone 1 is planned." and the link is "Open roadmap", unless (ruling N28) the milestone is a planned TOPICS layer
+ * with a topic to study (MainQuest.study): then the one action is the study, "Study <topic> · 3 of 8 · 4 due" linking
+ * that Domain's review run (roadmap-links reviewRunHref, the Study card's own run), or "Add an idea to <topic>" with no
+ * card due in it (the add flow placed in its Domain). Never red, never a verdict: the sprint's share on its
  * Sunday reads "provisional · final Wed 04:00". The milestone's title keeps its provenance (§22.11): its class and its
  * struck numbers travel with it, for the card to draw the chip and the strike.
  */
 import type { RoadmapView, WeekQuestRow } from "@/lib/roadmap-types";
-import { MAIN_QUEST, milestoneHeadOf, sprintLine, type MainQuest } from "@/lib/main-quest";
-import { NEXT_ROW_ORDER, rowActionOf } from "@/components/roadmap/next-action";
+import { MAIN_QUEST, milestoneHeadOf, sprintLine, type MainQuest, type MainQuestStudy } from "@/lib/main-quest";
+import { NEXT_ROW_ORDER, rowActionOf, studyActionOf } from "@/components/roadmap/next-action";
 import { nextActionLabelOf } from "@/components/roadmap/roadmap-copy";
 import type { MilestoneTitleView } from "./MilestoneTitle";
 
-/** The card's one action: a link out, or a seek for a task on Today (a practice's or a step's row). */
-export type MainQuestAction = { label: string; href: string } | { label: string; seek: string };
+/** The card's one action: a link out (with the Domain name inside its label and whether Gemini named it, for the card's pv.named mark: the review round), or a seek for a task on Today (a practice's or a step's row). */
+export type MainQuestAction = { label: string; href: string; name?: string; geminiNamed?: boolean } | { label: string; seek: string };
 
 export interface MainQuestCardView {
   heading: typeof MAIN_QUEST;
@@ -34,7 +37,7 @@ export interface MainQuestCardView {
   line: string;
   /** "This week's sprint · 2 of 5 done" (and its Sunday words). */
   sprint: string | null;
-  /** The one action: the sprint's next open row, else its roadmap ("Open roadmap", or "Start milestone n" while Start is live). */
+  /** The one action: the sprint's next open row, else its roadmap ("Open roadmap", or "Start milestone n" while Start is live), or the planned layer's study (ruling N28). */
   action: MainQuestAction | null;
 }
 
@@ -66,6 +69,16 @@ function sprintActionOf(q: MainQuest, rows: readonly WeekQuestRow[]): MainQuestA
 }
 
 /**
+ * Ruling N28: the study as the card's action (next-action studyActionOf: the review run while cards are due, else an idea
+ * in its Domain; on a locked layer the lock's parent, "Add n cards to <parent>", the hero's own primary: ruling N27 as the
+ * review round reads it), with the Domain name and its Gemini mark for the card to draw.
+ */
+export function studyMainQuestActionOf(study: MainQuestStudy): { label: string; href: string; name?: string; geminiNamed?: boolean } {
+  const a = studyActionOf(study, study.fieldId);
+  return { label: a.label, href: a.do.kind === "href" ? a.do.href : "/you/roadmap", ...(a.name ? { name: a.name, geminiNamed: a.geminiNamed === true } : {}) };
+}
+
+/**
  * The card for a main quest and its goal's rows this week (main-quest-server loadMainQuestWeek; used only when they
  * are the quest's own sprint). null draws nothing: no quest and the aim suggestions turned off.
  */
@@ -78,6 +91,8 @@ export function mainQuestCardOf(q: MainQuest, rows: readonly WeekQuestRow[] | nu
   let action: MainQuestAction = { label: OPEN_ROADMAP_WORD, href: q.href };
   if (q.state === "DRAFT") action = { label: CHECK_DRAFT_WORD, href: q.href };
   else if (q.state === "PLANNED" && q.startable && q.milestone) action = { label: nextActionLabelOf({ kind: "START", n: null, unit: null, name: null, ord: q.milestone.ord }), href: `${q.href}#now` };
+  // Ruling N28: a planned TOPICS layer (locked, or Start off): the study is the one action, the roadmap hero's own words and link.
+  else if (q.state === "PLANNED" && q.study) action = studyMainQuestActionOf(q.study);
   else if (q.sprint && q.sprint.state === "OPEN" && rows) action = sprintActionOf(q, rows) ?? action;
   const m = q.milestone;
   const milestone = m ? { head: milestoneHeadOf(m), title: m.title.trim() ? m.title : "", titleClass: m.titleClass, titleStruck: m.titleStruck } : null;

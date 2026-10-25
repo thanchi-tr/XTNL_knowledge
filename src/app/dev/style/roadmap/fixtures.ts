@@ -57,6 +57,7 @@ import {
   type CheckpointKind,
   type ConstraintExclusion,
   type CoverageBreakdown,
+  type CurrentMilestoneView,
   type DateCheck,
   type DepthView,
   type DomainAddition,
@@ -74,7 +75,9 @@ import {
   type MeasureSpec,
   type MilestoneDraft,
   type MilestoneFeasibility,
+  type MilestoneLockView,
   type MilestoneRowView,
+  type MilestoneTopicView,
   type PlanEditView,
   type ProficiencyView,
   type Recorded,
@@ -200,6 +203,12 @@ export const FIXTURE_STATES = [
   "topic-parents",
   // Ruling N16: [Redo] on the layers not started, and the map's [Redo topics]
   "topic-rebreak",
+  // Roadmap rework 1 (rulings N27, N28, N30, N32, N33): a locked layer, the Study action, the folded layers, [Accept all]'s list, the intake
+  "topic-locked",
+  "topic-study",
+  "topic-map-folded",
+  "topic-accept-all",
+  "intake-topics",
   // Ruling N15: three open goals, the switcher on top (GoalSwitcher)
   "goals-three",
   "many-measures",
@@ -1053,7 +1062,7 @@ export interface RoadmapFixture {
   /** A lead-only state drawn with a switch on (ROADMAP_GEMINI_LIVE, ROADMAP_GAPS_LIVE are false in this build; the server still refuses). */
   gates?: { gemini?: boolean; gaps?: boolean; topics?: boolean; topicNames?: boolean };
   /** Revision 5, lane 9: the map card alone, a row's sheet open at mount (the topic, sources and parents sheets). */
-  topicMap?: { map: TopicMapView; mode: "draft" | "plan"; open?: { key: string; sheet: "topic" | "sources" | "parents" } | null };
+  topicMap?: { map: TopicMapView; mode: "draft" | "plan"; open?: { key: string; sheet: "topic" | "sources" | "parents" | "accept" } | null };
   /**
    * UI motion (contracts §21): what this viewer last saw, for a SEEN state.
    * The page seeds the seen store with these before its surfaces read it
@@ -1372,12 +1381,15 @@ const B = WORD_BLOCK;
 export const WORD_BUDGET_ROWS: readonly WordBudgetRow[] = [
   { id: "s1-intake-blank", row: 1, fixture: "intake", surface: "intake", blocks: [B.intake], budget: 90, fold: 25 },
   { id: "s1-intake-gemini", row: 1, fixture: "intake-gemini", surface: "intake", blocks: [B.intake], budget: 105, fold: 25 },
-  { id: "s1-intake-empty-library", row: 1, fixture: "intake-empty-library", surface: "intake", blocks: [B.intake], budget: 110, fold: 25 },
+  // Ruling N33 lowered the Field intakes to what the layout now reads (the level plan's paths behind one ▸: 110 / 150 before; intake-left-out stays on the blank intake's 90, lane 1's pin, and reads 75).
+  { id: "s1-intake-empty-library", row: 1, fixture: "intake-empty-library", surface: "intake", blocks: [B.intake], budget: 85, fold: 25 },
   { id: "s1-intake-body", row: 1, fixture: "intake-confirm", surface: "intake", blocks: [B.intake], budget: 130, fold: 25 },
-  { id: "s1-intake-depth", row: 1, fixture: "intake-depth", surface: "intake", blocks: [B.intake], budget: 150, fold: 25 },
+  { id: "s1-intake-depth", row: 1, fixture: "intake-depth", surface: "intake", blocks: [B.intake], budget: 120, fold: 25 },
   // Revision 5, lane 1 (F-R5-8; ui-motion §15.8: held to the existing row-1 budgets): a Field just picked, nothing chosen,
   // "Left out · 4" and the named areas beside a library: a blank intake with its Area picked, on the blank intake's budget.
   { id: "s1-intake-left-out", row: 1, fixture: "intake-left-out", surface: "intake", blocks: [B.intake], budget: 90, fold: 25 },
+  // Ruling N33: the depth intake with a key and the chain on ([Write the topics], [Break it down], the ▸): the depth form's budget less the fold (reads 118).
+  { id: "s1-intake-topics", row: 1, fixture: "intake-topics", surface: "intake", blocks: [B.intake], budget: 120, fold: 25 },
   { id: "s2-draft-header-v4", row: 2, fixture: "draft-v4", surface: "page", blocks: [B.draftHeader, B.draftDate], budget: 90, fold: 25 },
   { id: "s2-draft-header-count-gate", row: 2, fixture: "count-gate", surface: "page", blocks: [B.draftHeader, B.draftDate], budget: 70, fold: 25 },
   { id: "s2-draft-header-mixed", row: 2, fixture: "draft-mixed", surface: "page", blocks: [B.draftHeader, B.draftDate], budget: 40, fold: 25 },
@@ -1419,6 +1431,18 @@ export const WORD_BUDGET_ROWS: readonly WordBudgetRow[] = [
   { id: "s13-topic-map-write", row: 13, fixture: "topic-map-write", surface: "page", blocks: [B.topicLayer], each: true, budget: 6 },
   { id: "s13-topic-map-write-foot", row: 13, fixture: "topic-map-write", surface: "page", blocks: [B.topicMapFoot], budget: 2 },
   { id: "s13-topic-map-plan", row: 13, fixture: "topic-map-plan", surface: "page", blocks: [B.topicLayer], each: true, budget: 6 },
+  // Ruling N32 (the plan page expands only the open layer): each plan fixture's layer headers together ≤ 8 (2 a layer: "Layer" and its
+  // state word or "done"; the rows, names and milestone lines never held app words), and ≤ 6 each as row 13 reads them (literal rows: ui-audit reads them from the source).
+  { id: "s32-topic-map-plan-layers", row: 13, fixture: "topic-map-plan", surface: "page", blocks: [B.topicLayer], budget: 8 },
+  { id: "s32-topic-map-plan-each", row: 13, fixture: "topic-map-plan", surface: "page", blocks: [B.topicLayer], each: true, budget: 6 },
+  { id: "s32-topic-map-folded-layers", row: 13, fixture: "topic-map-folded", surface: "page", blocks: [B.topicLayer], budget: 8 },
+  { id: "s32-topic-map-folded-each", row: 13, fixture: "topic-map-folded", surface: "page", blocks: [B.topicLayer], each: true, budget: 6 },
+  { id: "s32-topic-locked-layers", row: 13, fixture: "topic-locked", surface: "page", blocks: [B.topicLayer], budget: 8 },
+  { id: "s32-topic-locked-each", row: 13, fixture: "topic-locked", surface: "page", blocks: [B.topicLayer], each: true, budget: 6 },
+  { id: "s32-topic-study-layers", row: 13, fixture: "topic-study", surface: "page", blocks: [B.topicLayer], budget: 8 },
+  { id: "s32-topic-study-each", row: 13, fixture: "topic-study", surface: "page", blocks: [B.topicLayer], each: true, budget: 6 },
+  { id: "s32-topic-chain-layers", row: 13, fixture: "topic-chain", surface: "page", blocks: [B.topicLayer], budget: 8 },
+  { id: "s32-topic-chain-each", row: 13, fixture: "topic-chain", surface: "page", blocks: [B.topicLayer], each: true, budget: 6 },
   { id: "s15-topic-chain-depth", row: 15, fixture: "topic-chain", surface: "page", blocks: [B.depthLine], each: true, budget: 6 },
   // The next action (ui-motion.md §16, row 16): the hero's place, title, one primary and ≤ 2 chips, per branch it draws;
   // the active fold (the hero and the Aim header, the top screen at 344) ≤ 20 (static 13; ≤ 40 was the aim).
@@ -1430,6 +1454,9 @@ export const WORD_BUDGET_ROWS: readonly WordBudgetRow[] = [
   { id: "s16-next-past-due", row: 16, fixture: "past-due", surface: "page", blocks: [B.nextAction], budget: 8 },
   { id: "s16-next-replan", row: 16, fixture: "active-replan", surface: "page", blocks: [B.nextAction], budget: 7 },
   { id: "s16-next-asking", row: 16, fixture: "active-confirm", surface: "page", blocks: [B.nextAction], budget: 5 },
+  // Roadmap rework 1 (rulings N27 and N28, the review round): the locked hero (its primary and two chips) and the study hero.
+  { id: "s16-next-locked", row: 16, fixture: "topic-locked", surface: "page", blocks: [B.nextAction], budget: 8, fold: 20 },
+  { id: "s16-next-study", row: 16, fixture: "topic-study", surface: "page", blocks: [B.nextAction], budget: 5, fold: 20 },
 ];
 // Row 11 (Today's aim line, every state ≤ 8) is /dev/style/today's: AimLine over AIM_LINE_FIXTURES (R1's block), and its
 // words are roadmap-copy aimLineShort's, which roadmap-ui-check holds to 8 for every fixture state.
@@ -3268,7 +3295,8 @@ export function topicMapDraftFixture(roadmapId = "rm4", version = 2): TopicMapVi
     topicRow({ key: "U1", name: "Domain one", cls: "LIBRARY", layer: 1, placed: "GEMINI", domain: { id: "d-one", name: "Domain one", geminiNamed: false }, level: 6 }),
     topicRow({ key: "S1", name: "Outline line one", cls: "SYLLABUS", layer: 1, placed: "GEMINI" }),
     topicRow({ key: "T5", name: "Domain two", cls: "PICKED", layer: 1, chosen: false, domain: { id: "d-two", name: "Domain two", geminiNamed: false }, notes: ["PICKED_BY_GEMINI"], votes: { form: 2, samples: 3 } }),
-    topicRow({ key: "T9", name: "Alpha extra", cls: "NOT_CHECKED", layer: 1, chosen: false, sources: [], votes: { form: 2, samples: 3 }, notes: ["NEAR_DUPLICATE"] }),
+    // rulings N30 and N31: a hidden row says why, inline (a duplicate names the shown name it duplicates)
+    topicRow({ key: "T9", name: "Alpha extra", cls: "NOT_CHECKED", layer: 1, chosen: false, sources: [], votes: { form: 2, samples: 3 }, notes: ["NEAR_DUPLICATE"], hide: { reason: "NEAR_DUPLICATE", sameAs: "Alpha one" } }),
   ];
   const l2 = [
     topicRow({ key: "T3", name: "Beta one", cls: "LINKED", layer: 2, parents: { kind: "LINKS", keys: ["T1"], crossGoal: [] }, children: ["T7"] }),
@@ -3283,8 +3311,8 @@ export function topicMapDraftFixture(roadmapId = "rm4", version = 2): TopicMapVi
     topicRow({ key: "S2", name: "Outline line two", cls: "SYLLABUS", layer: 3, placed: "GEMINI" }),
     topicRow({ key: "T10", name: "Gamma two", cls: "LINKED", layer: 3, parents: { kind: "LINKS", keys: [], crossGoal: [] }, notes: ["NEEDS_PARENT"] }),
     topicRow({ key: "T8", name: "Gamma three", cls: "LINKED", layer: 3, chosen: false }),
-    topicRow({ key: "T12", name: "Gamma hidden one", cls: "NOT_CHECKED", layer: 3, chosen: false, sources: [], notes: ["UNSURE_LAYER"] }),
-    topicRow({ key: "T13", name: "Gamma hidden two", cls: "NOT_CHECKED", layer: 3, chosen: false, sources: [] }),
+    topicRow({ key: "T12", name: "Gamma hidden one", cls: "NOT_CHECKED", layer: 3, chosen: false, sources: [], notes: ["UNSURE_LAYER"], hide: { reason: "UNSURE_LAYER" } }),
+    topicRow({ key: "T13", name: "Gamma hidden two", cls: "NOT_CHECKED", layer: 3, chosen: false, sources: [], hide: { reason: "NONE" } }),
   ];
   const l4 = [
     topicRow({ key: "T11", name: "Delta one", cls: "LINKED", layer: 4, role: "DEEP", parents: { kind: "LINKS", keys: ["T7"], crossGoal: [{ slot: 2, name: "Domain from goal two", geminiNamed: true }] }, notes: ["CROSS_GOAL_PARENT"] }),
@@ -3333,18 +3361,22 @@ export function topicMapWriteFixture(roadmapId = "rm4", version = 1): TopicMapVi
   };
 }
 
-/** An accepted TOPICS plan's map: every layer kept, Gemini's names now your Domains (pv.named), layer 1 done, layer 2 open. */
-export function topicMapPlanFixture(roadmapId = "rm4", version = 3): TopicMapView {
+/**
+ * An accepted TOPICS plan's map: every layer kept, Gemini's names now your Domains (pv.named); the layers before `open` done,
+ * that one open, the rest after it (the server's rule: reached DONE, the next one OPEN, the rest AFTER).
+ */
+export function topicMapPlanFixture(roadmapId = "rm4", version = 3, open = 2): TopicMapView {
   const kept = (key: string, name: string, layer: number, p: Partial<TopicRowView> = {}) => topicRow({ key, name, cls: "KEPT", layer, domain: { id: `d-${key}`, name, geminiNamed: true }, ...p });
+  const stateOf = (layer: number): TopicLayerView["state"] => (layer < open ? "DONE" : layer === open ? "OPEN" : "AFTER");
   return {
     roadmapId,
     version,
     rating: rating({ layers: 4, geminiLayers: 5, mapFilled: 5, replies: [5, 5, 4], changes: [{ kind: "MERGED", from: 5, to: 4, day: "2026-10-06" }] }),
     layers: [
-      topicLayer({ layer: 1, state: "DONE", kept: true, geminiNames: true, topics: [kept("T1", "Alpha one", 1, { level: 6 }), kept("T2", "Alpha two", 1, { level: 6, held: true, notes: ["HELD_AT_START"] }), topicRow({ key: "U1", name: "Domain one", cls: "LIBRARY", layer: 1, domain: { id: "d-one", name: "Domain one", geminiNamed: false }, level: 8 })] }),
-      topicLayer({ layer: 2, state: "OPEN", kept: true, geminiNames: true, topics: [kept("T3", "Beta one", 2, { parents: { kind: "LINKS", keys: ["T1"], crossGoal: [] }, level: 4 }), kept("T4", "Beta two", 2, { skipped: true, notes: ["KNOWN_BY_YOU"] })] }),
-      topicLayer({ layer: 3, state: "AFTER", kept: true, geminiNames: true, topics: [kept("T7", "Gamma one", 3), topicRow({ key: "Y1", name: "My own topic", cls: "YOURS", layer: 3, placed: "YOU" })] }),
-      topicLayer({ layer: 4, state: "AFTER", kept: true, geminiNames: true, topics: [kept("T11", "Delta one", 4, { role: "DEEP" }), kept("T12", "Delta two", 4, { role: "DEEP" })] }),
+      topicLayer({ layer: 1, state: stateOf(1), kept: true, geminiNames: true, topics: [kept("T1", "Alpha one", 1, { level: 6 }), kept("T2", "Alpha two", 1, { level: 6, held: true, notes: ["HELD_AT_START"] }), topicRow({ key: "U1", name: "Domain one", cls: "LIBRARY", layer: 1, domain: { id: "d-one", name: "Domain one", geminiNamed: false }, level: 8 })] }),
+      topicLayer({ layer: 2, state: stateOf(2), kept: true, geminiNames: true, topics: [kept("T3", "Beta one", 2, { parents: { kind: "LINKS", keys: ["T1"], crossGoal: [] }, level: 4 }), kept("T4", "Beta two", 2, { skipped: true, notes: ["KNOWN_BY_YOU"] })] }),
+      topicLayer({ layer: 3, state: stateOf(3), kept: true, geminiNames: true, topics: [kept("T7", "Gamma one", 3), topicRow({ key: "Y1", name: "My own topic", cls: "YOURS", layer: 3, placed: "YOU" })] }),
+      topicLayer({ layer: 4, state: stateOf(4), kept: true, geminiNames: true, topics: [kept("T11", "Delta one", 4, { role: "DEEP" }), kept("T12", "Delta two", 4, { role: "DEEP" })] }),
     ],
     hidden: 0,
     cautions: ["FINANCIAL"],
@@ -3358,8 +3390,12 @@ export function topicMapPlanFixture(roadmapId = "rm4", version = 3): TopicMapVie
 const named = (text: string): NamedPart => ({ text, geminiNamed: true });
 const plain = (text: string): NamedPart => ({ text, geminiNamed: false });
 
-/** A TOPICS plan's milestone rows (F-R5-9's titles in NamedParts): layer milestones, then the depth milestone. */
-function topicChainRows(states: { reached: number[]; current: number | null; held?: number[] }): MilestoneRowView[] {
+/**
+ * A TOPICS plan's milestone rows (F-R5-9's titles in NamedParts): layer milestones, then the depth milestone. `closedUnreached`
+ * (its goal closed short), `reachedOnCards` (ruling N26: reached with no goal) and `topics` (a layer's counts, ruling N25) are the
+ * rework's states; a PLANNED layer is locked while the layer before it is neither reached nor held (prereqsOpenOf's rule).
+ */
+function topicChainRows(states: { reached: number[]; current: number | null; held?: number[]; closedUnreached?: number[]; reachedOnCards?: number[]; topics?: Partial<Record<number, MilestoneTopicView[]>> }): MilestoneRowView[] {
   const titles: NamedPart[][] = [
     [named("Alpha one"), plain(", "), named("Alpha two"), plain(" +1 · layer 1 of 4")],
     [named("Beta one"), plain(", "), named("Beta two"), plain(" · layer 2 of 4")],
@@ -3374,13 +3410,52 @@ function topicChainRows(states: { reached: number[]; current: number | null; hel
     ["2027-01-19", "2027-02-22"],
     ["2027-02-23", "2027-06-21"],
   ];
+  // Rulings N25 and N27: each layer row's topics with "n of 8" (the map fixture's Domains), and a locked row's parents (the
+  // whole layer before, the ones still short of cards first) with one LINK vote under EDGE_DRAW as a one-tap pick.
+  const topicsOf: Record<number, MilestoneTopicView[]> = {
+    ...states.topics,
+    1: states.topics?.[1] ?? [
+      { key: "T1", lineageId: "l-T1", name: "Alpha one", domainId: "d-T1", cards: 8, floor: 8, due: 0, held: false, skipped: false, done: true, geminiNamed: true },
+      { key: "T2", lineageId: "l-T2", name: "Alpha two", domainId: "d-T2", cards: 9, floor: 8, due: 0, held: true, skipped: false, done: true, geminiNamed: true },
+      { key: "U1", lineageId: "l-U1", name: "Domain one", domainId: "d-one", cards: 8, floor: 8, due: 2, held: false, skipped: false, done: true, geminiNamed: false },
+    ],
+    2: states.topics?.[2] ?? [
+      { key: "T3", lineageId: "l-T3", name: "Beta one", domainId: "d-T3", cards: 3, floor: 8, due: 4, held: false, skipped: false, done: false, geminiNamed: true },
+      { key: "T4", lineageId: "l-T4", name: "Beta two", domainId: "d-T4", cards: 1, floor: 8, due: 0, held: false, skipped: true, done: true, geminiNamed: true },
+    ],
+    3: states.topics?.[3] ?? [
+      { key: "T7", lineageId: "l-T7", name: "Gamma one", domainId: "d-T7", cards: 0, floor: 8, due: 0, held: false, skipped: false, done: false, geminiNamed: true },
+      { key: "Y1", lineageId: "l-Y1", name: "My own topic", domainId: "d-Y1", cards: 2, floor: 8, due: 1, held: false, skipped: false, done: false, geminiNamed: false },
+    ],
+    4: states.topics?.[4] ?? [
+      { key: "T11", lineageId: "l-T11", name: "Delta one", domainId: "d-T11", cards: 0, floor: 8, due: 0, held: false, skipped: false, done: false, geminiNamed: true },
+      { key: "T12", lineageId: "l-T12", name: "Delta two", domainId: "d-T12", cards: 0, floor: 8, due: 0, held: false, skipped: false, done: false, geminiNamed: true },
+    ],
+  };
+  const lockOf = (layer: number): MilestoneLockView => {
+    const parents = (topicsOf[layer - 1] ?? []).map((t) => ({ key: t.key, name: t.name, domainId: t.domainId, cards: t.cards, floor: t.floor, due: t.due, held: t.held, skipped: t.skipped, met: t.done, geminiNamed: t.geminiNamed }));
+    return {
+      afterLayer: layer - 1,
+      wholeLayer: true,
+      parents: [...parents.filter((p) => !p.met), ...parents.filter((p) => p.met)],
+      // Layer 3's Gamma one: Gemini voted Beta two as its parent in 2 of 3 samples (under EDGE_DRAW), so it is a pick, never a link.
+      suggestions: layer === 3 ? [{ child: { key: "T7", name: "Gamma one", geminiNamed: true }, key: "T4", name: "Beta two", domainId: "d-T4", geminiNamed: true, votes: 2, samples: 3 }] : [],
+    };
+  };
+  // As the server marks them (milestoneRowsOf): the first planned row not reached, closed, under way or held reads PLANNED, every later one OUTLINE (the review round).
+  const firstPlanned = titles.map((_, i) => i + 1).find((ord) => !states.reached.includes(ord) && !(states.closedUnreached?.includes(ord) ?? false) && states.current !== ord && !(states.held?.includes(ord) ?? false)) ?? null;
   return titles.map((parts, i) => {
     const ord = i + 1;
     const depth = ord === 5;
     const reached = states.reached.includes(ord);
     const held = states.held?.includes(ord) ?? false;
-    const state: MilestoneRowView["state"] = reached ? "REACHED" : states.current === ord ? "CURRENT" : "PLANNED";
-    const opensAfter = state === "PLANNED" && !held && !(states.current == null && ord === 1) ? ord - 1 : null;
+    const closed = states.closedUnreached?.includes(ord) ?? false;
+    const state: MilestoneRowView["state"] = reached ? "REACHED" : closed ? "CLOSED_UNREACHED" : states.current === ord ? "CURRENT" : held || ord === firstPlanned ? "PLANNED" : "OUTLINE";
+    const planned = state === "PLANNED" || state === "OUTLINE";
+    // A planned row waits on the layer before it unless that one is reached or held (prereqsOpenOf; a held layer waits on nothing).
+    const behind = (k: number) => states.reached.includes(k) || (states.held?.includes(k) ?? false);
+    const opensAfter = planned && !held && ord > 1 && !behind(ord - 1) ? ord - 1 : null;
+    const locked = !depth && !held && opensAfter != null;
     return {
       id: `tm${ord}`,
       lineageId: `tml${ord}`,
@@ -3390,12 +3465,13 @@ function topicChainRows(states: { reached: number[]; current: number | null; hel
       state,
       windowStart: days[i][0],
       dueDay: days[i][1],
-      percent: reached ? 100 : states.current === ord ? 23 : null,
+      percent: reached ? 100 : states.current === ord ? 23 : closed ? 40 : null,
       rankIndex: [1, 1, 2, 3, 4][i],
       gaveRank: null,
       reachedDay: reached ? days[i][1] : null,
       countsFrom: null,
-      closedPercent: null,
+      closedPercent: closed ? 40 : null,
+      ...(states.reachedOnCards?.includes(ord) ? { reachedOnCards: true } : {}),
       stage: depth ? "FLUENT" : "FAMILIAR",
       gateLevel: depth ? 10 : 6,
       held,
@@ -3404,18 +3480,41 @@ function topicChainRows(states: { reached: number[]; current: number | null; hel
       opensAfter: held ? null : opensAfter,
       titleParts: parts,
       known: held,
+      ...(depth ? {} : { topics: topicsOf[ord] ?? [], lock: locked ? lockOf(ord) : null }),
     };
   });
 }
 
-/** An ACTIVE TOPICS plan from the depth plan's fixture: its header says TOPICS, its rows are the chain, its map is kept. */
-function topicPlanView(rows: MilestoneRowView[]): RoadmapView {
+/**
+ * Rulings N27 and N28: the current milestone as a PLANNED layer row (Start not taken): its topics and lock are the row's;
+ * no goal, nothing measured, the title code's (a layer row's).
+ */
+function topicPlannedCurrentOf(rows: MilestoneRowView[], ord: number): CurrentMilestoneView {
+  const r = rows.find((x) => x.ord === ord)!;
+  return {
+    milestone: milestone({ id: r.id, lineageId: r.lineageId, ord, title: r.title, titleOrigin: APP, titleDecision: "KEPT", windowStart: r.windowStart, dueDay: r.dueDay, status: "PLANNED", rankIndex: r.rankIndex, layer: r.layer, chainRole: r.chainRole }),
+    measures: [],
+    headline: null,
+    goalId: null,
+    starting: false,
+    stated: 6,
+    zeroReason: null,
+    checkpointLog: null,
+    pastDue: false,
+    topics: r.topics ?? [],
+    lock: r.lock ?? null,
+  };
+}
+
+/** An ACTIVE TOPICS plan from the depth plan's fixture: its header says TOPICS, its rows are the chain, its map is kept (`open`: the map's open layer). */
+function topicPlanView(rows: MilestoneRowView[], open = 2, p: Partial<RoadmapView> = {}): RoadmapView {
   const base = packActiveView();
   return {
     ...base,
     header: { ...base.header!, aim: TOPIC_AIM, planKind: "TOPICS", cautions: ["FINANCIAL"], rating: topicMapPlanFixture().rating },
     milestones: rows,
-    topicMap: topicMapPlanFixture(base.header!.id, base.header!.version),
+    topicMap: topicMapPlanFixture(base.header!.id, base.header!.version, open),
+    ...p,
   };
 }
 
@@ -3434,7 +3533,7 @@ function topicDraftView(map: TopicMapView): RoadmapView {
 const TOPIC_GATES = { topics: true, topicNames: true } as const;
 
 /** The revision-5 topic states (each in FIXTURE_STATES; drawn with the lead-only gate `topics`). */
-export const TOPIC_STATES = ["topic-map-draft", "topic-map-write", "topic-map-plan", "topic-chain", "topic-estimate-unsure", "topic-sheet", "topic-sources", "topic-parents", "topic-rebreak"] as const satisfies readonly FixtureState[];
+export const TOPIC_STATES = ["topic-map-draft", "topic-map-write", "topic-map-plan", "topic-chain", "topic-estimate-unsure", "topic-sheet", "topic-sources", "topic-parents", "topic-rebreak", "topic-locked", "topic-study", "topic-map-folded", "topic-accept-all", "intake-topics"] as const satisfies readonly FixtureState[];
 type TopicState = (typeof TOPIC_STATES)[number];
 
 function isTopicState(s: FixtureState): s is TopicState {
@@ -3488,6 +3587,74 @@ function topicFixtureOf(state: TopicState): RoadmapFixture {
         (r) => (r.layer != null ? (topicDomains[r.layer] ?? []) : [])
       );
       return { view: v, intake: null, aim: packAim(v, "ACTIVE"), today: null, startPreview: null, gates: TOPIC_GATES, note: "An accepted TOPICS plan: every layer kept, Gemini's names now Domains with the Gemini mark, one held when you began and one you know; the estimate shows «1 merged by you»; the chain's layer nodes, the locked ones «after k» with m.builds, and the depth milestone «set by reviews»." };
+    }
+    case "topic-locked": {
+      // Ruling N27: layer 1's goal closed short of its topics' cards, so layer 2 (the current milestone, Start never taken) is locked
+      // on Alpha one (5 of 8); the hero reads [Add 3 cards to Alpha one] with [I know this] and [Review 3]; the rail's ▸ lists the parents.
+      const rows = topicChainRows({
+        reached: [],
+        current: null,
+        closedUnreached: [1],
+        topics: {
+          1: [
+            { key: "T1", lineageId: "l-T1", name: "Alpha one", domainId: "d-T1", cards: 5, floor: 8, due: 3, held: false, skipped: false, done: false, geminiNamed: true },
+            { key: "T2", lineageId: "l-T2", name: "Alpha two", domainId: "d-T2", cards: 9, floor: 8, due: 0, held: true, skipped: false, done: true, geminiNamed: true },
+            { key: "U1", lineageId: "l-U1", name: "Domain one", domainId: "d-one", cards: 8, floor: 8, due: 2, held: false, skipped: false, done: true, geminiNamed: false },
+          ],
+        },
+      });
+      const v = topicPlanView(rows, 1, { goalsLive: false, current: topicPlannedCurrentOf(rows, 2), rank: packRank(1) });
+      return { view: v, intake: null, aim: packAim(v, "ACTIVE"), today: null, startPreview: null, gates: TOPIC_GATES, note: "Ruling N27: layer 1's goal closed short, so the current layer 2 is locked on Alpha one (5 of 8): the hero reads «Add 3 cards to Alpha one» with «I know this» and «Review 3»; the locked rail nodes list their parents «n of 8»; the map (ruling N32) expands layer 1, the one open, and folds the rest to their header." };
+    }
+    case "topic-study": {
+      // Ruling N28: layer 1 reached on cards alone (no goal, no rank: ruling N26), layer 2 open and planned with Start off: the hero reads
+      // «Study Beta one · 3 of 8 · 4 due», the Domain's review run; the map folds layer 1 to «3 done» and layers 3 and 4 to their header.
+      const rows = topicChainRows({ reached: [1], current: null, reachedOnCards: [1] });
+      const v = topicPlanView(rows, 2, { goalsLive: false, current: topicPlannedCurrentOf(rows, 2), rank: packRank(0) });
+      return { view: v, intake: null, aim: packAim(v, "ACTIVE"), today: null, startPreview: null, gates: TOPIC_GATES, note: "Ruling N28: layer 1 reached on cards alone (ruling N26: no goal, no rank), layer 2 open with Start off: the hero is the Study action, «Study Beta one · 3 of 8 · 4 due», one tap to that Domain's review run; the map (ruling N32) folds layer 1 to «3 done» and layers 3 and 4 to their header." };
+    }
+    case "topic-map-folded": {
+      // Ruling N32: layer 3 under way: layers 1 and 2 fold to their counts, layer 3 is the one expanded, layer 4 folds to its header.
+      const v = topicPlanView(topicChainRows({ reached: [1, 2], current: 3 }), 3);
+      return { view: v, intake: null, aim: packAim(v, "ACTIVE"), today: null, startPreview: null, gates: TOPIC_GATES, note: "Ruling N32: the plan page expands only the open layer: layers 1 and 2 fold to «3 done» and «2 done», layer 3 shows its topics, layer 4 folds to its header «after 3»; each folded layer keeps its one who-word chip and opens from its ▸." };
+    }
+    case "topic-accept-all": {
+      // Ruling N30: [Accept all]'s sheet open at mount: the shown names ticked, the not-checked names unticked with their reasons
+      // (layer 3's and 4's), and a layer holding only not-checked names (layer 5), which waits for a tap.
+      const base = topicMapDraftFixture();
+      const unchecked = (key: string, name: string, layer: number, reason: "NONE" | "GROUND_FAILED") => topicRow({ key, name, cls: "NOT_CHECKED", layer, chosen: false, sources: [], hide: { reason } });
+      const l4 = [...base.layers[3].topics, unchecked("T16", "Delta extra", 4, "GROUND_FAILED")];
+      const l5 = [unchecked("T20", "Epsilon one", 5, "NONE"), unchecked("T21", "Epsilon two", 5, "GROUND_FAILED")];
+      const map: TopicMapView = {
+        ...base,
+        rating: rating({ layers: 5, geminiLayers: 5, mapFilled: 5, replies: [5, 5, 5] }),
+        layers: [...base.layers.slice(0, 3), topicLayer({ layer: 4, topics: l4 }), topicLayer({ layer: 5, topics: l5 })],
+        hidden: 6,
+        fieldId: "f-st",
+        // The server's own list (TopicMapView.acceptAll): the shown names it ticks, the drawn links, and each layer's not-checked names.
+        acceptAll: [
+          { layer: 1, names: ["Alpha one", "Alpha two"], links: 0 },
+          { layer: 2, names: ["Beta one", "Beta two", "Beta three with a longer name to wrap it", "Beta four"], links: 5 },
+          { layer: 3, names: ["Gamma one", "Gamma two", "Gamma three"], links: 0, unchecked: [{ key: "T13", name: "Gamma hidden two", reason: "NONE" }] },
+          { layer: 4, names: ["Delta one"], links: 1, unchecked: [{ key: "T16", name: "Delta extra", reason: "GROUND_FAILED" }] },
+          { layer: 5, names: [], links: 0, unchecked: [{ key: "T20", name: "Epsilon one", reason: "NONE" }, { key: "T21", name: "Epsilon two", reason: "GROUND_FAILED" }] },
+        ],
+      };
+      return {
+        view: topicDraftView(map),
+        intake: null,
+        aim: null,
+        today: null,
+        startPreview: null,
+        gates: TOPIC_GATES,
+        topicMap: { map, mode: "draft", open: { key: "T20", sheet: "accept" } },
+        note: "Ruling N30: [Accept all]'s sheet: «Creates n Domains» first, each layer's shown names ticked, its not-checked names unticked with their reasons («Google linked no page», «web check failed») and a 44 px tap each; layer 5 holds only not-checked names, so it says «tap a name to keep this layer» and the button waits.",
+      };
+    }
+    case "intake-topics": {
+      // Ruling N33: a Field aim with a key and the topic chain on (lead-only gates): [Write the topics] is the primary, [Break it down] beside it,
+      // and the level plan's paths (Draft with Gemini, Build from my numbers, their lanes and chip) behind one ▸.
+      return { view: null, intake: depthIntakeFixture({}, { hasKey: true }), aim: null, today: null, startPreview: null, gates: { topics: true, gemini: true }, note: "Ruling N33: the intake for a Field aim: «Write the topics» is the primary (no model), «Break it down» beside it while the chain is on, and the level plan's paths («Draft with Gemini», «Build from my numbers», their lanes and chip) behind one ▸ «Level plan»: two taps. A track aim keeps «Build from my numbers»." };
     }
     case "topic-chain": {
       const v = topicPlanView(topicChainRows({ reached: [1], current: 3, held: [2] }));

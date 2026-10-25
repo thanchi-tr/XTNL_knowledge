@@ -20,6 +20,11 @@
  *   folds                 "+3" (unchosen, never struck; sr "3 more topics, not in the plan") and
  *                         [pv.suggest] "2" «Gemini · not checked» (sr "2 not checked"); a tap reveals
  *   empty                 the state word "empty" and a ▸ to the empty-layer sheet
+ *   fold (a plan)         ruling N32: only the open layer is expanded. A layer behind it folds to "[layer.k] Layer 1 · 3 done"
+ *                         (`fold` "done": the count in place of the state word and figure), a later one to its header row
+ *                         ("header": "Layer 3 · after 2 · 2"); each keeps its one who-word chip and gains a 44 px ▸
+ *                         (aria-expanded, "Topics of layer k") that shows the milestone line, the folds and the rows,
+ *                         which stay in the markup, hidden, until then. A draft is never folded.
  *
  * App words per layer (header and folds; numerals are figures): at most 6 (ui-motion §15.10 row 13).
  * Motion: `layer-open` (SEEN) on the header when this viewer last saw the layer locked and a counted reach
@@ -48,6 +53,8 @@ import {
   GEMINI_PLACED_FULL,
   emptyLayerAria,
   layerChosenSr,
+  layerDoneWord,
+  layerTopicsAria,
   foldHiddenSr,
   foldMoreSr,
   keepLayerAria,
@@ -90,6 +97,12 @@ export interface LayerBandProps {
   pending?: boolean;
   /** Not shown yet (the topic map's step-by-step disclosure): the band stays in the markup with `hidden`. */
   stepHidden?: boolean;
+  /**
+   * Ruling N32 (a plan): "done" folds a layer behind the open one to "Layer 1 · 3 done", "header" folds a later one to its
+   * header row; either keeps the layer's chip and puts the milestone line, the folds and the rows behind the header's ▸
+   * (hidden in the markup until the tap). null: expanded (the open layer; every layer of a draft).
+   */
+  fold?: "done" | "header" | null;
 }
 
 const CHIP_FULL: Readonly<Record<string, string>> = {
@@ -116,9 +129,12 @@ function roleOf(trace: LayerBandProps["trace"], key: string): TraceRole {
   return trace.related.has(key) ? "rel" : "other";
 }
 
-export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore, onKeep, onWrite, onEmpty, onRebreak, seenKey, openedByReach, hiddenOpen, onHiddenToggle, milestoneOpen, children, pending, stepHidden = false }: LayerBandProps) {
+export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore, onKeep, onWrite, onEmpty, onRebreak, seenKey, openedByReach, hiddenOpen, onHiddenToggle, milestoneOpen, children, pending, stepHidden = false, fold = null }: LayerBandProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [msLocal, setMsLocal] = useState(false);
+  // Ruling N32: a folded layer's body (its milestone line, folds and rows) stays in the markup, hidden, until the header's ▸.
+  const [foldOpen, setFoldOpen] = useState(false);
+  const folded = fold != null && !foldOpen;
   const msOpen = milestoneOpen ?? msLocal;
   const [showMore, setShowMore] = useState(false);
   const [hiddenLocal, setHiddenLocal] = useState(false);
@@ -155,6 +171,7 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
       data-layer={k}
       data-state={layer.state}
       data-kept={layer.kept ? "" : undefined}
+      data-fold={fold ?? undefined}
       aria-labelledby={`rm-tm-h-${k}`}
       hidden={stepHidden || undefined}
     >
@@ -165,15 +182,20 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
             {layerWord(k)}
           </h3>
           <span className="rm-tm-sw" data-lo="word">
-            {layerStateWord(layer.state, k, empty)}
+            {fold === "done" ? layerDoneWord(chosen.length) : layerStateWord(layer.state, k, empty)}
           </span>
-          {!empty && (
+          {!empty && fold !== "done" && (
             <span className="rm-tm-n">
               <span aria-hidden="true">{chosen.length}</span>
               <span className="sr-only">{layerChosenSr(chosen.length)}</span>
             </span>
           )}
           <span className="rm-tm-hacts">
+            {fold != null && (
+              <button type="button" className="rm-tm-foldl" aria-label={layerTopicsAria(k)} aria-expanded={!folded} onClick={() => setFoldOpen((v) => !v)}>
+                <Mark glyph="i-chev" size={16} />
+              </button>
+            )}
             {draft && onWrite && <MarkButton glyph="i-plus" label={writeTopicAria(k)} onClick={() => onWrite(k)} className="rm-tm-write" />}
             {empty && onEmpty && (
               <button type="button" className="rm-tm-more" aria-label={emptyLayerAria(k)} onClick={() => onEmpty(k)}>
@@ -191,7 +213,7 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
           </span>
         </div>
         {(layer.milestone || rebreakable) && (
-          <div className="rm-tm-ms">
+          <div className="rm-tm-ms" hidden={folded || undefined}>
             {/* Word-light (ruling N14): the title and Gemini's mark; the hurdle, target and the chip's words one tap away. */}
             <div className="rm-tm-msr">
               {layer.milestone && (
@@ -242,14 +264,14 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
           </div>
         )}
         {moreCount > 0 && (
-          <button type="button" className="rm-tm-fold" aria-expanded={showMore} onClick={() => setShowMore((v) => !v)}>
+          <button type="button" className="rm-tm-fold" aria-expanded={showMore} hidden={folded || undefined} onClick={() => setShowMore((v) => !v)}>
             <Mark glyph="i-plus" size={16} />
             <span aria-hidden="true">+{moreCount}</span>
             <span className="sr-only">{foldMoreSr(moreCount)}</span>
           </button>
         )}
         {hiddenCount > 0 && (
-          <div className="rm-tm-fold rm-tm-fold-h">
+          <div className="rm-tm-fold rm-tm-fold-h" hidden={folded || undefined}>
             <button type="button" className="rm-tm-foldb" aria-expanded={showHidden} onClick={toggleHidden}>
               <Mark glyph="pv.suggest" size={16} />
               <span aria-hidden="true">{hiddenCount}</span>
@@ -260,7 +282,11 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
           </div>
         )}
       </div>
-      {chosen.length > 0 && <ul className="rm-tm-rows">{chosen.map(row)}</ul>}
+      {chosen.length > 0 && (
+        <ul className="rm-tm-rows" hidden={folded || undefined}>
+          {chosen.map(row)}
+        </ul>
+      )}
       {showMore && unchosen.length > 0 && <ul className="rm-tm-rows rm-tm-rows-more">{unchosen.map(row)}</ul>}
       {showHidden && notChecked.length > 0 && <ul className="rm-tm-rows rm-tm-rows-hidden">{notChecked.map(row)}</ul>}
       {children}

@@ -2416,6 +2416,7 @@ async function routes() {
         milestone: { ord: 2, of: 6, title: "Familiar with the basics", titleNote: null, titleStruck: [], status: "STARTED", percent: 42, dueDay: "2026-11-08" },
         startOnWeb: false,
         suggest: true,
+        study: null,
       }
     );
     // The P15 review (§22.11): a Gemini milestone title keeps its provenance on the phone too (the web's words, its struck numbers).
@@ -2498,12 +2499,35 @@ async function routes() {
     );
     const writesOff = data(await got(handleQuests(get("/quests"), fakes({ loadMainQuest: async () => aimCard({ state: "ACCEPTED", goalsLive: true, writesOff: true, milestone: msOf({ id: "ms1", ord: 1, status: "PLANNED", percent: null }) }) }).deps)));
     check("a server that writes nothing never offers Start, even with the switch on", (writesOff.mainQuest as Record<string, unknown>).startOnWeb === false);
+    // Roadmap rework 1, P2 (ruling N28): a planned TOPICS layer's study rides the reply while it is locked or Start is off (Today's card's one action).
+    const topicStudy = (due: number) => ({ key: "T3", name: "Markov chains", domainId: "d1", fieldId: "f1", cards: 3, floor: 8, due, layer: 1, geminiNamed: true });
+    // Ruling N27 as the review round reads it: on a locked layer the server's study is the lock's first unmet parent (AimStudyView.locked), the hero's own primary.
+    const lockParent = { key: "T1", name: "Bayes rule", domainId: "d0", fieldId: "f1", cards: 5, floor: 8, due: 2, layer: 1, geminiNamed: false, locked: true };
+    const studyCard = (goalsLive: boolean, locked: boolean, study: ReturnType<typeof topicStudy> | typeof lockParent) =>
+      fakes({ loadMainQuest: async () => aimCard({ state: "ACCEPTED", goalsLive, milestone: msOf({ id: locked ? "ms2" : "ms1", ord: locked ? 2 : 1, status: "PLANNED", percent: null, dueDay: null, ...(locked ? { locked: true } : {}) }), study }) });
+    const studyOff = data(await got(handleQuests(get("/quests"), studyCard(false, false, topicStudy(4)).deps))).mainQuest as Record<string, unknown>;
+    const studyNone = data(await got(handleQuests(get("/quests"), studyCard(false, false, topicStudy(0)).deps))).mainQuest as Record<string, unknown>;
+    const studyLocked = data(await got(handleQuests(get("/quests"), studyCard(true, true, lockParent).deps))).mainQuest as Record<string, unknown>;
+    const studyStart = data(await got(handleQuests(get("/quests"), studyCard(true, false, topicStudy(4)).deps))).mainQuest as Record<string, unknown>;
+    eq(
+      "N28 /quests: with Start off the study is the one action (the topic, 3 of 8, 4 due, the web's line and the Domain's run link, never the bare /review; none due: 'Add an idea to …' to /add placed in the Domain); a locked layer with Start live reads the lock's parent with no Start, the roadmap hero's own words and link ('Add 3 cards to Bayes rule' to /add placed in that Domain, the layer before: ruling N27, the review round; the shape unchanged); Start offered: startOnWeb true and study null",
+      [studyOff.startOnWeb, studyOff.study, studyNone.study, studyLocked.startOnWeb, studyLocked.study, studyStart.startOnWeb, studyStart.study],
+      [
+        false,
+        { name: "Markov chains", domainId: "d1", cards: 3, floor: 8, due: 4, layer: 1, geminiNamed: true, line: "Study Markov chains · 3 of 8 · 4 due", webHref: "/review?view=run&domain=d1" },
+        { name: "Markov chains", domainId: "d1", cards: 3, floor: 8, due: 0, layer: 1, geminiNamed: true, line: "Add an idea to Markov chains", webHref: "/add?field=f1&domain=d1" },
+        false,
+        { name: "Bayes rule", domainId: "d0", cards: 5, floor: 8, due: 2, layer: 1, geminiNamed: false, line: "Add 3 cards to Bayes rule", webHref: "/add?field=f1&domain=d0" },
+        true,
+        null,
+      ]
+    );
     const other = data(await got(handleQuests(get("/quests"), fakes({ loadMainQuest: async () => aimCard({ milestone: msOf({ id: "ms-other" }) }), loadSprintWeek: async () => SPRINT_WEEK }).deps)));
     check("a sprint that isn't the main quest's milestone's (another goal runs it) is not its sprint", other.sprint === null && (other.mainQuest as Record<string, unknown>).state === "ACTIVE");
 
     // No main quest, and failures.
     const none = data(await got(handleQuests(get("/quests"), fakes({}).deps)));
-    eq("no main quest: state NONE, 'No main quest yet.'; no sprint; momentum before launch: no three", [none.mainQuest, none.sprint, none.three], [{ state: "NONE", title: null, line: "No main quest yet.", milestone: null, startOnWeb: false, suggest: true }, null, null]);
+    eq("no main quest: state NONE, 'No main quest yet.'; no sprint; momentum before launch: no three", [none.mainQuest, none.sprint, none.three], [{ state: "NONE", title: null, line: "No main quest yet.", milestone: null, startOnWeb: false, suggest: true, study: null }, null, null]);
     check("…and with the aim suggestions turned off, suggest is false", (data(await got(handleQuests(get("/quests"), fakes({ loadMainQuest: async () => aimCard({ state: "EMPTY", roadmapId: null, aimSuggestions: false }) }).deps))).mainQuest as Record<string, unknown>).suggest === false);
     const failing = fakes({ loadMainQuest: async () => Promise.reject(new Error("aim card exploded")), loadMomentum: async () => Promise.reject(new Error("momentum exploded")) });
     const f = await got(handleQuests(get("/quests"), failing.deps));
@@ -3798,6 +3822,9 @@ function docs() {
     "/quests (P15; D11, D12) is in the doc: read only, one vocabulary, Start and plan edits on the web only, startOnWeb false while ROADMAP_GOALS_LIVE is off, the provisional Sunday words, never a verdict, ticks through /tasks/complete",
     /## GET \/quests: the main quest, its sprint and Today's three/.test(doc) &&
       /its week quests are \*\*this week's sprint\*\*/.test(doc.replace(/\s+/g, " ")) &&
+      // Ruling N28: the study field, its line and link (the Domain's run, never the bare review page) are in the doc.
+      /`study` \(roadmap contracts ruling N28\)/.test(doc.replace(/\s+/g, " ")) &&
+      /`webHref`, the web link the card goes to \(that Domain's review run, `\/review\?view=run&domain=<id>`, never the bare review page/.test(doc.replace(/\s+/g, " ")) &&
       /\*\*Start and every plan edit stay on the web\*\*: the app never starts a milestone/.test(doc.replace(/\s+/g, " ")) &&
       /`startOnWeb` is false while the switch is off/.test(doc.replace(/\s+/g, " ")) &&
       doc.includes(SPRINT_PROVISIONAL_LINE) &&

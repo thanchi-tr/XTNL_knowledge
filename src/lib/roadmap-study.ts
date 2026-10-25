@@ -2,17 +2,23 @@
  * The Study page's roadmap focus (roadmap contracts §22.20 ruling N14). Pure and client-safe: no database, no clock.
  *
  * On an accepted TOPICS plan the day's study is one topic at a time: the open layer (the lowest layer milestone not
- * reached), its Gemini milestone title when MAP wrote one, and the first of that layer's chosen topics whose Domain is
- * still under OPEN_LEVEL (the level the layer milestone pays at; a topic you marked "I know this" or held when you
- * began is done). The rest of the layer stays folded behind the current one (soft hidden, never removed). The Review
- * hub reads it to offer the topic's due cards and an idea in one tap each.
+ * reached), its Gemini milestone title when MAP wrote one, and the first of that layer's chosen topics not yet done.
+ * Ruling N25 (roadmap rework 1): a topic is done when its Domain holds TOPIC_FLOOR_CARDS live cards at OPEN_LEVEL or
+ * above (roadmap-types topicDoneOf: exactly the gate's count, never Domain.level), or you marked it "I know this" or
+ * held it when you began; the card shows "n of 8". The rest of the layer stays folded behind the current one (soft
+ * hidden, never removed). The Review hub reads it to offer the topic's due cards and an idea in one tap each.
  *
  * Blueprint P15 (the layer-1 focus): a layer milestone is only ever reached once it was started, and nothing starts
  * while ROADMAP_GOALS_LIVE is off, so "the lowest layer not reached" stayed on layer 1 for good, its topics all done
  * and `current` null. The study moves on with the topics: the open layer is the lowest one not reached that still has
  * a topic to do; only when no layer has one does the focus stay on the lowest not reached, waiting for its reach.
+ *
+ * A locked layer (ruling N27): the layer before it is not reached and a parent in it is short of cards, so the lowest
+ * layer not reached with a topic to do is that one, and the hub lands on its first topic to do: the parent the hero
+ * names ("Add n cards to <parent>") whenever the lock is the whole layer before (the live maps' case: EDGE_DRAW is
+ * rarely met); with a drawn or picked link the hero names the first unmet parent, which may sit later in this order.
  */
-import { OPEN_LEVEL, type LayerMilestone } from "./roadmap-types";
+import { TOPIC_FLOOR_CARDS, topicDoneOf, type LayerMilestone } from "./roadmap-types";
 
 export interface StudyTopicIn {
   key: string;
@@ -23,6 +29,8 @@ export interface StudyTopicIn {
   decision: string;
   skipped: boolean;
   held: boolean;
+  /** The row's paying target for this topic (RoadmapMeasure.target of its PAYS CARDS_AT_LEVEL measure): n_d on the last layer's specialisation, "n of 25"; absent: TOPIC_FLOOR_CARDS (the review round). */
+  floor?: number;
 }
 export interface StudyMilestoneIn {
   layer: number;
@@ -33,7 +41,8 @@ export interface StudyMilestoneIn {
 export interface StudyDomainIn {
   id: string;
   name: string;
-  level: number;
+  /** Live recall cards at OPEN_LEVEL or above in it (roadmap-types cardsAtOpenCountOf: the gate's count; a MULTI card never counts). */
+  atOpen: number;
   /** Cards due today in it. */
   due: number;
   /** Live cards in it. */
@@ -55,11 +64,14 @@ export interface StudyTopic {
   key: string;
   name: string;
   domainId: string;
-  level: number;
-  /** OPEN_LEVEL: the level the layer milestone pays at. */
-  target: number;
-  due: number;
+  /** Live cards at OPEN_LEVEL or above in its Domain: the "n" of "n of 8". */
   cards: number;
+  /** TOPIC_FLOOR_CARDS, the "8"; the row's paying target on the last layer's specialisation, "25". */
+  floor: number;
+  due: number;
+  /** Live cards in its Domain, at any level. */
+  live: number;
+  /** topicDoneOf(cards, floor), or marked known or held. */
   done: boolean;
 }
 export interface StudyFocus {
@@ -98,7 +110,8 @@ export function studyFocusOf(input: StudyFocusInput): StudyFocus | null {
         .filter((t) => live(t) && t.layer === layer && t.domainId && byDomain.has(t.domainId))
         .map((t) => {
           const d = byDomain.get(t.domainId as string) as StudyDomainIn;
-          return { key: t.key, name: d.name || t.name, domainId: d.id, level: d.level, target: OPEN_LEVEL, due: d.due, cards: d.cards, done: t.skipped || t.held || d.level >= OPEN_LEVEL };
+          const floor = t.floor ?? TOPIC_FLOOR_CARDS;
+          return { key: t.key, name: d.name || t.name, domainId: d.id, cards: d.atOpen, floor, due: d.due, live: d.cards, done: t.skipped || t.held || topicDoneOf(d.atOpen, floor) };
         });
     // The lowest layer not reached with a topic still to do (P15); else the lowest not reached, waiting for its reach.
     const open = notReached.find((m) => topicsOf(m.layer).some((t) => !t.done)) ?? notReached[0];

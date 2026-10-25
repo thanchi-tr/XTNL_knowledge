@@ -5,9 +5,9 @@
  * study now, the rest of the layer folded behind it (soft hidden: one tap shows them, nothing is removed).
  *
  *   Layer 2 / 4 · Goal                                   [map ›]
- *   Construct strategic asset allocation models          (Gemini's milestone title, or "Layer 2")
+ *   Construct strategic asset allocation models ✧        (Gemini's milestone title with its mark, or "Layer 2")
  *   ▮▮▯▯▯                                                 (the layer's topics: done, now, to do)
- *   ┌ Diversification                         L3 / 6 ┐
+ *   ┌ Diversification                         3 of 8 ┐   (its cards at level 6, of the floor: ruling N25)
  *   │ ███░░░                                         │
  *   │ [Review 4]  [+ Idea]                       [›] │   (› : the next topic of the layer)
  *   └────────────────────────────────────────────────┘
@@ -21,7 +21,10 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Meter, SegmentStrip, type Segment } from "@/components/ui/Meter";
 import { Icon } from "@/components/ui/Icon";
+import { Mark } from "@/components/glyph/Glyph";
+import { GEMINI_MILESTONE_LABEL } from "@/components/roadmap/roadmap-copy";
 import type { StudyFocus, StudyTopic } from "@/lib/roadmap-study";
+import { OPEN_LEVEL } from "@/lib/roadmap-types";
 
 const ADD_HREF = (fieldId: string | null, domainId: string): string => {
   const q = new URLSearchParams();
@@ -60,7 +63,16 @@ export function RoadmapFocus({ focus, onReview }: RoadmapFocusProps) {
         </Link>
       </div>
       <h2 id="rv-focus-h" className="rv-focus-title" data-gemini={focus.geminiTitle ? "" : undefined}>
-        {focus.title}
+        {/* Roadmap ruling N29: Gemini's milestone title is never bare here either: LayerBand's visible mark and its spoken label ride with it (review.css styles data-gemini). */}
+        {focus.geminiTitle ? (
+          <>
+            <span data-wc="name">{focus.title}</span>
+            <Mark glyph="pv.suggest" size={12} />
+            <span className="sr-only">{GEMINI_MILESTONE_LABEL}</span>
+          </>
+        ) : (
+          focus.title
+        )}
       </h2>
       {focus.total > 0 && <SegmentStrip segs={segs} label={`${focus.done} of ${focus.total} topics done in layer ${focus.layer}`} />}
 
@@ -68,12 +80,12 @@ export function RoadmapFocus({ focus, onReview }: RoadmapFocusProps) {
         <div className="rv-focus-now">
           <div className="rv-focus-row">
             <b className="rv-focus-name">{now.name}</b>
-            <span className="rv-focus-lv" aria-label={`Level ${now.level} of ${now.target}`}>
-              L{now.level}
-              <span className="ink-2"> / {now.target}</span>
+            <span className="rv-focus-lv" aria-label={`${now.cards} of ${now.floor} cards at level ${OPEN_LEVEL}`}>
+              {now.cards}
+              <span className="ink-2"> of {now.floor}</span>
             </span>
           </div>
-          <Meter value={now.level / now.target} thin label={`${now.name}: level ${now.level} of ${now.target}`} />
+          <Meter value={Math.min(1, now.cards / now.floor)} thin label={`${now.name}: ${now.cards} of ${now.floor} cards at level ${OPEN_LEVEL}`} />
           <div className="rv-focus-acts">
             {now.due > 0 ? (
               <>
@@ -113,7 +125,7 @@ export function RoadmapFocus({ focus, onReview }: RoadmapFocusProps) {
               {others.map((t) => (
                 <li key={t.key} data-done={t.done ? "" : undefined}>
                   <span className="rv-focus-li-name">{t.name}</span>
-                  <span className="t-meta">{t.done ? <Icon name="check" /> : `L${t.level}${t.due > 0 ? ` · ${t.due} due` : ""}`}</span>
+                  <span className="t-meta">{t.done ? <Icon name="check" /> : `${t.cards} of ${t.floor}${t.due > 0 ? ` · ${t.due} due` : ""}`}</span>
                 </li>
               ))}
             </ul>

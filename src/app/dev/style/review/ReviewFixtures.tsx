@@ -34,11 +34,12 @@ const FOCUS: StudyFocus = {
   layers: 4,
   title: "Construct strategic asset allocation and diversification models",
   geminiTitle: true,
-  current: { key: "T7", name: "Correlation Coefficient", domainId: "d1", level: 3, target: 6, due: 4, cards: 9, done: false },
+  // Ruling N25: a topic's progress is its cards at level 6 of the floor ("3 of 8"), never its Domain's level.
+  current: { key: "T7", name: "Correlation Coefficient", domainId: "d1", cards: 3, floor: 8, due: 4, live: 9, done: false },
   rest: [
-    { key: "T8", name: "Efficient Frontier", domainId: "d2", level: 1, target: 6, due: 0, cards: 2, done: false },
-    { key: "T9", name: "Rebalancing Bands", domainId: "d3", level: 2, target: 6, due: 1, cards: 3, done: false },
-    { key: "T6", name: "Sharpe Ratio", domainId: "d4", level: 6, target: 6, due: 0, cards: 11, done: true },
+    { key: "T8", name: "Efficient Frontier", domainId: "d2", cards: 1, floor: 8, due: 0, live: 2, done: false },
+    { key: "T9", name: "Rebalancing Bands", domainId: "d3", cards: 2, floor: 8, due: 1, live: 3, done: false },
+    { key: "T6", name: "Sharpe Ratio", domainId: "d4", cards: 8, floor: 8, due: 0, live: 11, done: true },
   ],
   done: 1,
   total: 4,

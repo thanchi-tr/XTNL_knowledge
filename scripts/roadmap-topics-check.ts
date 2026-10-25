@@ -54,6 +54,9 @@ import {
   acceptRefusalOf,
   chainChecksOf,
   clauseSplitOf,
+  containKeyOf,
+  containedKeyOf,
+  duplicateOfOf,
   kFinalOf,
   mapAgreementOf,
   mapInstructionOf,
@@ -75,6 +78,7 @@ import { layeredLadderOf, stageLadderOf, type ChainTopicInput, type StageLadderR
 import { addDays, type DayKey } from "../src/lib/life-day";
 import { topicDomainForIdea } from "../src/lib/topic-idea-routing";
 import { studyFocusOf, type StudyFocusInput } from "../src/lib/roadmap-study";
+import { containRelationOf, duplicateRelationOf } from "../src/lib/roadmap-topics";
 
 let passed = 0;
 let failed = 0;
@@ -919,12 +923,42 @@ console.log("— milestones (N8): the parts, the schema, one sample's milestones
     ["Build a six-month buffer", "", "", "Structural debt service coverage ratio…", ""]
   );
 
+  // (d2) Ruling N29 (roadmap rework 1, P3): with a gate, a line passes the figure strip first (ruling N9: a money figure
+  // becomes its scale) and then checkLabel's NUMBER, CLAIM_WORDS and LOOKS_LIKE_RESOURCE flags (kind MILESTONE, in windows
+  // of its 80-character cap); a line that fails is "" (a title then falls back to code's "Layer k"); your own figure
+  // passes; the strip's scale words are not Gemini's figure; a stored line read back without a gate is as before.
+  const gateLabel: LabelContext = { kind: "MILESTONE", aim: "Reach IELTS 7 and manage a $100000 asset portfolio", constraints: null, examLabel: "IELTS", syllabusLines: [], areaName: "Business & Finance", domainNames: ["Budgeting"], track: "CRAFT" };
+  const gate = { label: gateLabel, strip: stripFiguresOf };
+  const longTail = "A written allocation policy that names every asset class, the rebalancing bands you tolerate and the review cadence you keep, with drift held under 5% at each review";
+  eq(
+    "N29 milestoneTextOf with a gate: a figure Gemini wrote drops the line (a spelled one too, and one past the first 80 characters); your own figure (IELTS 7) passes; a money figure becomes its scale and the line stays; a claim word and a named resource drop the line; without a gate the same line reads as before",
+    [
+      milestoneTextOf("Hold a six-month liquid buffer at 1.0x coverage", 240, gate),
+      milestoneTextOf(longTail, 240, gate),
+      milestoneTextOf("Reach IELTS 7 with a steady writing routine", 240, gate),
+      milestoneTextOf("Manage a $100000 asset portfolio under a written policy", 240, gate),
+      milestoneTextOf("Meet the official requirement for the fund", 240, gate),
+      milestoneTextOf("Work through the Bogleheads guide chapter by chapter", 240, gate),
+      milestoneTextOf("Hold a six-month liquid buffer at 1.0x coverage", 240),
+      milestoneTextOf("Hold a six-month liquid buffer at 1.0x coverage", 240, null),
+    ],
+    ["", "", "Reach IELTS 7 with a steady writing routine", "Manage a low six-figure asset portfolio under a written policy", "", "", "Hold a six-month liquid buffer at 1.0x coverage", "Hold a six-month liquid buffer at 1.0x coverage"]
+  );
+  eq(
+    "N29 mapMilestonesOf with a gate: a layer whose title fails is left untitled (code's \"Layer k\" on the page), its hurdle and target with it; a failing target under a kept title is \"\" alone",
+    mapMilestonesOf([{ integrity: "CLEAN", parsed: { milestones: { L1: { title: "Run the budget", hurdle: "Irregular bills", target: "Hold a six-month buffer" }, L2: { title: "Reach a 2.2 coverage ratio", hurdle: "Offset versus redraw", target: "A written policy" } }, names: {} } }], 2, [], gate).map((m) => [m.layer, m.title, m.hurdle, m.target]),
+    [[1, "Run the budget", "Irregular bills", ""]]
+  );
+
   // (e) mapAgreementOf carries the milestones; a v3-shaped reply (no milestones) gives [] and the same names.
   const pack = JSON.parse(readFileSync(join(process.cwd(), "scripts/fixtures/roadmap-corpus/probe-v5-names-v3-finance-compound.json"), "utf8"));
+  // Re-pinned for ruling N29 (roadmap rework 1, P3): the agreement now gates its milestone lines, so a sample's index in a
+  // title ("Run the budget 0") would be a figure Gemini wrote and drop it; each sample's titles differ by a word instead.
+  const SUFFIX = ["alone", "together", "again"];
   const run = (withMs: boolean) => {
     let n = 0;
     const samples = pack.map.samples.map((s: { ok: boolean; parsed: Record<string, unknown>; integrity?: { verdict: RT.IntegrityVerdict } }, i: number): MapSampleIn | null =>
-      s.ok && s.integrity ? { parsed: withMs ? { milestones: { L1: { title: `Run the budget ${i}`, hurdle: "h", target: "t" }, L2: { title: `Invest ${i}`, hurdle: "h", target: "t" }, L3: { title: `Own the loan ${i}`, hurdle: "h", target: "t" } }, ...s.parsed } : s.parsed, integrity: s.integrity.verdict } : null
+      s.ok && s.integrity ? { parsed: withMs ? { milestones: { L1: { title: `Run the budget ${SUFFIX[i]}`, hurdle: "h", target: "t" }, L2: { title: `Invest ${SUFFIX[i]}`, hurdle: "h", target: "t" }, L3: { title: `Own the loan ${SUFFIX[i]}`, hurdle: "h", target: "t" } }, ...s.parsed } : s.parsed, integrity: s.integrity.verdict } : null
     );
     return mapAgreementOf({
       samples,
@@ -946,7 +980,7 @@ console.log("— milestones (N8): the parts, the schema, one sample's milestones
   eq(
     "N8 mapAgreementOf (finance-compound, real v3 replies): with no milestones the agreement gives [] and its names as before; with them, one sample's three, the names unchanged",
     { v3: v3.milestones, v4: v4.milestones.map((m) => m.title), same: JSON.stringify(v3.topics.map((t) => [t.key, t.layer, t.name])) === JSON.stringify(v4.topics.map((t) => [t.key, t.layer, t.name])) },
-    { v3: [], v4: ["Run the budget 0", "Invest 0", "Own the loan 0"], same: true }
+    { v3: [], v4: ["Run the budget alone", "Invest alone", "Own the loan alone"], same: true }
   );
 }
 
@@ -1015,16 +1049,16 @@ console.log("— the study focus (N14): the open layer, one topic now, the rest 
     ],
     geminiMilestones: [{ layer: 2, title: "Construct allocation models", hurdle: "h", target: "t" }],
     domains: [
-      { id: "a", name: "Asset Classes", level: 7, due: 0, cards: 9 },
-      { id: "b", name: "Sharpe Ratio", level: 6, due: 2, cards: 8 },
-      { id: "c", name: "Correlation Coefficient", level: 3, due: 4, cards: 5 },
-      { id: "d", name: "Efficient Frontier", level: 1, due: 0, cards: 1 },
-      { id: "e", name: "Unticked", level: 0, due: 0, cards: 0 },
+      { id: "a", name: "Asset Classes", atOpen: 9, due: 0, cards: 9 },
+      { id: "b", name: "Sharpe Ratio", atOpen: 8, due: 2, cards: 8 },
+      { id: "c", name: "Correlation Coefficient", atOpen: 3, due: 4, cards: 5 },
+      { id: "d", name: "Efficient Frontier", atOpen: 1, due: 0, cards: 1 },
+      { id: "e", name: "Unticked", atOpen: 0, due: 0, cards: 0 },
     ],
   };
   const f = studyFocusOf(base);
   eq(
-    "N14 studyFocusOf: the lowest layer not reached is open; its chosen topics only; a topic is done at OPEN_LEVEL or marked known; the first not done is now, the rest folded (to do, then done); Gemini's title for the layer",
+    "N14 studyFocusOf: the lowest layer not reached is open; its chosen topics only; a topic is done at TOPIC_FLOOR_CARDS cards at OPEN_LEVEL (ruling N25) or marked known; the first not done is now, the rest folded (to do, then done); Gemini's title for the layer",
     f && { layer: f.layer, layers: f.layers, title: f.title, gemini: f.geminiTitle, now: f.current?.name, rest: f.rest.map((t) => `${t.name}${t.done ? " ✓" : ""}`), done: f.done, total: f.total, layerDue: f.layerDue },
     { layer: 2, layers: 3, title: "Construct allocation models", gemini: true, now: "Correlation Coefficient", rest: ["Sharpe Ratio ✓", "Efficient Frontier ✓"], done: 2, total: 3, layerDue: 6 }
   );
@@ -1032,7 +1066,7 @@ console.log("— the study focus (N14): the open layer, one topic now, the rest 
     "N14: every layer reached gives no focus; a layer whose topics are all done gives current null (it waits for its reach); no Gemini title reads 'Layer k'",
     [
       studyFocusOf({ ...base, milestones: base.milestones.map((m) => ({ ...m, reached: true })) }),
-      studyFocusOf({ ...base, domains: base.domains.map((d) => ({ ...d, level: 6 })) })?.current ?? null,
+      studyFocusOf({ ...base, domains: base.domains.map((d) => ({ ...d, atOpen: 8 })) })?.current ?? null,
       studyFocusOf({ ...base, geminiMilestones: [] })?.title,
     ],
     [null, null, "Layer 2"]
@@ -1041,16 +1075,116 @@ console.log("— the study focus (N14): the open layer, one topic now, the rest 
   // ROADMAP_GOALS_LIVE is off, so the focus used to stay on layer 1 with every topic done. It moves on with the topics.
   const unstarted: StudyFocusInput = { ...base, milestones: base.milestones.map((m) => ({ ...m, status: "PLANNED", reached: false })) };
   const moved = studyFocusOf(unstarted);
-  const allDone = studyFocusOf({ ...unstarted, domains: unstarted.domains.map((d) => ({ ...d, level: 6 })) });
+  const allDone = studyFocusOf({ ...unstarted, domains: unstarted.domains.map((d) => ({ ...d, atOpen: 8 })) });
   eq(
-    "P15 studyFocusOf: no layer reached (Start off), layer 1's one topic done (Asset Classes at 7) → layer 2 is open with its topic now; every topic done → the lowest layer not reached, current null (it waits for its reach)",
+    "P15 studyFocusOf: no layer reached (Start off), layer 1's one topic done (Asset Classes: 9 of 8) → layer 2 is open with its topic now; every topic done → the lowest layer not reached, current null (it waits for its reach)",
     [moved && { layer: moved.layer, now: moved.current?.name, done: moved.done, total: moved.total }, allDone && { layer: allDone.layer, now: allDone.current?.name ?? null }],
     [{ layer: 2, now: "Correlation Coefficient", done: 2, total: 3 }, { layer: 1, now: null }]
   );
   eq(
-    "P15: a layer-1 topic still under level 6 keeps layer 1 open (the lowest layer with a topic to do); a reached layer is never reopened",
-    [studyFocusOf({ ...unstarted, domains: unstarted.domains.map((d) => (d.id === "a" ? { ...d, level: 2 } : d)) })?.layer, studyFocusOf({ ...base, domains: base.domains.map((d) => (d.id === "a" ? { ...d, level: 2 } : d)) })?.layer],
+    "P15: a layer-1 topic still under its floor (2 of 8) keeps layer 1 open (the lowest layer with a topic to do); a reached layer is never reopened",
+    [studyFocusOf({ ...unstarted, domains: unstarted.domains.map((d) => (d.id === "a" ? { ...d, atOpen: 2 } : d)) })?.layer, studyFocusOf({ ...base, domains: base.domains.map((d) => (d.id === "a" ? { ...d, atOpen: 2 } : d)) })?.layer],
     [1, 2]
+  );
+  // Ruling N25 (roadmap rework 1): a topic is done at the gate's count (TOPIC_FLOOR_CARDS live cards at OPEN_LEVEL), never
+  // at its Domain's level: a Domain with many cards but few at level 6 is not done; one holding its floor there is. The
+  // focus carries "n of 8" (cards, floor), the due count and the live count; Domain.level is not read.
+  const n25 = studyFocusOf({ ...unstarted, domains: unstarted.domains.map((d) => (d.id === "a" ? { ...d, atOpen: 5, cards: 40 } : d)) });
+  const n25Done = studyFocusOf({ ...base, domains: base.domains.map((d) => (d.id === "c" ? { ...d, atOpen: RT.TOPIC_FLOOR_CARDS } : d)) });
+  eq(
+    "N25 studyFocusOf: Asset Classes with 40 cards but 5 at level 6 is not done (layer 1 stays open; now 5 of 8, 40 live); Correlation Coefficient at 8 of 8 is done, so layer 2 waits for its reach with its topics folded as 'n of 8'",
+    [
+      n25 && { layer: n25.layer, now: n25.current && { name: n25.current.name, cards: n25.current.cards, floor: n25.current.floor, due: n25.current.due, live: n25.current.live, done: n25.current.done } },
+      n25Done && { layer: n25Done.layer, now: n25Done.current, rest: n25Done.rest.map((t) => `${t.name} ${t.cards} of ${t.floor}${t.done ? " ✓" : ""}`) },
+    ],
+    [
+      { layer: 1, now: { name: "Asset Classes", cards: 5, floor: 8, due: 0, live: 40, done: false } },
+      { layer: 2, now: null, rest: ["Sharpe Ratio 8 of 8 ✓", "Correlation Coefficient 8 of 8 ✓", "Efficient Frontier 1 of 8 ✓"] },
+    ]
+  );
+  // The review round: a topic's floor is its row's paying target (n_d on the last layer's specialisation): "n of 25", done at 25.
+  const n25Deep = studyFocusOf({ ...unstarted, topics: unstarted.topics.map((t) => (t.domainId === "a" ? { ...t, floor: 25 } : t)), domains: unstarted.domains.map((d) => (d.id === "a" ? { ...d, atOpen: 9, cards: 30 } : d)) });
+  eq(
+    "N25 studyFocusOf (the review round): a topic whose row pays at n_d = 25 (StudyTopicIn.floor) reads 9 of 25 and is not done at 9; a topic with no floor given reads of 8",
+    [n25Deep?.layer, n25Deep?.current && [n25Deep.current.name, n25Deep.current.cards, n25Deep.current.floor, n25Deep.current.done], n25?.current?.floor],
+    [1, ["Asset Classes", 9, 25, false], 8]
+  );
+  eq(
+    "N25: topicDoneOf is the gate's count against TOPIC_FLOOR_CARDS (8), and cardsAtOpenCountOf counts the recall cards at OPEN_LEVEL (6) or above (a MULTI card never, as the paying key never counted it; a card with no type counts)",
+    [RT.topicDoneOf(7), RT.topicDoneOf(8), RT.topicDoneOf(3, 3), RT.cardsAtOpenCountOf([5, 6, 7, 12, 0].map((level) => ({ level }))), RT.cardsAtOpenCountOf([{ level: 6 }, { level: 6, questionType: "MULTI" }, { level: 7, questionType: "SHORT" }, { level: 9, questionType: "MULTI" }])],
+    [false, true, true, 3, 2]
+  );
+}
+
+// ═══ 14. The containment dedupe (contracts §22.20 N31: a name contained in another name of the map, after normalisation, is its duplicate) ═══
+
+console.log("— containment dedupe (N31): containKeyOf, the gate's step 8b, duplicateOfOf —");
+{
+  eq(
+    "N31 containKeyOf: case and punctuation folded, an analysis/statement/ratio tail dropped when two words stay (Current Ratio keeps its tail), each word singular",
+    [containKeyOf("Budget Variance Analysis"), containKeyOf("Cash Flow Statements"), containKeyOf("Current Ratio"), containKeyOf("Sharpe Ratios"), containKeyOf("Index Funds"), containKeyOf("Income Statement"), containKeyOf("Current Liabilities"), containKeyOf("Cash-flow analyses"), containKeyOf("")],
+    [["budget", "variance"], ["cash", "flow"], ["current", "ratio"], ["sharpe", "ratio"], ["index", "fund"], ["income", "statement"], ["current", "liability"], ["cash", "flow"], []]
+  );
+  eq(
+    "N31 containedKeyOf: EQUAL on the same words, CONTAINED when the first is a run of the second's words, null otherwise (a longer first, a broken run, an empty key)",
+    [containedKeyOf(["budget", "variance"], ["budget", "variance"]), containedKeyOf(["variance"], ["budget", "variance"]), containedKeyOf(["budget", "variance"], ["variance"]), containedKeyOf(["cash", "statement"], ["cash", "flow", "statement"]), containedKeyOf([], ["a"])],
+    ["EQUAL", "CONTAINED", null, null, null]
+  );
+  const sampleOf = (names: string[]): MapSampleIn => ({ integrity: "CLEAN", parsed: { milestones: {}, place: {}, names: { L1: names.map((name) => ({ name, scope: "GENERAL" })), L2: [], L3: [] } } });
+  const label: LabelContext = { kind: "TOPIC", aim: "Run the household books", constraints: null, examLabel: null, syllabusLines: [], areaName: "Business & Finance", domainNames: [], track: "CRAFT" };
+  const agree = (samples: MapSampleIn[], lines: { key: string; text: string; index: number }[] = []) => {
+    let n = 0;
+    return mapAgreementOf({ samples, layers: 3, breadth: "MEDIUM", room: 12, aim: "Run the household books", lines, domains: [], freeDomains: [], takenNames: [], label, countryNamed: false, makeId: () => `dup-${++n}` });
+  };
+  const ag = agree([sampleOf(["Budget Variance", "Cash Flow Statement", "Current Ratio"]), sampleOf(["Budget Variance Analysis", "Cash Flow Statements", "Current Liabilities"]), sampleOf(["Budget Variance", "Cash Flow Statement", "Current Ratio"])]);
+  eq(
+    "N31 gate: Budget Variance Analysis is hidden as a duplicate of Budget Variance (equal once its tail is off; the shorter form stays), Cash Flow Statements merges into Cash Flow Statement by the Dice rule first (one name, 3 votes, nothing hidden), Current Ratio and Current Liabilities both stay (a two-word name keeps its ratio tail)",
+    { shown: ag.topics.map((t) => t.name).sort(), hidden: ag.hidden.map((t) => [t.name, t.notes.includes("NEAR_DUPLICATE"), topicHideReasonOf(t)]), votes: ag.topics.find((t) => t.name === "Cash Flow Statement")?.formVotes, report: ag.report.hidden.NEAR_DUPLICATE },
+    { shown: ["Budget Variance", "Cash Flow Statement", "Current Liabilities", "Current Ratio"], hidden: [["Budget Variance Analysis", true, "NEAR_DUPLICATE"]], votes: 3, report: 1 }
+  );
+  const dup = ag.hidden[0];
+  const mapOf = (topics: RT.TopicDraft[]): RT.TopicMap => ({ layers: 3, topics, edges: [] });
+  eq(
+    "N31 duplicateOfOf: the fold reads \"same as Budget Variance\" from the map as it stands; with that name renamed away, none; a topic that isn't a duplicate, none",
+    [duplicateOfOf(mapOf([...ag.topics, ...ag.hidden]), dup), duplicateOfOf(mapOf([...ag.topics.map((t) => (t.name === "Budget Variance" ? { ...t, name: "Variance Reports" } : t)), ...ag.hidden]), dup), duplicateOfOf(mapOf([...ag.topics, ...ag.hidden]), ag.topics[0])],
+    ["Budget Variance", null, null]
+  );
+  const own = agree([sampleOf(["Budget Variance Analysis", "Sinking Funds"]), sampleOf(["Budget Variance Analysis"]), sampleOf(["Variance"])], [{ key: "S1", text: "Budget Variance", index: 0 }]);
+  eq(
+    "N31 gate, your words: a Gemini name equal to your outline line once its tail is off is hidden as the line's duplicate; a run of its words (Variance beside your Budget Variance) is another concept and stays (the review round); your line is never hidden",
+    { shown: own.topics.map((t) => t.name).sort(), hidden: own.hidden.map((t) => [t.name, duplicateOfOf(mapOf([...own.topics, ...own.hidden]), t)]) },
+    { shown: ["Budget Variance", "Sinking Funds", "Variance"], hidden: [["Budget Variance Analysis", "Budget Variance"]] }
+  );
+  // The review round narrows the rule: a run of another name's words is two concepts unless it is that name plus one tail word (its chapter) or a bare tail word (part of it).
+  eq(
+    "N31 containRelationOf (the review round): EQUAL on the same words; CHAPTER when the first is the second plus one tail word (Investing Basics beside Investing, Variance Analysis beside Variance); PART when the first is one bare tail word the second holds (Ratio beside Current Ratio); null for any other run (Interest beside Compound Interest, Present Value beside Net Present Value, Variance beside Budget Variance)",
+    [
+      containRelationOf(["budget", "variance"], ["budget", "variance"]),
+      containRelationOf(["investing", "basic"], ["investing"]),
+      containRelationOf(["variance", "analysis"], ["variance"]),
+      containRelationOf(["ratio"], ["current", "ratio"]),
+      containRelationOf(["interest"], ["compound", "interest"]),
+      containRelationOf(["present", "value"], ["net", "present", "value"]),
+      containRelationOf(["variance"], ["budget", "variance"]),
+      containRelationOf(["investing"], ["investing", "basic"]),
+      containRelationOf([], ["a"]),
+    ],
+    ["EQUAL", "CHAPTER", "CHAPTER", "PART", null, null, null, null, null]
+  );
+  // ("Present Value" beside "Net Present Value" never reaches this step: the shape rule drops the former on its own; "Investing Basics" beside
+  // "Investing" is the Dice merge's, one name with pooled votes, before this step: ruling N2.)
+  // Three names a layer (a sample's read), the same in every sample: the pairs sit in one layer or across two (Variance Analysis in layer 3 beside Variance in layer 2).
+  const layers31 = [["Interest", "Compound Interest", "Cash Flow"], ["Variance", "Budget Variance", "Equity"], ["Current Ratio", "Ratio", "Variance Analysis"]];
+  const sample31 = (): MapSampleIn => ({ integrity: "CLEAN", parsed: { milestones: {}, place: {}, names: { L1: layers31[0].map((name) => ({ name, scope: "GENERAL" })), L2: layers31[1].map((name) => ({ name, scope: "GENERAL" })), L3: layers31[2].map((name) => ({ name, scope: "GENERAL" })) } } });
+  const pairs = agree([sample31(), sample31(), sample31()]);
+  const pairMap = mapOf([...pairs.topics, ...pairs.hidden]);
+  eq(
+    "N31 gate (the review round): Interest and Compound Interest, Variance and Budget Variance both stay (two concepts each, every name 3 of 3); Variance Analysis is hidden as the same as Variance (a chapter: the term plus one tail word, across layers) and Ratio as part of Current Ratio (a bare tail word); each hidden name reads its reason from the map (duplicateRelationOf)",
+    { shown: pairs.topics.map((t) => `${t.name} ${t.formVotes}`).sort(), hidden: pairs.hidden.map((t) => [t.name, duplicateRelationOf(pairMap, t)]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))) },
+    {
+      shown: ["Budget Variance 3", "Cash Flow 3", "Compound Interest 3", "Current Ratio 3", "Equity 3", "Interest 3", "Variance 3"],
+      hidden: [["Ratio", { name: "Current Ratio", kind: "PART" }], ["Variance Analysis", { name: "Variance", kind: "SAME" }]],
+    }
   );
 }
 

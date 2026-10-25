@@ -1,11 +1,14 @@
 /**
  * The roadmap's links (lane R5; F13 Output table, F17, F21). Pure and
- * client-importable. No link goes to /review: the daily review quest lives
- * there, and Review has no Domain filter, so a link would open the review
- * quest's own count (Names; roadmap-ui-check bans the href).
+ * client-importable. No link goes to the bare /review page: the daily review
+ * quest lives there, and the hub has no Domain filter, so a bare link would
+ * open the review quest's own count (Names; roadmap-ui-check bans the href).
+ * The one review link is a Domain-scoped run (ruling N28, reviewRunHref):
+ * /review?view=run&domain=<id> starts the hub's run of that Domain's due cards,
+ * as the Study card's [Review n] does (RunCard.domainId).
  *
- *   addCardHref · addPreselectOf · todayTaskHref · ROADMAP_HREF · ROADMAP_NOW_HREF
- *   ROADMAP_CHECKPOINT_HREF · ROADMAP_NEW_HREF · libraryDomainHref
+ *   addCardHref · addPreselectOf · todayTaskHref · reviewRunHref · ROADMAP_HREF
+ *   ROADMAP_NOW_HREF · ROADMAP_CHECKPOINT_HREF · ROADMAP_NEW_HREF · libraryDomainHref
  */
 
 export const ROADMAP_HREF = "/you/roadmap";
@@ -23,6 +26,15 @@ export function addCardHref(fieldId: string | null, domainId: string): string {
   if (ID.test(domainId)) q.set("domain", domainId);
   const s = q.toString();
   return s ? `/add?${s}` : "/add";
+}
+
+/**
+ * Ruling N28: the Review hub's run of one Domain's due cards (WorkspaceView reads `view=run&domain=`: the same run the
+ * Study card's [Review n] starts, seeded by the day and the Domain). Never the bare page: a Domain id is required, and an
+ * id that isn't one goes to the roadmap page (the review round), never to the whole due run the rule exists to prevent.
+ */
+export function reviewRunHref(domainId: string): string {
+  return ID.test(domainId) ? `/review?view=run&domain=${encodeURIComponent(domainId)}` : ROADMAP_HREF;
 }
 
 /** A task on Today, which the board seeks on arrival (the Aim card and the roadmap page; Today's own rows dispatch an event). */

@@ -75,6 +75,7 @@ import { payBar } from "@/lib/life-economy";
 import { addDays, daysBetween } from "@/lib/life-day";
 import { mustNoteIn, restoredNoticeOf } from "@/lib/daily-quests";
 import {
+  ACCEPT_UNDO_MS,
   AIM_RANKS,
   NOT_RECORDED_HERE,
   ROADMAP_GEMINI_LIVE,
@@ -83,6 +84,8 @@ import {
   type CurrentMilestoneView,
   type ItemDraft,
   type MilestoneFeasibility,
+  type MilestoneLockSuggestionView,
+  type MilestoneLockView,
   type MilestoneRowView,
   type RoadmapView,
   type StartPreview,
@@ -213,10 +216,10 @@ import { checkpointItemOf, nextActionOf, type NextAction, type NextActionKind, t
 import { DateBlock } from "./DateBlock";
 import { GapPanel, type LiveGates } from "./GapPanel";
 // ── Revision 5, lane 9: a TOPICS plan's map card and chain nodes, [Break into topics] (only while TOPIC_PLANS_LIVE) ──
-import { NamedText } from "@/components/glyph/NamedMark";
+import { DomainName, NamedText } from "@/components/glyph/NamedMark";
 import { TopicMap } from "./TopicMap";
 import { railNodeTopicFieldsOf, topicGeminiOn, topicPlansOn } from "./topic-map-model";
-import { BREAK_INTO_TOPICS_GEMINI_LINE, BREAK_INTO_TOPICS_LINE, BREAK_INTO_TOPICS_WORD, tailToReachLine } from "./roadmap-copy";
+import { BREAK_INTO_TOPICS_GEMINI_LINE, BREAK_INTO_TOPICS_LINE, BREAK_INTO_TOPICS_WORD, LOCK_PARENTS_WORD, lockParentSr, pickParentLine, pickedParentToast, samplesOfLine, tailToReachLine } from "./roadmap-copy";
 import { EstimateChip } from "./EstimateChip";
 import { STAGE_NAMES as TOPIC_STAGE_NAMES, stageOfLevel as topicStageOfLevel, type RatingView, type RoadmapActionResult } from "@/lib/roadmap-types";
 import { ActivityConfirmCard } from "./ActivityConfirm";
@@ -892,7 +895,13 @@ const NEXT_GLYPH: Readonly<Record<NextActionKind, GlyphName | null>> = {
   MARK_DONE: "m.seal",
   PAST_DUE: "t.cal",
   CLOSE_ON_TASKS: null,
+  // Roadmap rework 1, P2 (rulings N27 and N28): the lock's add and its two chips; the planned layer's study.
+  LOCKED: "quest.add",
+  KNOWN: "pv.you",
+  REVIEW_TOPIC: "quest.bring",
   START: "route",
+  STUDY: "quest.bring",
+  ADD_IDEA: "quest.add",
   START_LATER: null,
   ADD: "quest.add",
   REVIEW: "quest.bring",
@@ -910,14 +919,14 @@ function NextGlyph({ a, size = 20, track }: { a: NextAction; size?: number; trac
   return a.kind === "CLOSE_ON_TASKS" || a.kind === "TASKS" ? <Icon name="today" size={size} aria-hidden="true" /> : null;
 }
 
-/** An action's words with its Domain or practice name marked as a name (§3.1); a step's words stay the plan's. */
+/** An action's words with its Domain or practice name marked as a name (§3.1; a Gemini-named Domain with its pv.named mark, DomainName: the review round); a step's words stay the plan's. */
 function NextLabel({ a }: { a: NextAction }) {
-  const named = a.name && (a.kind === "ADD" || a.kind === "REVIEW" || a.kind === "PRACTICE") ? a.label.indexOf(a.name) : -1;
+  const named = a.name && (a.kind === "ADD" || a.kind === "REVIEW" || a.kind === "PRACTICE" || a.kind === "LOCKED" || a.kind === "KNOWN" || a.kind === "REVIEW_TOPIC" || a.kind === "STUDY" || a.kind === "ADD_IDEA") ? a.label.indexOf(a.name) : -1;
   if (named < 0 || !a.name) return <span className="rm-next-l">{a.label}</span>;
   return (
     <span className="rm-next-l">
       {a.label.slice(0, named)}
-      <span data-wc="name">{a.name}</span>
+      <DomainName name={a.name} geminiNamed={a.geminiNamed === true} />
       {a.label.slice(named + a.name.length)}
     </span>
   );
@@ -972,7 +981,8 @@ function NextHero({
       if (d.sheet === "start") onStart();
       else if (d.sheet === "replan") onReplan();
       else setSheet(d.sheet);
-    } else if (d.kind === "run" && m?.id) run((x) => x.finishStarting(m.id!));
+    } else if (d.kind === "run" && d.run === "knowTopic") run((x) => x.skipTopic(header.id, d.key, true));
+    else if (d.kind === "run" && m?.id) run((x) => x.finishStarting(m.id!));
   };
   const { primary, secondary } = actions;
   const P = primary.do;
@@ -1227,6 +1237,67 @@ function Triggers({ view, current, onReplan }: { view: RoadmapView; current: Cur
 /** The milestones behind you: reached (counted or not yet), dropped, closed unreached. The rail opens on the first one after them. */
 const MILESTONE_BEHIND: ReadonlySet<string> = new Set(["REACHED", "PENDING_REACH", "DROPPED", "CLOSED_UNREACHED"]);
 
+/**
+ * Ruling N27 (the page): a locked layer node's ▸: the parents the gate waits on (lockParentsOf's list, the ones still
+ * short of cards first, each "n of 8"; a met one carries the check) and, while edits are on, the LINK votes that did
+ * not reach EDGE_DRAW as one-tap picks ("<child> builds on <parent> · 2 of 3 samples"): a kept pick is a USER edge
+ * the gate counts, written as version + 1 with the accept's Undo (editPlan PICK_PARENT). Every name keeps its mark.
+ */
+function LockParents({ lock, roadmapId, canPick }: { lock: MilestoneLockView; roadmapId: string | null; canPick: boolean }) {
+  const { run, pending, error, runtime } = useRoadmapAction();
+  const pick = (s: MilestoneLockSuggestionView) => {
+    if (!roadmapId) return;
+    run(
+      (a) => a.editPlan(roadmapId, { kind: "PICK_PARENT", childKey: s.child.key, parentKey: s.key }),
+      (res) =>
+        pushToast({
+          title: pickedParentToast(s.name),
+          body: `Version ${res.version}`,
+          holdMs: ACCEPT_UNDO_MS,
+          action: { label: "Undo", onAction: () => void runtime.actions.undoAccept(roadmapId, res.version).then(() => runtime.refresh()) },
+        })
+    );
+  };
+  return (
+    <div className="rm-lock" data-wc-block="lock-parents">
+      <p className="t-meta rm-lock-h">
+        <Glyph name="m.builds" size={16} inherit /> {LOCK_PARENTS_WORD}
+      </p>
+      <ul className="rm-basis rm-lock-list">
+        {lock.parents.map((p) => (
+          <li key={p.key} data-met={p.met ? "" : undefined}>
+            <DomainName name={p.name} geminiNamed={p.geminiNamed} />
+            {p.met ? (
+              <span className="t-meta rm-lock-n">
+                <Icon name="check" size={14} aria-hidden="true" />
+                <span className="sr-only">{lockParentSr(p.cards, p.floor, true)}</span>
+              </span>
+            ) : (
+              <span className="t-meta rm-lock-n num" aria-label={lockParentSr(p.cards, p.floor, false)}>
+                {p.cards} of {p.floor}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {canPick && roadmapId && lock.suggestions.length > 0 && (
+        <div className="rm-tm-acts-s rm-lock-picks">
+          {lock.suggestions.map((s) => (
+            <button key={`${s.child.key}:${s.key}`} type="button" className="chip btn-chip rm-lock-pick" disabled={pending} onClick={() => pick(s)}>
+              <Glyph name="pv.suggest" size={12} inherit />
+              <span aria-hidden="true">
+                <DomainName name={s.child.name} geminiNamed={s.child.geminiNamed} /> · <DomainName name={s.name} geminiNamed={s.geminiNamed} /> · {samplesOfLine(s.votes, s.samples)}
+              </span>
+              <span className="sr-only">{pickParentLine(s.child.name, s.name, s.votes, s.samples)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {error && <ActionError>{error}</ActionError>}
+    </div>
+  );
+}
+
 function StartAgain({ row }: { row: MilestoneRowView }) {
   const { run, pending, error } = useRoadmapAction();
   return (
@@ -1383,6 +1454,8 @@ function MilestonesList({
               </a>
             </p>
           )}
+          {/* Ruling N27 (the page): a locked node lists the parents it waits on, "n of 8" each, and the votes under EDGE_DRAW as one-tap picks. */}
+          {r?.lock && <LockParents lock={r.lock} roadmapId={planEdit?.roadmapId ?? chain?.roadmapId ?? null} canPick={editsOn} />}
           {r && startAgainOffered(r, rows, open) && <StartAgain row={r} />}
           {editButton(r)}
         </>
@@ -1780,7 +1853,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
         {!closed && current && <NowSection view={view} current={current} seen={seen} weekOpen={weekOpen} onWeekToggle={() => setWeekToggle(!weekOpen)} />}
         {view.topicMap && topicPlansOn(gates) && (
           <div className="rm-o4">
-            <TopicMap map={view.topicMap} mode="plan" gates={gates} seenBasis={seen?.plan ?? null} today={view.today} />
+            <TopicMap map={view.topicMap} mode="plan" gates={gates} seenBasis={seen?.plan ?? null} today={view.today} currentLayer={view.current?.milestone.layer ?? null} />
           </div>
         )}
         {view.milestones.length > 0 && (

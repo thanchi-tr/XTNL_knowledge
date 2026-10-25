@@ -61,6 +61,7 @@ import {
   outlineStagesOf,
   type AcceptRefusalCode,
   type AimClause,
+  type BlockingFlag,
   type BreadthKey,
   type ChainCheckCode,
   type ChainEffect,
@@ -235,8 +236,10 @@ export interface MapAgreementInput {
   freeDomains: readonly { id: string; name: string }[];
   /** The names of Domains other DRAFT, ACTIVE and PAUSED goals hold: a name whose form key equals one is dropped (TAKEN_NAME), never matched. */
   takenNames: readonly string[];
-  /** checkLabel's context; mapAgreementOf sets kind TOPIC and topicMap per name. */
+  /** checkLabel's context; mapAgreementOf sets kind TOPIC and topicMap per name, and MILESTONE for the milestone lines (ruling N29). */
   label: LabelContext;
+  /** Ruling N29: the figure strip the milestone lines pass before checkLabel (roadmap-evidence stripFiguresOf, injected: this module never reaches that one); absent, the flags alone. */
+  stripFigures?: ((text: string) => string) | null;
   /** Your texts name a country (COUNTRY_WORDS). */
   countryNamed: boolean;
   makeId: () => string;
@@ -611,6 +614,67 @@ function levelStemSetOf(opts?: RuleOpts): Set<string> {
   return set;
 }
 
+/** Ruling N31: the tails a name sheds for the containment dedupe ("Budget Variance Analysis" reads as "Budget Variance"), and their singulars. */
+const CONTAIN_TAILS: ReadonlySet<string> = new Set(["analysis", "analyses", "statement", "statements", "ratio", "ratios"]);
+/** Ruling N31 as the review round narrowed it: the one tail word a longer name may add to a term and still be that term's chapter ("Investing Basics" beside "Investing"), singular as containKeyOf writes it. */
+const CONTAIN_SUFFIXES: ReadonlySet<string> = new Set(["analysis", "statement", "ratio", "basic", "basics", "overview", "fundamental", "fundamentals", "introduction", "principle", "principles", "essential", "essentials", "concept", "concepts"]);
+const CONTAIN_SINGULAR: Readonly<Record<string, string>> = { analyses: "analysis", statements: "statement", ratios: "ratio" };
+
+/** One word's singular, lightly: "ies" to "y", a trailing "s" off (never after ss, us or is; "ches", "shes", "xes", "sses" lose "es"); a word with a digit, or of 3 letters or fewer, as it is. */
+function singularOf(tok: string): string {
+  if (CONTAIN_SINGULAR[tok]) return CONTAIN_SINGULAR[tok];
+  if (/\d/.test(tok) || tok.length <= 3) return tok;
+  if (tok.endsWith("ies")) return `${tok.slice(0, -3)}y`;
+  if (/(ss|us|is)$/.test(tok)) return tok;
+  if (/(ches|shes|xes|sses)$/.test(tok)) return tok.slice(0, -2);
+  if (tok.endsWith("s")) return tok.slice(0, -1);
+  return tok;
+}
+
+/**
+ * Ruling N31's normalisation of a name for the containment dedupe: case and punctuation folded (NFKC, letters and
+ * digits), an "analysis", "statement" or "ratio" tail dropped when at least two words stay ("Current Ratio" keeps
+ * its tail), each word singular. [] for no words. Pure; never throws.
+ */
+export function containKeyOf(name: string): string[] {
+  const toks = (typeof name === "string" ? name : "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  const cut = toks.length >= 3 && CONTAIN_TAILS.has(toks[toks.length - 1]) ? toks.slice(0, -1) : toks;
+  return cut.map(singularOf);
+}
+
+/**
+ * Ruling N31 as the review round narrowed it: how name `a` relates to name `b` after containKeyOf. EQUAL: the same words.
+ * CHAPTER: a is b plus one tail word (CONTAIN_SUFFIXES: "Investing Basics" beside "Investing", "Variance Analysis" beside
+ * "Variance"): the same concept, hidden as "same as b". PART: a is one bare tail word that b holds ("Ratio" beside "Current
+ * Ratio"): hidden as "part of b". Any other run of words is two concepts ("Interest" beside "Compound Interest", "Present
+ * Value" beside "Net Present Value", "Variance" beside "Budget Variance": both stay). null otherwise.
+ */
+export function containRelationOf(a: readonly string[], b: readonly string[]): "EQUAL" | "CHAPTER" | "PART" | null {
+  if (a.length === 0 || b.length === 0) return null;
+  if (a.length === b.length) return a.every((w, k) => w === b[k]) ? "EQUAL" : null;
+  if (a.length === b.length + 1 && CONTAIN_SUFFIXES.has(a[a.length - 1]) && b.every((w, k) => w === a[k])) return "CHAPTER";
+  if (a.length === 1 && CONTAIN_SUFFIXES.has(a[0]) && b.includes(a[0])) return "PART";
+  return null;
+}
+
+/** How key `a` sits in key `b`: EQUAL (the same words), CONTAINED (a's words are a run of b's: the shorter name inside the longer), else null (either empty, or a longer than b). The gate reads containRelationOf; this is the plain run test. */
+export function containedKeyOf(a: readonly string[], b: readonly string[]): "EQUAL" | "CONTAINED" | null {
+  if (a.length === 0 || b.length === 0 || a.length > b.length) return null;
+  for (let i = 0; i + a.length <= b.length; i++) {
+    if (a.every((w, k) => w === b[i + k])) return a.length === b.length ? "EQUAL" : "CONTAINED";
+  }
+  return null;
+}
+
+/** Ruling N31: the names a map shows (live, not behind the fold, not hidden by the agreement): what REBREAK's and DEEPER's new names are duplicates of. */
+function shownNamesOf(topics: readonly TopicDraft[]): string[] {
+  return topics.filter((t) => t && live(t) && !hiddenByAgreement(t) && topicClassOf(t) !== "NOT_CHECKED").map((t) => t.name);
+}
+
 /** The content stems less LEVEL_WORDS and GENERIC_HEADS (C10, LEVEL_ONLY). */
 export function levelStemsOf(name: string, opts?: RuleOpts): string[] {
   const level = levelStemSetOf(opts);
@@ -819,6 +883,8 @@ interface AgreeSpec {
   freeDomains: readonly { id: string; name: string }[];
   label: LabelContext;
   countryNamed: boolean;
+  /** Ruling N31: the names the map already shows (your lines and Domains, its kept names), never hidden here; a Gemini name equal to one after containKeyOf, or a run of one's words, is its duplicate. */
+  ownNames: readonly string[];
   /** C10's ancestors for a name in `layer`: their names (lines, Domains, kept names of shallower layers). */
   ancestorsOf: (layer: number, kept: readonly { layer: number; name: string; lineageId: string }[]) => { name: string; lineageId: string }[];
   room: number;
@@ -1038,9 +1104,40 @@ function agreeNames(spec: AgreeSpec): { shown: Group[]; hidden: Group[] } {
     placed.push({ layer: g.layer, name: g.label, lineageId: g.voteKey });
   }
 
+  // Step 8b (topic.dedupe, ruling N31 as the review round narrowed it): a name equal to another name of the map after
+  // containKeyOf (case, plurals, an "analysis", "statement" or "ratio" tail), or that name plus one tail word ("Investing
+  // Basics" beside "Investing": its chapter), is hidden as its duplicate (NEAR_DUPLICATE; the fold reads "same as <name>",
+  // duplicateOfOf), and a bare tail word a longer name holds ("Ratio" beside "Current Ratio") as part of it ("part of
+  // <name>"), on top of the Dice merge above. Any other run of words is two concepts ("Interest" beside "Compound Interest",
+  // "Present Value" beside "Net Present Value"): both stay. An equal pair keeps the shorter form (the term, not its chapter:
+  // ruling N13), then the one ranked first. Your lines and Domains (ownNames), the aim's spans and a picked Domain are never
+  // hidden; a name a flag hides keeps that reason; a hidden name hides nothing else (no chaining).
+  const order = [...surviving].sort((a, b) => b.votes - a.votes || a.firstSeq - b.firstSeq);
+  if (R.on("topic.dedupe")) {
+    const hideDup = (g: Group): void => {
+      g.hide = "NEAR_DUPLICATE";
+      if (!g.notes.includes("NEAR_DUPLICATE")) g.notes.push("NEAR_DUPLICATE");
+      R.fire("topic.dedupe");
+    };
+    const own = arr(spec.ownNames).map((n) => containKeyOf(typeof n === "string" ? n : "")).filter((k) => k.length > 0);
+    order.forEach((a, i) => {
+      if (a.hide || a.aim || a.picked) return;
+      const ka = containKeyOf(a.label);
+      if (ka.length === 0) return;
+      if (own.some((ko) => containRelationOf(ka, ko) !== null)) {
+        hideDup(a);
+        return;
+      }
+      order.forEach((b, j) => {
+        if (a.hide || j === i || b.hide) return;
+        const rel = containRelationOf(ka, containKeyOf(b.label));
+        if (rel === "CHAPTER" || rel === "PART" || (rel === "EQUAL" && (b.aim || b.picked || b.label.length < a.label.length || (b.label.length === a.label.length && j < i)))) hideDup(a);
+      });
+    });
+  }
+
   // Step 9 (topic.trim): to the room, then each layer to LAYER_TOPICS_MAX; by votes, then first appearance (ruling N2).
   // Never padded.
-  const order = [...surviving].sort((a, b) => b.votes - a.votes || a.firstSeq - b.firstSeq);
   const shown: Group[] = [];
   const hidden: Group[] = [];
   const occupancy = new Map(spec.occupancy);
@@ -1261,6 +1358,7 @@ export function mapAgreementOf(input: MapAgreementInput, opts?: RuleOpts): MapAg
       freeDomains: input.freeDomains,
       label: labelWithLibrary(input.label, [...arr(input.freeDomains), ...domains]),
       countryNamed: input.countryNamed === true,
+      ownNames: base.map((t) => t.name),
       ancestorsOf: shallowerOf(base),
       room: countOf(input.room),
       occupancy,
@@ -1284,23 +1382,82 @@ export function mapAgreementOf(input: MapAgreementInput, opts?: RuleOpts): MapAg
   }
 
   const topics = [...ownTopics, ...shownNames];
-  return { topics, hidden: hiddenNames, report, kFinal: kFinalOf([...topics, ...hiddenNames], k), milestones: mapMilestonesOf(samples, k, topics) };
+  // Ruling N29: the milestone lines pass the figure strip and checkLabel's flags here, before they are stored.
+  const gate: MilestoneGate | null = input?.label && typeof input.label === "object" ? { label: input.label, strip: typeof input.stripFigures === "function" ? input.stripFigures : null } : null;
+  return { topics, hidden: hiddenNames, report, kFinal: kFinalOf([...topics, ...hiddenNames], k), milestones: mapMilestonesOf(samples, k, topics, gate, opts) };
 }
 
 // ═══ Milestones (ruling N8) ═════════════════════════════════════════════════
 
 const MILESTONE_DROP = /(?:https?:\/\/|www\.)/iu;
 
+/** Ruling N29: the checkLabel flags a milestone line must not carry before it is stored (a figure you didn't write, a claim, a named resource). */
+export const MILESTONE_FAIL_FLAGS: readonly BlockingFlag[] = ["NUMBER", "CLAIM_WORDS", "LOOKS_LIKE_RESOURCE"];
+
+/**
+ * Ruling N29: what a milestone line passes before storage. `label` is checkLabel's context (the aim, your constraints,
+ * outline lines and Domain names, so a figure you wrote is yours; the kind is set to MILESTONE here); `strip` is the
+ * figure strip (roadmap-evidence stripFiguresOf, injected: this module never reaches that one), run before the flags.
+ */
+export interface MilestoneGate {
+  label: LabelContext;
+  strip?: ((text: string) => string) | null;
+}
+
+/** Ruling N29: every NUMBER span checkLabel struck sits inside a scale phrase the figure strip wrote ("low six-figure", ruling N9): the scale of your own figure, never a figure of Gemini's. */
+function struckInScaleOf(lc: { cleaned: string; struck: readonly (readonly [number, number])[] }): boolean {
+  if (lc.struck.length === 0) return false;
+  const ranges: [number, number][] = [];
+  for (const m of lc.cleaned.matchAll(/\b(?:low|mid|high) [a-z]+-figure\b/gu)) ranges.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
+  return lc.struck.every(([s, e]) => ranges.some(([a, b]) => s >= a && e <= b));
+}
+
+/** The windows checkLabel reads a long line through (its MILESTONE cap is MILESTONE_TITLE_MAX): whole words, each window at most `cap` characters, each starting halfway through the one before so no phrase falls between two. */
+function labelWindowsOf(text: string, cap: number): string[] {
+  const w = text.split(" ");
+  const out: string[] = [];
+  let i = 0;
+  while (i < w.length) {
+    let j = i;
+    let len = 0;
+    while (j < w.length && (len === 0 || len + 1 + w[j].length <= cap)) {
+      len += (len === 0 ? 0 : 1) + w[j].length;
+      j += 1;
+    }
+    out.push(w.slice(i, j).join(" "));
+    if (j >= w.length) break;
+    i = Math.max(i + 1, Math.floor((i + j) / 2));
+  }
+  return out;
+}
+
 /**
  * One milestone line as shown: lightClean, markup tags and angle brackets out, cut at a word to `max` characters with "…". "" when
  * nothing is left, when it holds a link, or when it holds an INJECTION_ANYWHERE_WORDS word (a reply echoing an
- * instruction is never shown).
+ * instruction is never shown). With a `gate` (ruling N29, before storage): the figure strip first (a money figure
+ * becomes its scale, a personal figure, a date or a schedule goes), then checkLabel over the line (kind MILESTONE, in
+ * windows of its cap); a line that drops, or carries a MILESTONE_FAIL_FLAGS flag (NUMBER: a figure you didn't write,
+ * the strip's own scale words excepted; CLAIM_WORDS; LOOKS_LIKE_RESOURCE), is "" (a title then falls back to code's
+ * "Layer k"). Without a gate (the read of a stored line), as before.
  */
-export function milestoneTextOf(raw: unknown, max: number): string {
-  const text = lightClean(raw).replace(/<[^<>]*>/gu, "").replace(/[<>]/gu, "").replace(/\s+/gu, " ").trim();
+export function milestoneTextOf(raw: unknown, max: number, gate?: MilestoneGate | null, opts?: RuleOpts): string {
+  let text = lightClean(raw).replace(/<[^<>]*>/gu, "").replace(/[<>]/gu, "").replace(/\s+/gu, " ").trim();
   if (text === "" || MILESTONE_DROP.test(text)) return "";
   const banned = new Set(LX.INJECTION_ANYWHERE_WORDS.map((w) => w.toLowerCase()));
   if ((text.toLowerCase().match(/[\p{L}]+/gu) ?? []).some((w) => banned.has(w))) return "";
+  if (gate && gate.label && typeof gate.label === "object") {
+    try {
+      if (typeof gate.strip === "function") text = gate.strip(text).replace(/\s+/gu, " ").trim();
+      if (text === "") return "";
+      const ctx: LabelContext = { ...gate.label, kind: "MILESTONE", topicMap: null };
+      for (const window of labelWindowsOf(text, MILESTONE_TITLE_MAX)) {
+        const lc = checkLabel(window, ctx, opts);
+        if (lc.drop || lc.flags.some((f) => MILESTONE_FAIL_FLAGS.includes(f) && !(f === "NUMBER" && struckInScaleOf(lc)))) return "";
+      }
+    } catch {
+      return "";
+    }
+  }
   const chars = Array.from(text);
   if (chars.length <= max) return text;
   const cut = chars.slice(0, Math.max(1, max - 1)).join("");
@@ -1312,9 +1469,10 @@ export function milestoneTextOf(raw: unknown, max: number): string {
  * MAP's milestones (ruling N8): one valid sample's, never a blend, so each title, hurdle and target belong together.
  * The sample is the one that wrote a title for every layer and agrees most with the map (its names in the layer the
  * agreement put them in, its places where the agreement put your lines and Domains), the earliest on a tie. With no such
- * sample, each layer takes the best-agreeing sample that titled it. A layer no sample titled is left out. Never throws.
+ * sample, each layer takes the best-agreeing sample that titled it. A layer no sample titled is left out. Each line
+ * passes `gate` (milestoneTextOf: ruling N29; a title that fails leaves its layer untitled). Never throws.
  */
-export function mapMilestonesOf(samples: readonly (MapSampleIn | null)[], layers: number, topics: readonly Pick<TopicDraft, "key" | "layer" | "name">[]): LayerMilestone[] {
+export function mapMilestonesOf(samples: readonly (MapSampleIn | null)[], layers: number, topics: readonly Pick<TopicDraft, "key" | "layer" | "name">[], gate?: MilestoneGate | null, opts?: RuleOpts): LayerMilestone[] {
   try {
     const k = clampLayers(layers);
     const keys = LAYER_KEYS.slice(0, k);
@@ -1332,9 +1490,9 @@ export function mapMilestonesOf(samples: readonly (MapSampleIn | null)[], layers
       const byLayer = new Map<number, LayerMilestone>();
       keys.forEach((lk, li) => {
         const m = own(raw, lk);
-        const title = milestoneTextOf(own(m, "title"), MILESTONE_TITLE_MAX);
+        const title = milestoneTextOf(own(m, "title"), MILESTONE_TITLE_MAX, gate, opts);
         if (title === "") return;
-        byLayer.set(li + 1, { layer: li + 1, title, hurdle: milestoneTextOf(own(m, "hurdle"), MILESTONE_LINE_MAX), target: milestoneTextOf(own(m, "target"), MILESTONE_LINE_MAX) });
+        byLayer.set(li + 1, { layer: li + 1, title, hurdle: milestoneTextOf(own(m, "hurdle"), MILESTONE_LINE_MAX, gate, opts), target: milestoneTextOf(own(m, "target"), MILESTONE_LINE_MAX, gate, opts) });
       });
       if (byLayer.size === 0) return [];
       let score = 0;
@@ -1838,6 +1996,42 @@ export function topicHideReasonOf(t: TopicDraft): TopicHideReason | null {
   }
 }
 
+/**
+ * Ruling N31: the name a NEAR_DUPLICATE topic duplicates ("same as <name>"), read from the map as it stands: the live
+ * topic, a shown one first, whose containKeyOf equals this one's (an equal shorter form first) or holds it as a run of
+ * words; the earlier in the map on a tie. null when none reads so (the other name was removed or renamed), or when the
+ * topic isn't a duplicate. Never throws.
+ */
+export function duplicateOfOf(map: TopicMap, t: TopicDraft): string | null {
+  return duplicateRelationOf(map, t)?.name ?? null;
+}
+
+/**
+ * Ruling N31 (the review round): what a NEAR_DUPLICATE duplicates, from the map as it stands: SAME (an equal key, or the
+ * name is that one plus a tail word: "same as Budget Variance") or PART (a bare tail word that name holds: "part of
+ * Current Ratio"); the shown equal shorter form first, then the name it is a chapter of, then the one it is part of;
+ * none once that name is renamed away. Never throws.
+ */
+export function duplicateRelationOf(map: TopicMap, t: TopicDraft): { name: string; kind: "SAME" | "PART" } | null {
+  try {
+    if (!t || !Array.isArray(t.notes) || !t.notes.includes("NEAR_DUPLICATE")) return null;
+    const key = containKeyOf(t.name);
+    if (key.length === 0) return null;
+    const hiddenRank = (o: TopicDraft): number => (hiddenByAgreement(o) || topicClassOf(o) === "NOT_CHECKED" ? 10 : 0);
+    let best: { name: string; kind: "SAME" | "PART"; score: number } | null = null;
+    for (const o of arr(map?.topics)) {
+      if (!o || o === t || o.lineageId === t.lineageId || !live(o) || typeof o.name !== "string") continue;
+      const rel = containRelationOf(key, containKeyOf(o.name));
+      if (rel === null) continue;
+      const score = hiddenRank(o) + (rel === "EQUAL" ? (o.name.length <= t.name.length ? 0 : 2) : rel === "CHAPTER" ? 1 : 3);
+      if (!best || score < best.score) best = { name: o.name, kind: rel === "PART" ? "PART" : "SAME", score };
+    }
+    return best ? { name: best.name, kind: best.kind } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** ["MERGE_UP", "WRITE_ONE", "SHOW_HIDDEN"], less MERGE_UP on layer 1 and SHOW_HIDDEN with nothing hidden. */
 export function emptyLayerOffersOf(map: TopicMap, layer: number): EmptyLayerOffer[] {
   const hiddenHere = arr(map?.topics).some((t) => t && live(t) && t.layer === layer && (topicClassOf(t) === "NOT_CHECKED" || hiddenByAgreement(t)));
@@ -2001,6 +2195,7 @@ export function rebreakAgreementOf(input: RebreakAgreementInput, opts?: RuleOpts
       freeDomains: input.freeDomains,
       label: labelWithLibrary(input.label, [...arr(input.freeDomains), ...liveTopics.filter((t) => t.nameOrigin === "LIBRARY")]),
       countryNamed: input.countryNamed === true,
+      ownNames: shownNamesOf(liveTopics),
       ancestorsOf: shallowerOf(base),
       room: asked.length * REBREAK_NAMES_MAX,
       occupancy: new Map(),
@@ -2082,6 +2277,7 @@ export function deeperAgreementOf(input: DeeperAgreementInput, opts?: RuleOpts):
       freeDomains: input.freeDomains,
       label: labelWithLibrary(input.label, [...arr(input.freeDomains), ...liveTopics.filter((t) => t.nameOrigin === "LIBRARY")]),
       countryNamed: input.countryNamed === true,
+      ownNames: shownNamesOf(liveTopics),
       ancestorsOf: () => lineage,
       room,
       occupancy,

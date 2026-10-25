@@ -39,6 +39,7 @@ import {
   GEMINI_PLACED_FULL,
   HELD_TOPIC_SR,
   KNOWN_TOPIC_SR,
+  ACCEPT_ALL_UNCHECKED,
   SOURCES_TITLE,
   TOPIC_ACTION_WORD,
   TOPIC_CLASS_WORDS,
@@ -48,13 +49,19 @@ import {
   buildsOnLine,
   deeperCostLine,
   layerWord,
+  pickParentLine,
+  pickedParentToast,
   repliesOfLine,
+  samplesOfLine,
 } from "./roadmap-copy";
+import { pushToast } from "@/components/ui/toast-store";
+import { ACCEPT_UNDO_MS } from "@/lib/roadmap-types";
 import { useRoadmapAction } from "./roadmap-runtime";
 import { addCardHref } from "./roadmap-links";
 import { isGeminiName, parentNamesOf, rowChipOf, topicMarkOf } from "./topic-map-model";
 import { ParentsSheet } from "./ParentsSheet";
 import { SourcesSheet } from "./SourcesSheet";
+import { HideReason } from "./TopicMapRow";
 
 const CHIP_FULL: Readonly<Record<string, string>> = {
   "gemini-linked": GEMINI_LINKED_FULL,
@@ -114,6 +121,29 @@ export function TopicSheet({ open, onClose, roadmapId, map, row, draft, namesOn,
     setMode(null);
     onClose();
   };
+  // Ruling N27 (the page): a LINK vote under EDGE_DRAW picked in one tap. A draft: setParents with the pick added to its
+  // links (the whole layer before gives way to the one pick). A plan: editPlan PICK_PARENT, version + 1 with the accept's Undo.
+  const suggestions = row.suggestions ?? [];
+  const pick = (s: { key: string; name: string }) => {
+    if (draft) {
+      const keys = row.parents.kind === "LINKS" ? Array.from(new Set([...row.parents.keys, s.key])) : [s.key];
+      const crossGoal = row.parents.kind === "LINKS" ? row.parents.crossGoal.flatMap((c) => (c.roadmapId && c.domainId ? [{ roadmapId: c.roadmapId, domainId: c.domainId }] : [])) : [];
+      run((a) => a.setParents(roadmapId, row.key, { kind: "LINKS", keys, crossGoal }), done);
+      return;
+    }
+    run(
+      (a) => a.editPlan(roadmapId, { kind: "PICK_PARENT", childKey: row.key, parentKey: s.key }),
+      (res) => {
+        done();
+        pushToast({
+          title: pickedParentToast(s.name),
+          body: `Version ${res.version}`,
+          holdMs: ACCEPT_UNDO_MS,
+          action: { label: "Undo", onAction: () => void runtime.actions.undoAccept(roadmapId, res.version).then(() => runtime.refresh()) },
+        });
+      }
+    );
+  };
   const close = () => {
     setMode(null);
     onClose();
@@ -166,6 +196,19 @@ export function TopicSheet({ open, onClose, roadmapId, map, row, draft, namesOn,
             )}
           </p>
           {row.votes && gemini && <p className="rm-tm-sl t-meta">{repliesOfLine(row.votes.form, row.votes.samples)}</p>}
+          {suggestions.length > 0 && (
+            <div className="rm-tm-acts-s rm-lock-picks" data-wc-block="topic-picks">
+              {suggestions.map((s) => (
+                <button key={s.key} type="button" className="chip btn-chip rm-lock-pick" disabled={pending} onClick={() => pick(s)}>
+                  <Glyph name="pv.suggest" size={12} inherit />
+                  <span aria-hidden="true">
+                    <span data-wc="name">{s.name}</span> · {samplesOfLine(s.votes, s.samples)}
+                  </span>
+                  <span className="sr-only">{pickParentLine(row.name, s.name, s.votes, s.samples)}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {row.sources.length > 0 && (
             <button type="button" className="chip btn-chip" onClick={() => setSources(true)}>
               <Glyph name="pv.web" size={12} inherit />
@@ -173,12 +216,18 @@ export function TopicSheet({ open, onClose, roadmapId, map, row, draft, namesOn,
             </button>
           )}
           {gemini && <CautionChips cautions={map.cautions} />}
-          {(row.notes.length > 0 || row.held || row.skipped) && (
+          {(row.notes.length > 0 || row.held || row.skipped || row.hide) && (
             <ul className="rm-basis">
               {row.held && <li>{HELD_TOPIC_SR}</li>}
               {row.skipped && <li>{KNOWN_TOPIC_SR}</li>}
+              {/* Rulings N30 and N31: why it sat behind the fold (a NEAR_DUPLICATE reads "same as <name>" here, not the bare note). */}
+              {row.hide && (
+                <li>
+                  <HideReason hide={row.hide} lead={ACCEPT_ALL_UNCHECKED} />
+                </li>
+              )}
               {row.notes
-                .filter((n) => !(n === "HELD_AT_START" && row.held) && !(n === "KNOWN_BY_YOU" && row.skipped))
+                .filter((n) => !(n === "HELD_AT_START" && row.held) && !(n === "KNOWN_BY_YOU" && row.skipped) && !(n === "NEAR_DUPLICATE" && row.hide?.reason === "NEAR_DUPLICATE"))
                 .map((n) => (
                   <li key={n}>{TOPIC_NOTE_WORDS[n]}</li>
                 ))}

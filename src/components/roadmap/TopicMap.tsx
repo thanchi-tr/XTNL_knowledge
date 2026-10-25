@@ -11,9 +11,15 @@
  *   layers    LayerBand per layer, broad (layer 1) to deep (layer K). Layer 1 lists the Area's free
  *             Domains as unticked pv.library seeds (pv.named after a Gemini-named one); under the last
  *             band, the aim's clauses as m.quote seeds, verbatim (data-wc="own"), never spell-corrected.
- *   foot      [Accept all] (a draft): its confirm lists, layer by layer and by name, every Gemini name and
- *             every not-checked link it would keep (AcceptTopicChoices.keepAll). acceptRefusal and Accept
- *             plan stay in the draft footer (§7.3).
+ *             A plan (ruling N32) expands only the open layer: the layers behind it fold to "n done", the
+ *             ones after it to their header, each with its one who-word chip and a ▸ to its topics; a
+ *             draft shows the layers up to the first not done and steps through the rest.
+ *   foot      [Accept all] (a draft): its confirm says first what it creates ("Creates n Domains", ruling N30),
+ *             then lists, layer by layer and by name, every shown Gemini name and every not-checked link it
+ *             would keep (AcceptTopicChoices.keepAll), and under each layer its not-checked names unticked,
+ *             each with its reason and a 44 px tap (chooseTopic keeps it: no Domain comes from a not-checked
+ *             name without your own tap); a layer holding only those waits for a tap (the button is off).
+ *             acceptRefusal and Accept plan stay in the draft footer (§7.3).
  *
  * Quarantine: Gemini names appear only inside this card's rows and sheets until accept (TOPIC_NAME_LINKED).
  * Trace: one at a time; a second tap, Escape or another row ends it; nothing hides, nothing moves.
@@ -52,7 +58,9 @@ import {
   TOPIC_CLASS_WORDS,
   TRACE_KEY,
   TRACK_CLAUSE_WORD,
+  ACCEPT_ALL_TAP_LINE,
   acceptAllLinksLine,
+  createsDomainsLine,
   emptyLayerTitle,
   inPlanAria,
   layerWord,
@@ -78,7 +86,8 @@ import { useRoadmapAction } from "./roadmap-runtime";
 import { EstimateChip } from "./EstimateChip";
 import { LayerBand } from "./LayerBand";
 import { CautionChips, TopicSheet } from "./TopicSheet";
-import { TOPIC_MARK, acceptAllListOf, acceptTopicChoicesOf, rowsByKey, topicNamesOn, traceOf, type TopicGates } from "./topic-map-model";
+import { HideReason } from "./TopicMapRow";
+import { TOPIC_MARK, acceptAllBareLayersOf, acceptAllListOf, acceptTopicChoicesOf, rowsByKey, topicNamesOn, traceOf, type TopicGates } from "./topic-map-model";
 
 export interface TopicMapProps {
   map: TopicMapView;
@@ -92,8 +101,12 @@ export interface TopicMapProps {
   canTrack?: boolean;
   /** A live LEVELS milestone this accept would close (ruling 49): the confirm asks for its practices. */
   liveMilestone?: number | null;
-  /** Fixtures only (/dev/style/roadmap): a row's sheet open at mount (its TopicSheet, or the sources or parents sheet in it). */
-  fixtureOpen?: { key: string; sheet: "topic" | "sources" | "parents" } | null;
+  /** The Area's name for [Accept all]'s first line ("Creates n Domains in Business & Finance", ruling N30); without it, "Creates n Domains." */
+  areaName?: string | null;
+  /** Ruling N32 (the review round): the current milestone's layer (the hero's), the one expanded when more than one layer reads OPEN (a layer closed short with its topics at the floor reads OPEN beside the one under way); null, or a layer not reading OPEN (a locked one waits on the layer before it, which stays expanded): the first OPEN or locked layer. */
+  currentLayer?: number | null;
+  /** Fixtures only (/dev/style/roadmap): a row's sheet open at mount (its TopicSheet, or the sources or parents sheet in it), or [Accept all]'s sheet (ruling N30; `key` unused). */
+  fixtureOpen?: { key: string; sheet: "topic" | "sources" | "parents" | "accept" } | null;
   className?: string;
 }
 
@@ -106,16 +119,16 @@ function createKeyOf(): string {
   }
 }
 
-export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false, liveMilestone = null, fixtureOpen = null, className }: TopicMapProps) {
+export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false, liveMilestone = null, areaName = null, currentLayer = null, fixtureOpen = null, className }: TopicMapProps) {
   const draft = mode === "draft";
   const ref = useRef<HTMLElement>(null);
   const [traced, setTraced] = useState<string | null>(null);
-  const [sheetKey, setSheetKey] = useState<string | null>(fixtureOpen?.key ?? null);
+  const [sheetKey, setSheetKey] = useState<string | null>(fixtureOpen && fixtureOpen.sheet !== "accept" ? fixtureOpen.key : null);
   const [writeLayer, setWriteLayer] = useState<number | null>(null);
   const [writeName, setWriteName] = useState("");
   const [emptyLayer, setEmptyLayer] = useState<number | null>(null);
   const [hiddenOpen, setHiddenOpen] = useState<ReadonlySet<number>>(new Set());
-  const [acceptOpen, setAcceptOpen] = useState(false);
+  const [acceptOpen, setAcceptOpen] = useState(fixtureOpen?.sheet === "accept");
   // [Accept all] over your hours or pace (TopicMapView.needsOver): the footer's own switch, asked here too.
   // [Accept all] keeps the plan over your hours or pace by default (the user's ask): the switch shows on, and you can turn it off.
   const [overKept, setOverKept] = useState(true);
@@ -135,8 +148,17 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
   const sheetRow = sheetKey ? (rows.get(sheetKey) ?? null) : null;
   const lastBand = map.layers.length > 0 ? map.layers[map.layers.length - 1].layer : 1;
   const stepFocus = map.layers.findIndex((l) => l.state !== "DONE");
-  const stepThrough = stepFocus < 0 ? map.layers.length - 1 : stepFocus + stepExtra;
+  // A plan (ruling N32) shows every band and folds instead: the step-through is a draft's.
+  const stepThrough = !draft ? map.layers.length - 1 : stepFocus < 0 ? map.layers.length - 1 : stepFocus + stepExtra;
   const stepWaiting = map.layers.filter((_, i) => i > stepThrough);
+  // Ruling N32 (a plan): the open layer (the current milestone's when it reads OPEN or locked, else the first OPEN or locked
+  // one) is the one expanded; the layers behind it fold to "n done" (DONE, or held when you began), the ones after it to
+  // their header. An earlier layer still OPEN (closed short with its topics at the floor, beside the one under way: the
+  // review round) folds to its header with its state word, never to a count. Every layer done: each folds to its count.
+  const openable = (l: TopicMapView["layers"][number]) => l.state === "OPEN" || l.state === "AFTER";
+  const curIdx = currentLayer != null ? map.layers.findIndex((l) => l.layer === currentLayer && l.state === "OPEN") : -1;
+  const openIdx = draft ? -1 : curIdx >= 0 ? curIdx : map.layers.findIndex(openable);
+  const foldOf = (i: number): "done" | "header" | null => (draft ? null : openIdx < 0 || i < openIdx ? (map.layers[i].state === "OPEN" ? "header" : "done") : i > openIdx ? "header" : null);
 
   // trace (ACT): the related rails fade in after the user's tap; Escape ends it
   useEffect(() => {
@@ -203,6 +225,10 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
   // The server's own list (TopicMapView.acceptAll): what the sheet shows is what it sends and what acceptCore compares.
   const acceptList = acceptAllListOf(map);
   const needsOver = map.needsOver === true;
+  // Ruling N30: what [Accept all] creates ("Creates n Domains" is the confirm's first line), and the layers it cannot keep
+  // until one of their not-checked names is tapped (the server refuses the same way).
+  const acceptChoices = acceptTopicChoicesOf(map, { keepAll: true, aftercare: liveMilestone != null ? aftercare : null });
+  const bareLayers = acceptAllBareLayersOf(map, acceptList);
   const acceptAll = () =>
     run(
       (a) => a.acceptPlan(map.roadmapId, { overAccepted: needsOver && overKept, topicMap: acceptTopicChoicesOf(map, { keepAll: true, aftercare: liveMilestone != null ? aftercare : null }) }),
@@ -254,6 +280,7 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
             onHiddenToggle={toggleHidden}
             pending={pending}
             stepHidden={i > stepThrough}
+            fold={foldOf(i)}
           >
             {l.layer === 1 && map.layerOneSeeds.length > 0 && (
               <ul className="rm-tm-rows rm-tm-seeds">
@@ -345,7 +372,7 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
           draft={draft}
           namesOn={namesOn}
           ideasOn={map.fieldId !== null}
-          initialSub={fixtureOpen && fixtureOpen.key === sheetRow.key && fixtureOpen.sheet !== "topic" ? fixtureOpen.sheet : null}
+          initialSub={fixtureOpen && fixtureOpen.key === sheetRow.key && (fixtureOpen.sheet === "sources" || fixtureOpen.sheet === "parents") ? fixtureOpen.sheet : null}
         />
       )}
 
@@ -395,12 +422,16 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
         onClose={() => setAcceptOpen(false)}
         title={ACCEPT_ALL_WORD}
         footer={
-          <Button variant="primary" block disabled={pending || (liveMilestone != null && aftercare == null) || (needsOver && !overKept)} onClick={acceptAll}>
+          <Button variant="primary" block disabled={pending || (liveMilestone != null && aftercare == null) || (needsOver && !overKept) || bareLayers.length > 0} onClick={acceptAll}>
             {ACCEPT_ALL_CONFIRM}
           </Button>
         }
       >
-        <div className="rm-stack" style={{ gap: 10 }}>
+        <div className="rm-stack" style={{ gap: 10 }} data-accept-all="">
+          {/* Ruling N30: the first line names what it creates; then the lead. */}
+          <p className="t-meta" style={{ margin: 0 }} data-creates="">
+            {createsDomainsLine(acceptChoices.create, areaName)}
+          </p>
           <p className="t-meta" style={{ margin: 0 }}>
             {ACCEPT_ALL_LEAD}
           </p>
@@ -418,14 +449,37 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
                   ))}
                 </ul>
               )}
-              {(x.unchecked?.length ?? 0) > 0 && (
-                <ul className="rm-basis" data-unchecked="">
-                  {(x.unchecked ?? []).map((n) => (
-                    <li key={n}>
-                      <span data-wc="name">{n}</span> <span className="t-meta">· {ACCEPT_ALL_UNCHECKED}</span>
+              {/* Ruling N30: the layer's not-checked names, unticked, each with its reason and a 44 px tap (chooseTopic keeps and ticks it); one you tapped reads ticked (the list's `tapped`, so its layer never drops off the sheet: the review round). */}
+              {((x.unchecked?.length ?? 0) > 0 || (x.tapped?.length ?? 0) > 0) && (
+                <ul className="rm-basis rm-tm-unck" data-unchecked="">
+                  {(x.tapped ?? []).map((r) => (
+                    <li key={r.key}>
+                      <label className="rm-tm-ck">
+                        <input type="checkbox" className="rm-avd-box" checked disabled={pending} aria-label={inPlanAria(r.name)} onChange={() => choose(r.key, false)} />
+                      </label>
+                      <span className="rm-tm-unck-t">
+                        <span data-wc="name">{r.name}</span>
+                        <HideReason hide={r} lead={ACCEPT_ALL_UNCHECKED} />
+                      </span>
+                    </li>
+                  ))}
+                  {(x.unchecked ?? []).map((u) => (
+                    <li key={u.key}>
+                      <label className="rm-tm-ck">
+                        <input type="checkbox" className="rm-avd-box" checked={false} disabled={pending} aria-label={inPlanAria(u.name)} onChange={() => choose(u.key, true)} />
+                      </label>
+                      <span className="rm-tm-unck-t">
+                        <span data-wc="name">{u.name}</span>
+                        <HideReason hide={u} lead={ACCEPT_ALL_UNCHECKED} />
+                      </span>
                     </li>
                   ))}
                 </ul>
+              )}
+              {bareLayers.includes(x.layer) && (
+                <p className="t-meta" data-bare="">
+                  {ACCEPT_ALL_TAP_LINE}
+                </p>
               )}
               {x.links > 0 && <p className="t-meta">{acceptAllLinksLine(x.links)}</p>}
             </div>

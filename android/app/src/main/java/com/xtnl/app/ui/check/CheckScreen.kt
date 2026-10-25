@@ -1919,6 +1919,8 @@ private fun QuestTile(q: QuestsData, tasks: List<TaskItem>, onTick: (TaskItem) -
                     QuestLine.titleNote(m)?.let { Text(it, style = meta, color = c.ink1) }
                     QuestLine.line(m)?.let { Text(it, style = meta, color = c.ink2) }
                     QuestLine.startLine(m)?.let { Text(it, style = meta, color = c.ink2) }
+                    QuestLine.studyLine(m)?.let { Text(it, style = meta, color = c.ink1) }
+                    QuestLine.studyNote(m)?.let { Text(it, style = meta, color = c.ink2) }
                 }
             }
             q.sprint?.takeIf { QuestLine.showsSprint(it) }?.let { s ->

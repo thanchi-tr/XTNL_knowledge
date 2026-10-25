@@ -11,7 +11,9 @@
  *   is a static row mark: aria-hidden, its words read once through the row's description (D13). The
  *   row's own chip, with its full words, sits in its TopicSheet (D37).
  * - The name is data-wc="name" (or "own" for SYLLABUS, YOURS and AIM): a topic row holds no app word.
- *   A Domain Gemini named carries pv.named after its name.
+ *   A Domain Gemini named carries pv.named after its name. A NOT_CHECKED row (the revealed fold) says why it
+ *   sat behind the fold under its name (rulings N30 and N31, HideReason: "· same as Budget Variance", "· Google
+ *   linked no page"): an honesty mark (data-wc="honest"), the duplicated name a name.
  * - The cairn: the stage its Domain holds now, done state; empty below level 4 or before a Domain exists.
  *   Held when you began: the cairn done, sr "Held when you began". "I know this": pv.you in its slot.
  *   Neither is struck.
@@ -27,8 +29,8 @@ import { cx } from "@/components/ui/cx";
 import { Glyph, Mark } from "@/components/glyph/Glyph";
 import { NamedMark } from "@/components/glyph/NamedMark";
 import { gateOfLevel } from "@/components/glyph/paths/stage";
-import type { TopicRowView } from "@/lib/roadmap-types";
-import { HELD_TOPIC_SR, KNOWN_TOPIC_SR, TOPIC_CLASS_WORDS, afterLayerLine, buildsOnLine, inPlanAria, moreAboutAria } from "./roadmap-copy";
+import type { TopicHideView, TopicRowView } from "@/lib/roadmap-types";
+import { HELD_TOPIC_SR, KNOWN_TOPIC_SR, TOPIC_CLASS_WORDS, afterLayerLine, buildsOnLine, hideReasonWordsOf, inPlanAria, moreAboutAria } from "./roadmap-copy";
 import { isOwnWords, rowHasCheckbox, topicMarkOf } from "./topic-map-model";
 
 export type TraceRole = "self" | "rel" | "other" | null;
@@ -65,6 +67,26 @@ function LevelSlot({ row }: { row: TopicRowView }) {
   );
 }
 
+/**
+ * Rulings N30 and N31: why a name sits behind the fold, inline ("· same as Budget Variance", "· Google linked no page";
+ * with `lead`, "· not checked · …"): an honesty mark (data-wc="honest"), the duplicated name rendered as a name. Read
+ * in the fold's rows, the topic's ▸ and [Accept all]'s list.
+ */
+export function HideReason({ hide, lead, className }: { hide: TopicHideView; lead?: string; className?: string }) {
+  const w = hideReasonWordsOf(hide);
+  return (
+    <span className={cx("rm-tm-why", className)} data-wc="honest" data-hide={hide.reason}>
+      {lead ? `· ${lead} · ${w.text}` : `· ${w.text}`}
+      {w.name && (
+        <>
+          {" "}
+          <span data-wc="name">{w.name}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
 export function TopicMapRow({ row, parents, trace, onTrace, onChoose, onMore, pending }: TopicMapRowProps) {
   const descId = useId();
   const checkbox = rowHasCheckbox(row);
@@ -80,6 +102,7 @@ export function TopicMapRow({ row, parents, trace, onTrace, onChoose, onMore, pe
         <span className="rm-tm-name" data-wc={own ? "own" : "name"}>
           {row.name}
           {row.domain?.geminiNamed && row.domain.name === row.name && <NamedMark />}
+          {row.cls === "NOT_CHECKED" && row.hide && <HideReason hide={row.hide} />}
         </span>
       </button>
       <span id={descId} className="sr-only">

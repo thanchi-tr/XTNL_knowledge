@@ -19,6 +19,7 @@ import {
   RATING_ORIGINS,
   TOPIC_PLANS_LIVE,
   topicSwitchesOf,
+  type AcceptAllUncheckedView,
   type AcceptTopicChoices,
   type MilestoneRowView,
   type RatingView,
@@ -219,7 +220,8 @@ export function topicsToCreateOf(map: Pick<TopicMapView, "layers">): TopicRowVie
 export function acceptTopicChoicesOf(map: Pick<TopicMapView, "layers" | "acceptAll">, opts: { keepAll: boolean; aftercare: "KEEP" | "ARCHIVE" | null }): AcceptTopicChoices {
   const unkept = map.layers.filter((l) => !l.kept);
   const list = acceptAllListOf(map);
-  const keepAll = opts.keepAll && (unkept.length > 0 || list.length > 0) ? { names: list.flatMap((x) => [...x.names, ...(x.unchecked ?? [])]), links: list.reduce((a, x) => a + x.links, 0) } : null;
+  // Ruling N30: keepAll names the shown Gemini names it ticks; a not-checked name is listed, never sent (a tap on it is chooseTopic's).
+  const keepAll = opts.keepAll && (unkept.length > 0 || list.length > 0) ? { names: list.flatMap((x) => x.names), links: list.reduce((a, x) => a + x.links, 0) } : null;
   // Ruling N17: [Accept all] ticks every name it lists, so the Domains it creates count those too (the server's toCreateOf after keptAllOf).
   const ticked = keepAll ? acceptAllTickedOf(map, list) : [];
   const create = [...topicsToCreateOf(map), ...ticked.filter((r) => r.domain == null)];
@@ -227,26 +229,45 @@ export function acceptTopicChoicesOf(map: Pick<TopicMapView, "layers" | "acceptA
   return { create: create.length, geminiNamed, keepAll, aftercare: opts.aftercare };
 }
 
-/** The rows [Accept all] ticks that aren't ticked yet: the listed Gemini names of each layer (and its not-checked ones). */
-export function acceptAllTickedOf(map: Pick<TopicMapView, "layers">, list: readonly { layer: number; names: string[]; unchecked?: string[] }[]): TopicRowView[] {
+/** The rows [Accept all] ticks that aren't ticked yet: the listed shown Gemini names of each layer (never a not-checked one: ruling N30). */
+export function acceptAllTickedOf(map: Pick<TopicMapView, "layers">, list: readonly { layer: number; names: string[] }[]): TopicRowView[] {
   return list.flatMap((x) => {
-    const named = new Set([...x.names, ...(x.unchecked ?? [])]);
+    const named = new Set(x.names);
     const layer = map.layers.find((l) => l.layer === x.layer);
     return (layer?.topics ?? []).filter((r) => !r.chosen && named.has(r.name) && isGeminiName(r.cls) && r.cls !== "KEPT" && r.cls !== "KEPT_NOT_CHECKED");
   });
 }
 
-/** [Accept all]'s list, layer by layer: the Gemini names it puts in the plan, a layer's not-checked ones when it shows nothing else, and the not-checked links it keeps (the server's own list when the view carries it). */
-export function acceptAllListOf(map: Pick<TopicMapView, "layers" | "acceptAll">): { layer: number; names: string[]; links: number; unchecked?: string[] }[] {
-  if (map.acceptAll) return map.acceptAll.map((x) => ({ layer: x.layer, names: [...x.names], links: x.links, ...(x.unchecked?.length ? { unchecked: [...x.unchecked] } : {}) }));
+/** The hide reasons GROUND alone gives (ruling N30 lists these names under their layer; one the agreement hid stays in the fold). */
+const GROUND_HIDE_REASONS: ReadonlySet<string> = new Set(["WEAK", "NONE", "NOT_RUN", "GROUND_FAILED"]);
+
+/** [Accept all]'s list, layer by layer: the Gemini names it puts in the plan, the not-checked links it keeps, (ruling N30) the layer's not-checked names listed unticked with their reasons, and the ones you tapped (`tapped`, listed ticked: the review round); the server's own list when the view carries it, a fixture's rows otherwise. */
+export function acceptAllListOf(map: Pick<TopicMapView, "layers" | "acceptAll">): { layer: number; names: string[]; links: number; unchecked?: AcceptAllUncheckedView[]; tapped?: AcceptAllUncheckedView[] }[] {
+  if (map.acceptAll) return map.acceptAll.map((x) => ({ layer: x.layer, names: [...x.names], links: x.links, ...(x.unchecked?.length ? { unchecked: x.unchecked.map((u) => ({ ...u })) } : {}), ...(x.tapped?.length ? { tapped: x.tapped.map((u) => ({ ...u })) } : {}) }));
+  const listed = (r: TopicRowView): AcceptAllUncheckedView => ({ key: r.key, name: r.name, reason: r.hide?.reason ?? "NOT_RUN" });
+  // A layer you kept by tapping its not-checked names alone stays listed (its tapped names ticked), as the server's list keeps it.
   return map.layers
-    .filter((l) => !l.kept)
-    .map((l) => ({
-      layer: l.layer,
-      names: l.topics.filter((r) => r.chosen && isGeminiName(r.cls)).map((r) => r.name),
-      links: l.topics.filter((r) => r.chosen && r.parents.kind === "LINKS" && r.placed === "GEMINI").reduce((b, r) => b + (r.parents.kind === "LINKS" ? r.parents.keys.length : 0), 0),
-    }))
-    .filter((x) => x.names.length > 0 || x.links > 0);
+    .filter((l) => !l.kept || l.topics.some((r) => r.cls === "KEPT_NOT_CHECKED" && r.chosen))
+    .map((l) => {
+      const unchecked = l.topics.filter((r) => r.cls === "NOT_CHECKED" && !r.chosen && r.hide != null && GROUND_HIDE_REASONS.has(r.hide.reason)).map(listed);
+      const tapped = l.topics.filter((r) => r.cls === "KEPT_NOT_CHECKED" && r.chosen).map(listed);
+      return {
+        layer: l.layer,
+        names: l.topics.filter((r) => r.chosen && isGeminiName(r.cls)).map((r) => r.name),
+        links: l.topics.filter((r) => r.chosen && r.parents.kind === "LINKS" && r.placed === "GEMINI").reduce((b, r) => b + (r.parents.kind === "LINKS" ? r.parents.keys.length : 0), 0),
+        ...(unchecked.length > 0 ? { unchecked } : {}),
+        ...(tapped.length > 0 ? { tapped } : {}),
+      };
+    })
+    .filter((x) => x.names.length > 0 || x.links > 0 || (x.unchecked?.length ?? 0) > 0 || (x.tapped?.length ?? 0) > 0);
+}
+
+/** Ruling N30: the layers [Accept all] cannot keep yet: listed with not-checked names only, nothing shown or chosen in them (the sheet says so, and its button waits for a tap; the server refuses the same way). */
+export function acceptAllBareLayersOf(map: Pick<TopicMapView, "layers">, list: readonly { layer: number; names: string[]; unchecked?: AcceptAllUncheckedView[] }[]): number[] {
+  return list
+    .filter((x) => x.names.length === 0 && (x.unchecked?.length ?? 0) > 0)
+    .filter((x) => !(map.layers.find((l) => l.layer === x.layer)?.topics ?? []).some((r) => r.cls !== "NOT_CHECKED" || r.chosen))
+    .map((x) => x.layer);
 }
 
 // ─── The chain (§15.6) ───

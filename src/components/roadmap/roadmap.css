@@ -1073,6 +1073,11 @@
   .rm-tm-sw { font-size: 13px; line-height: 18px; color: var(--ink-2); }
   .rm-tm-n { font: 600 13px/18px var(--font-ui); font-variant-numeric: tabular-nums; color: var(--ink-1); }
   .rm-tm-hacts { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: none; }
+  /* ruling N32: a plan's folded layer opens from the header's 44 px ▸ (aria-expanded turns it) */
+  .rm-tm-foldl { display: inline-grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--ink-2); cursor: pointer; }
+  .rm-tm-foldl:hover { color: var(--ink-0); }
+  .rm-tm-foldl svg { transition: transform var(--t-quick) var(--ease-out); }
+  .rm-tm-foldl[aria-expanded="true"] svg { transform: rotate(90deg); }
   .rm-tm-kept { display: inline-grid; place-items: center; width: 40px; height: 40px; color: var(--ink-0); }
   /* a layer's milestone (ruling N8): Gemini's title, hurdle and target under the header; the words wrap, nothing clips */
   .rm-tm-ms { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 0 0 8px 24px; min-width: 0; }
@@ -1103,6 +1108,12 @@
   .rm-tm-hit-static { cursor: default; }
   .rm-tm-mark { display: inline-grid; place-items: center; width: 16px; height: 16px; color: var(--ink-1); }
   .rm-tm-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font: 400 13px/18px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  /* rulings N30 and N31: why a name sits behind the fold, inline under it (an honesty mark; the duplicated name a name) */
+  .rm-tm-why { display: block; font: 400 12px/16px var(--font-ui); color: var(--ink-2); overflow-wrap: anywhere; }
+  /* ruling N30: [Accept all]'s not-checked names, each a 44 px tap beside its name and reason */
+  .rm-tm-unck li { display: flex; align-items: center; gap: 4px; padding: 0; min-height: 44px; }
+  .rm-tm-unck .rm-tm-ck { margin-left: -11px; }
+  .rm-tm-unck-t { display: grid; min-width: 0; }
   .rm-tm-lv { display: inline-grid; place-items: center; width: 16px; height: 16px; color: var(--ink-1); }
   .rm-tm-acts { display: flex; align-items: center; gap: 0; flex: none; }
   .rm-tm-ck { display: inline-grid; place-items: center; width: 44px; height: 44px; cursor: pointer; }
@@ -1131,6 +1142,16 @@
   .rm-tm-pn { display: inline-flex; align-items: center; gap: 3px; }
   .rm-tm-idea { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
   .rm-tm-acts-s, .rm-tm-pick { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; }
+  /* Ruling N27 (the page): a locked node's ▸: its parents "n of 8" and the one-tap picks (44 px chips). */
+  .rm-lock { display: flex; flex-direction: column; gap: 8px; }
+  .rm-lock-h { display: flex; align-items: center; gap: 6px; margin: 0; }
+  .rm-lock-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 28px; }
+  .rm-lock-list li[data-met] { color: var(--ink-2); }
+  .rm-lock-n { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .rm-lock-picks { margin-top: 2px; }
+  .rm-lock .chip.btn-chip, .rm-lock-pick { min-height: 44px; }
+  .rm-lock-pick { gap: 6px; }
+  .rm-tm-ps-votes { margin-left: auto; white-space: nowrap; }
   .rm-tm-form { display: flex; flex-direction: column; gap: 8px; }
   .rm-tm-deeper { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
   .rm-tm-src { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
@@ -1162,6 +1183,12 @@
   }
   /* the intake's topic paths (F-R5-7), under the level plan's buttons; the accept's TOPICS lines in the draft footer */
   .rm-in-topics { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .rm-in-topics > .btn { flex: 1 1 auto; }
+  /* ruling N33: on a Field aim the level plan's paths sit behind one ▸ (a 44 px summary) at the foot of the sticky bar */
+  .rm-in-more { flex-basis: 100%; border-top: 0; padding-top: 0; }
+  .rm-in-more > .rm-adv-b { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 0 4px; }
+  .rm-in-more > .rm-adv-b > .btn { flex: 1 1 auto; }
+  .rm-in-more > .rm-adv-b > .rm-in-lanes, .rm-in-more > .rm-adv-b > .rm-in-path { flex-basis: 100%; }
   .rm-tm-acc { display: flex; flex-direction: column; gap: 8px; }
   .rm-tm-acc > .t-error { margin: 0; }
   /* the chain's heading on a TOPICS plan's Milestones card: the EstimateChip, then "· +1 to reach Fluent" */

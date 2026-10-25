@@ -142,6 +142,11 @@
  *                     Caution · RatingOrigin · LayerChangeKind · diffKeyOf · layersOfDiff
  *   Map and chain     PlanKind · TopicDepth · DEPTH_TAIL · the topic, edge, run and chain unions ·
  *                     ModelTextClass · PREREQS_OPEN · topicRankIndexOf · isTopicDepth
+ *   Rework 1, P1      topicDoneOf · cardsAtOpenCountOf (ruling N25) · isCardsReachRow (ruling N26) ·
+ *                     MilestoneTopicView · MilestoneLockView, MilestoneLockParentView, MilestoneLockSuggestionView
+ *                     (ruling N27) · `topics`, `lock`, `reachedOnCards` on the milestone views · TopicRowView.cards
+ *   Rework 1, P2      AimStudyView, AimCardView.study, AimCardMilestone.locked (ruling N28) · MilestoneLockParentView.due,
+ *                     TopicRowView.suggestions, PlanEdit PICK_PARENT (ruling N27's page)
  *   Goals             SEAT_STATUSES · HOLD_STATUSES · GoalSlot · isGoalSlot · GOAL_LABEL_MAX · GOALS_FULL
  *   Shapes            the rating record, clauses, topics and edges, the replies, GROUND's record, the
  *                     actions' inputs, the views, the goals' views; geminiNamedOf · namedPartsOf (the mark)
@@ -3193,6 +3198,8 @@ export interface ItemDraft {
    * so the live page strikes what the fixtures strike (fix round).
    */
   struck?: [number, number][];
+  /** Not stored (ruling N29, the review round): on a TOPICS view, the current milestone's item `label` in NamedParts when it names a kept Gemini-named Domain (a DOMAIN item's own name, a practice's or a step's words); the Now section draws pv.named from the library, the tripwire reads this. */
+  labelParts?: NamedPart[];
   /** Each flag's reason in words, naming what set it ('names "Kestrel", which you didn't write'): R3's LabelCheck.reasons, re-derived on read with `struck`. */
   reasons?: Partial<Record<BlockingFlag, string>>;
   /**
@@ -3255,6 +3262,18 @@ export interface MeasureSpec {
 export type MilestoneNote = "NO_STUDY_SLOT" | "NOT_MEASURABLE" | "CARDS_TOO_SMALL" | "HEALTH_LINE" | "HELD_AT_START" | "LONG_WINDOW" | "NO_PRODUCTION_SLOT" | "DEPTH_LOWERED" | "KNOWN_BY_YOU";
 export const MILESTONE_NOTES: readonly MilestoneNote[] = ["NO_STUDY_SLOT", "NOT_MEASURABLE", "CARDS_TOO_SMALL", "HEALTH_LINE", "HELD_AT_START", "LONG_WINDOW", "NO_PRODUCTION_SLOT", "DEPTH_LOWERED", "KNOWN_BY_YOU"];
 
+/**
+ * Ruling N26 (contracts §22.20): a layer milestone reached on cards alone. A PLANNED LAYER row (a TOPICS plan's; never
+ * started, so no goal) whose reachedDay is set without the HELD_AT_START note: roadmap-readings planRoadmapWrite stamps
+ * it when every paying term holds on stored readings. HELD_AT_START's shape (reached, no goal, no rank, nothing paid,
+ * never startable) and the layer after it opens (PREREQS_MET's first branch); it counts in no rank, no Proficiency
+ * milestones part and no aim reach, which stay Start's. Derived from the stored row: no column, no note, no migration.
+ * A LEVELS row (chainRole null) is never one.
+ */
+export function isCardsReachRow(m: { status: string; reachedDay: unknown; chainRole?: string | null; goalId?: string | null; notes?: readonly string[] | null }): boolean {
+  return m.status === "PLANNED" && m.chainRole === "LAYER" && m.reachedDay != null && !m.goalId && !(m.notes ?? []).includes("HELD_AT_START");
+}
+
 /** One milestone of a draft or version (mirrors RoadmapMilestone, with its items and measures). */
 export interface MilestoneDraft {
   id: string | null;
@@ -3286,6 +3305,8 @@ export interface MilestoneDraft {
   titleStruck?: [number, number][];
   /** Each title flag's reason in words, derived with titleFlags. */
   titleReasons?: Partial<Record<BlockingFlag, string>>;
+  /** Not stored (ruling N29, the review round): on a TOPICS view, the current milestone's `title` in NamedParts (a kept Gemini-named Domain's name with its mark; the tripwire reads it). */
+  titleParts?: NamedPart[];
   /** Revision 4 (RoadmapMilestone.stage): set on every row a revision-4 draft path writes; null on a legacy row (isLegacyRoadmap). */
   stage?: StageKey | null;
   /**
@@ -4613,6 +4634,8 @@ export interface AimCardMilestone {
    */
   titleStruck?: [number, number][];
   status: "PLANNED" | "STARTED" | "REACHED" | "PENDING_REACH" | "PAST_DUE";
+  /** Ruling N28: a PLANNED TOPICS layer whose prerequisites are open (prereqsOpenOf): Start is not offered, the study is. */
+  locked?: boolean;
   /** goalPercent(min(parts)), captioned by the binding part's class; null: "not measured yet". */
   headline: EvidenceValue | null;
   percent: number | null;
@@ -4716,6 +4739,38 @@ export interface AimCardView {
   planKind?: PlanKind;
   /** A PAUSED goal's card: "paused since 6 Oct", never "behind". */
   paused?: { since: DayKey } | null;
+  // ── Roadmap rework 1, P2 (contracts §22.20 ruling N28) ──
+  /**
+   * The Study focus while the current milestone is a PLANNED TOPICS layer (locked or Start off): the first topic of the
+   * current layer not done (n of 8), else the first of the next planned layer with one (ruling N14's P15 rule). Today's
+   * Main quest card and GET /quests carry it as the one action ("Study <topic> · 3 of 8 · 4 due" → the Domain's review
+   * run; none due → "Add an idea to <topic>"). Null or absent otherwise.
+   */
+  study?: AimStudyView | null;
+}
+
+/** Ruling N28: one topic to study now, as the Aim card carries it (the same counts as MilestoneTopicView). */
+export interface AimStudyView {
+  key: string;
+  name: string;
+  domainId: string;
+  /** The plan's Field (the add flow's preselect); null on a plan with none. */
+  fieldId: string | null;
+  /** Live cards at OPEN_LEVEL or above in its Domain, of `floor` (TOPIC_FLOOR_CARDS). */
+  cards: number;
+  floor: number;
+  /** Its cards due today. */
+  due: number;
+  /** The layer it sits in (a lock's parent: the layer before). */
+  layer: number;
+  geminiNamed: boolean;
+  /**
+   * Ruling N27 (the review round): while the layer is locked, the study is the lock's first unmet parent, the one the
+   * hero's LOCKED primary names ("Add n cards to <parent>", next-action lockedPrimaryOf): `key` is its topic key (or
+   * CROSS_GOAL_PARENT_PREFIX + domainId), `cards` of `floor` its count, `layer` the layer before, and Today's card and
+   * GET /quests say the hero's words. Absent or false: a topic to study.
+   */
+  locked?: boolean;
 }
 
 // ═══ Revision 4: Today's aim line (F-R4-3) ══════════════════════════════════
@@ -5018,6 +5073,68 @@ export type MilestoneRowState =
   | "PAST_DUE"
   | "CLOSED_UNREACHED";
 
+/** Ruling N25 (contracts §22.20): one topic of a layer milestone with its progress toward the floor ("n of 8"). */
+export interface MilestoneTopicView {
+  key: string;
+  lineageId: string;
+  name: string;
+  domainId: string | null;
+  /** Live recall cards at OPEN_LEVEL or above in its Domain (the gate's count; 0 without a Domain). */
+  cards: number;
+  /** TOPIC_FLOOR_CARDS, or the row's paying target n_d on the last layer's specialisation (the review round: "n of 25"). */
+  floor: number;
+  /** Its cards due today (dueDay on or before today). */
+  due: number;
+  held: boolean;
+  skipped: boolean;
+  /** topicDoneOf(cards, floor), or held or skipped. */
+  done: boolean;
+  /** Its Domain carries the Gemini mark (geminiNamedOf). */
+  geminiNamed: boolean;
+}
+/** Ruling N27 (contracts §22.20): one parent a locked layer waits on, as prereqsOpenOf reads it (the PREREQS_MET guard counts the same rows). */
+export interface MilestoneLockParentView {
+  /** The parent topic's key, or CROSS_GOAL_PARENT_PREFIX + domainId for another goal's Domain. */
+  key: string;
+  name: string;
+  domainId: string | null;
+  cards: number;
+  floor: number;
+  /** Its cards due today (the view fills it beside the gate's list; the hero's "Review <parent>" chip reads it). */
+  due?: number;
+  held: boolean;
+  skipped: boolean;
+  /** Nothing left to add here: at its floor, held or skipped (a cross-goal Domain: at its floor). */
+  met: boolean;
+  geminiNamed: boolean;
+}
+/**
+ * Ruling N27: a LINK vote that did not reach EDGE_DRAW ("2 of 3 samples"), offered as a parent to pick for one of the
+ * locked layer's topics; a kept pick is a USER edge the gate counts (setParents). The parent is a chosen topic of the
+ * layer before; `geminiNamed` marks each name whose Domain carries the Gemini mark (the tripwire reads it).
+ */
+export interface MilestoneLockSuggestionView {
+  child: { key: string; name: string; geminiNamed: boolean };
+  key: string;
+  name: string;
+  domainId: string | null;
+  geminiNamed: boolean;
+  votes: number;
+  samples: number;
+}
+/**
+ * Ruling N27: a locked layer milestone's state (a PLANNED row whose prerequisites are open; `opensAfter` set): the
+ * layer it waits on and the parents it reads, each once, the ones that still lack cards first.
+ */
+export interface MilestoneLockView {
+  afterLayer: number;
+  /** The parents are the whole layer before (no counting link on any of this layer's topics). */
+  wholeLayer: boolean;
+  parents: MilestoneLockParentView[];
+  /** By votes, most first. */
+  suggestions: MilestoneLockSuggestionView[];
+}
+
 /** One collapsed row of the Milestones list. */
 export interface MilestoneRowView {
   id: string;
@@ -5055,6 +5172,13 @@ export interface MilestoneRowView {
   known?: boolean;
   /** Ruling N18: what the plan page's edit sheet may change on this row (an unstarted row of an accepted plan); absent or null: nothing. */
   edit?: MilestoneEditView | null;
+  // ── Roadmap rework 1, P1 (contracts §22.20 rulings N25–N27) ──
+  /** A TOPICS layer row's chosen topics with "n of 8" (absent on LEVELS and on a depth milestone). */
+  topics?: MilestoneTopicView[];
+  /** The lock while `opensAfter` is set; null on an open layer row; absent elsewhere. */
+  lock?: MilestoneLockView | null;
+  /** Reached on cards alone (isCardsReachRow): REACHED, no rank, nothing paid, never started. */
+  reachedOnCards?: boolean;
 }
 
 /**
@@ -5073,8 +5197,8 @@ export interface MilestoneEditView {
   remove?: boolean;
   /** Ruling N24: the live milestone (its tasks are on Today: the confirm says they stay). */
   started?: boolean;
-  /** The Domains this milestone counts, in its order (its own topics; never an earlier layer's "climbing" rows). */
-  domains: { id: string; name: string }[];
+  /** The Domains this milestone counts, in its order (its own topics; never an earlier layer's "climbing" rows); `geminiNamed` marks one Gemini named (the sheet draws pv.named, the tripwire reads it: ruling N29). */
+  domains: { id: string; name: string; geminiNamed?: boolean }[];
 }
 
 /** Ruling N18: what an accepted plan's edits read beside the rows (RoadmapView.planEdit). */
@@ -5110,7 +5234,13 @@ export type PlanEdit =
       name?: string | null;
     }
   /** Ruling N24: `typed` is the topic's name as the confirm's field held it; the server checks it (topicNameMatchesOf). */
-  | { kind: "REMOVE_TOPIC"; milestoneId: string; domainId: string; typed: string };
+  | { kind: "REMOVE_TOPIC"; milestoneId: string; domainId: string; typed: string }
+  /**
+   * Ruling N27 (the page): a parent picked for a topic of an unstarted layer (the lock's suggestion, or the ▸'s): a USER
+   * edge the gate counts, written as version + 1 with the accept's Undo (N18). `childKey` is a chosen topic of layer k ≥ 2,
+   * `parentKey` a chosen topic of layer k − 1.
+   */
+  | { kind: "PICK_PARENT"; childKey: string; parentKey: string };
 
 /**
  * Ruling N24: the typed confirm of a topic's removal. The name typed matches the topic's when both read the same with
@@ -5158,6 +5288,11 @@ export interface CurrentMilestoneView {
    */
   startFeasibility?: MilestoneFeasibility | null;
   startedDay?: DayKey | null;
+  // ── Roadmap rework 1, P1 (contracts §22.20 rulings N25, N27) ──
+  /** A TOPICS layer milestone's chosen topics with "n of 8" (absent on LEVELS and on a depth milestone). */
+  topics?: MilestoneTopicView[];
+  /** The lock while the layer's prerequisites are open; null on an open layer. */
+  lock?: MilestoneLockView | null;
 }
 
 /** "Toward the aim": the end state's own meters, never blended. */
@@ -6585,6 +6720,22 @@ export const TOPIC_FLOOR_CARDS = 8;
 export const OPEN_LEVEL = 6;
 /** The level the base topics climb to in the depth tail. */
 export const BASE_LEVEL = 8;
+/**
+ * Ruling N25 (contracts §22.20): one definition of a topic done, the gate's (PREREQS_MET and prereqsOpenOf count the
+ * same rows): its Domain holds `floor` live recall cards at OPEN_LEVEL or above. The review round: a NON_RECALL_TYPES
+ * card (MULTI) never counts, as the paying key's `r` segment never counted it, so the gate, "n of 8" and the reach on
+ * cards (N26) read one number; the floor is TOPIC_FLOOR_CARDS for a base topic and the row's paying target n_d for the
+ * last layer's specialisation (§22.12), so that layer reads "n of 25". Domain.level reads nowhere as a topic's progress.
+ */
+export function topicDoneOf(cardsAtOpen: number, floor: number = TOPIC_FLOOR_CARDS): boolean {
+  return cardsAtOpen >= floor;
+}
+/** Live recall cards at OPEN_LEVEL or above among these cards (a card with no type counts; a NON_RECALL_TYPES card never): the count topicDoneOf and "n of 8" read. */
+export function cardsAtOpenCountOf(cards: readonly { level: number; questionType?: string | null }[]): number {
+  let n = 0;
+  for (const c of cards) if (c.level >= OPEN_LEVEL && (c.questionType == null || isRecallType(c.questionType))) n += 1;
+  return n;
+}
 export const DEPTH_MILESTONES_MAX = 2;
 /** Milestones of a TOPICS plan, at most (MAX_MILESTONES 6 stays for LEVELS). */
 export const MAX_MILESTONES_TOPICS = 8;
@@ -6706,6 +6857,18 @@ export const TOPIC_DROP_REASONS: readonly TopicDropReason[] = ["SHAPE", "FLAG", 
  */
 export type TopicHideReason = "UNSURE_LAYER" | "LANGUAGE_UNCHECKED" | "REGION" | "NEAR_DUPLICATE" | "WEAK" | "NONE" | "NOT_RUN" | "GROUND_FAILED" | "VAGUE_FIELD";
 export const TOPIC_HIDE_REASONS: readonly TopicHideReason[] = ["UNSURE_LAYER", "LANGUAGE_UNCHECKED", "REGION", "NEAR_DUPLICATE", "WEAK", "NONE", "NOT_RUN", "GROUND_FAILED", "VAGUE_FIELD"];
+/**
+ * Rulings N30 and N31: why a name sits behind the fold, shown inline beside it (the fold's row, the topic's ▸ and
+ * [Accept all]'s list): the reason (topicHideReasonOf) and, for a NEAR_DUPLICATE, the name it duplicates
+ * (duplicateOfOf: "same as Budget Variance"; null when that name is gone).
+ */
+export interface TopicHideView {
+  reason: TopicHideReason;
+  /** NEAR_DUPLICATE: the shown name it is the same concept as ("same as Budget Variance": an equal key, or that name plus one tail word, ruling N31 as the review round narrowed it). */
+  sameAs?: string | null;
+  /** NEAR_DUPLICATE: the shown name a bare tail word is part of ("part of Current Ratio"). */
+  partOf?: string | null;
+}
 /** The map's rules (chainChecksOf; §22.8's table). */
 export type ChainCheckCode = "C1" | "C2" | "C3" | "C4" | "C5" | "C6" | "C7" | "C8" | "C9" | "C10";
 export const CHAIN_CHECK_CODES: readonly ChainCheckCode[] = ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10"];
@@ -7072,7 +7235,7 @@ export interface AcceptTopicChoices {
   create: number;
   /** The Gemini names the confirm listed, by name: must equal the server's set. */
   geminiNamed: string[];
-  /** [Accept all]: what its list showed; null when every layer is kept. */
+  /** [Accept all]: what its list showed and ticks (the shown Gemini names and links; never a not-checked name, ruling N30); null when every layer is kept. */
   keepAll: { names: string[]; links: number } | null;
   /**
    * A TOPICS accept over a live LEVELS milestone (question 8, ruling 49): the
@@ -7134,6 +7297,9 @@ export interface TopicRowView {
   canChoose: boolean;
   role: TopicRole;
   level: number | null;
+  /** Ruling N25: live cards at OPEN_LEVEL or above in its Domain, of `floor` (TOPIC_FLOOR_CARDS): "n of 8". Absent without a Domain. */
+  cards?: number;
+  floor?: number;
   /**
    * crossGoal: another goal's Domain (slot null for a PAUSED goal, ruling 55); geminiNamed renders pv.named. The join
    * adds its ids (optional) so ParentsSheet can send the cross-goal parents back with setParents (ParentPick.crossGoal):
@@ -7142,12 +7308,20 @@ export interface TopicRowView {
   parents: { kind: "LINKS"; keys: string[]; crossGoal: { slot: GoalSlot | null; name: string; geminiNamed: boolean; roadmapId?: string; domainId?: string }[] } | { kind: "LAYER"; layer: number };
   children: string[];
   votes: { form: number; samples: number } | null;
+  /**
+   * Ruling N27 (the page): the LINK votes under EDGE_DRAW for this topic (a GEMINI edge not drawn and not removed, to a
+   * chosen topic of the layer before that no counting edge already names), by votes: "2 of 3 samples", a parent to
+   * pick in one tap (a draft: setParents; a plan: editPlan PICK_PARENT). Absent or [] with none.
+   */
+  suggestions?: { key: string; name: string; votes: number; samples: number }[];
   sources: TopicSource[];
   placed: "GEMINI" | "YOU" | "CODE";
   held: boolean;
   skipped: boolean;
   notes: TopicNote[];
   domain: { id: string; name: string; geminiNamed: boolean } | null;
+  /** Rulings N30 and N31: why a NOT_CHECKED (or KEPT_NOT_CHECKED) row sat behind the fold, inline beside its name; absent on a shown row. */
+  hide?: TopicHideView | null;
 }
 export interface TopicLayerView {
   layer: number;
@@ -7170,6 +7344,12 @@ export interface TopicLayerView {
   /** With `rebreak`: the names a re-break of this layer replaces (Gemini's, not kept by you), listed in its confirm. */
   rebreakGoes?: string[];
 }
+/** Ruling N30: one not-checked name in [Accept all]'s list: its key (the per-name tap is chooseTopic), its name and why it sits behind the fold. */
+export interface AcceptAllUncheckedView {
+  key: string;
+  name: string;
+  reason: TopicHideReason;
+}
 export interface TopicMapView {
   roadmapId: string;
   version: number;
@@ -7183,12 +7363,16 @@ export interface TopicMapView {
   layerOneSeeds: { id: string; name: string; geminiNamed: boolean }[];
   lastLayerSeeds: AimClause[];
   /**
-   * A draft's [Accept all] list, layer by layer (fixer 2): the shown PENDING Gemini names and the drawn Gemini links
-   * still PENDING into each layer's shown topics; only layers holding either. acceptCore's keptAllOf compares exactly
-   * this set (AcceptTopicChoices.keepAll: the names flat, the links summed), so the sheet and the server never differ.
-   * Absent on a plan (and in fixtures made before it: the client then reads the rows).
+   * A draft's [Accept all] list, layer by layer (fixer 2): the shown PENDING Gemini names (LINKED, LINKED_ONE: ticked
+   * by it) and the drawn Gemini links still PENDING into each layer's shown topics, and (ruling N30) the layer's
+   * not-checked names behind the fold (GROUND's verdict only), each with its key and reason, listed unticked with a
+   * per-name tap: never kept or ticked by [Accept all] itself; `tapped`: the not-checked names you tapped
+   * (KEPT_NOT_CHECKED, chosen), listed ticked there (untick: chooseTopic false), so a layer holding one stays listed (the
+   * review round). Only layers holding any. acceptCore's keptAllOf compares
+   * exactly the names and links (AcceptTopicChoices.keepAll: the names flat, the links summed), so the sheet and the
+   * server never differ. Absent on a plan (and in fixtures made before it: the client then reads the rows).
    */
-  acceptAll?: { layer: number; names: string[]; links: number; unchecked?: string[] }[];
+  acceptAll?: { layer: number; names: string[]; links: number; unchecked?: AcceptAllUncheckedView[]; tapped?: AcceptAllUncheckedView[] }[];
   /** A draft over your hours or pace (its feasibility's over, or its date check OVER): [Accept all] asks for the keep-over switch. */
   needsOver?: boolean;
   /** Ruling N10: the goal's Area Field (where [Add an idea here] files ideas); null on a practice-only Area. Absent in fixtures made before it. */

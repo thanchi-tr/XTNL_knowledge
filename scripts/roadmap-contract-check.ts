@@ -5348,8 +5348,9 @@ console.log("— revision 5 (§22.7–§22.9, §23.2, §22.17): the four modules
     mapRoomOf: (input: { layers: number; breadth: RT.BreadthKey; lines: number; domains: number }) => number;
     mapSchemaOf: (input: { layers: number; placeKeys: readonly string[]; names: boolean; breadth: RT.BreadthKey }) => Record<string, unknown> | null;
     mapAgreementOf: (input: TP.MapAgreementInput, opts?: V.RuleOpts) => TP.MapAgreement;
-    milestoneTextOf: (raw: unknown, max: number) => string;
-    mapMilestonesOf: (samples: readonly (TP.MapSampleIn | null)[], layers: number, topics: readonly Pick<RT.TopicDraft, "key" | "layer" | "name">[]) => RT.LayerMilestone[];
+    // Ruling N29 (roadmap rework 1, P3): the milestone gate (checkLabel's context and the injected figure strip) rides as a trailing optional parameter.
+    milestoneTextOf: (raw: unknown, max: number, gate?: TP.MilestoneGate | null, opts?: V.RuleOpts) => string;
+    mapMilestonesOf: (samples: readonly (TP.MapSampleIn | null)[], layers: number, topics: readonly Pick<RT.TopicDraft, "key" | "layer" | "name">[], gate?: TP.MilestoneGate | null, opts?: V.RuleOpts) => RT.LayerMilestone[];
     kFinalOf: (topics: readonly Pick<RT.TopicDraft, "layer" | "decision">[], k: number) => number;
     linkSchemaOf: (topics: readonly Pick<RT.TopicDraft, "key" | "layer" | "decision">[], kFinal: number) => Record<string, unknown> | null;
     linkDrawOf: (input: TP.LinkDrawInput, opts?: V.RuleOpts) => TP.LinkDraw;

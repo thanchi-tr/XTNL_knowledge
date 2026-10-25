@@ -1350,6 +1350,7 @@ export function DraftReview({
             today={view.today}
             canTrack={view.goals?.canAdd === true}
             liveMilestone={mode === "replan" ? liveMilestoneOrdOf(view) : null}
+            areaName={header.area.kind === "FIELD" ? header.area.name : TRACK_WORD[header.area.track]}
           />
         )}
         {keysOnly && arrangement && (

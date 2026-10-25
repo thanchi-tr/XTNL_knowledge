@@ -4,6 +4,7 @@ import com.xtnl.app.data.HttpApi
 import com.xtnl.app.data.MainQuest
 import com.xtnl.app.data.Outcome
 import com.xtnl.app.data.QuestMilestone
+import com.xtnl.app.data.QuestStudy
 import com.xtnl.app.data.QuestsData
 import com.xtnl.app.data.Sprint
 import com.xtnl.app.data.SprintRow
@@ -26,6 +27,35 @@ class QuestLineTest {
         milestoneOrd = 2, weekStart = "2026-10-19", weekEnd = "2026-10-25", done = 1, total = 3,
         rows = listOf(SprintRow("PRACTICE", "Read 20 pages · 3 sessions × 25 min", "1 of 3 sessions", 3, 1.0, "session", false, "t-read")),
     )
+
+    /** Ruling N28: a planned layer's study is said in the web's words, after the line, and never as a Start; none without it. */
+    @Test fun thePlannedLayersStudyInTheWebsWords() {
+        val study = QuestStudy(name = "Markov chains", domainId = "d1", cards = 3, floor = 8, due = 4, layer = 1, line = "Study Markov chains · 3 of 8 · 4 due", webHref = "/review?view=run&domain=d1")
+        val planned = MainQuest(
+            state = "PLANNED", title = "Trade for a living", line = "Milestone 1 is planned.",
+            milestone = QuestMilestone(1, 4, "Bayes rule, Markov chains · layer 1 of 4", "PLANNED", null, null), study = study,
+        )
+        assertEquals("Study Markov chains · 3 of 8 · 4 due", QuestLine.studyLine(planned))
+        assertNull(QuestLine.studyNote(planned))
+        assertNull(QuestLine.startLine(planned))
+        assertNull(QuestLine.studyLine(active))
+        assertEquals(
+            "Main quest, Trade for a living, Milestone 1 of 4 · Bayes rule, Markov chains · layer 1 of 4, Milestone 1 is planned., Study Markov chains · 3 of 8 · 4 due",
+            QuestLine.description(QuestsData(mainQuest = planned, sprint = null, three = null)),
+        )
+        val json = """{"ok":true,"data":{"now":"2026-10-25T00:12:00.000Z","day":"2026-10-25","sprint":null,"three":null,
+            "mainQuest":{"state":"PLANNED","title":"T","line":"Milestone 1 is planned.","milestone":null,"startOnWeb":false,"suggest":true,
+              "study":{"name":"Markov chains","domainId":"d1","cards":3,"floor":8,"due":0,"layer":1,"geminiNamed":true,"line":"Add an idea to Markov chains","webHref":"/add?domain=d1"}}}}"""
+        val r = HttpApi.parse(200, json, QuestsData.serializer())
+        assertTrue(r is Outcome.Ok)
+        val parsed = (r as Outcome.Ok).value.mainQuest!!
+        assertEquals("Add an idea to Markov chains", QuestLine.studyLine(parsed))
+        assertTrue(parsed.study!!.geminiNamed)
+        // The web's mark on a Gemini-named Domain, said under the line (the review round); never without the study.
+        assertEquals("named by Gemini", QuestLine.studyNote(parsed))
+        assertEquals("Main quest, T, Milestone 1 is planned., Add an idea to Markov chains, named by Gemini", QuestLine.description(QuestsData(mainQuest = parsed, sprint = null, three = null)))
+        assertNull(QuestLine.studyNote(parsed.copy(study = null)))
+    }
 
     @Test fun theMainQuestInTheWebsWords() {
         assertEquals("Trade for a living", QuestLine.headline(active))
