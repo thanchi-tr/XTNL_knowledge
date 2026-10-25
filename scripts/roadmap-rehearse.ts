@@ -9,8 +9,9 @@
  *   npx tsx scripts/roadmap-rehearse.ts --keep    # rehearse and leave the goal started (look at it on the rehearsal server)
  *   npx tsx scripts/roadmap-rehearse.ts --clean   # archive every rehearsal goal an earlier run left open, then stop
  *   npx tsx scripts/roadmap-rehearse.ts --topics  # roadmap rework 1 (contracts §22.20 rulings N25–N33): a TOPICS plan from the
- *                                                 # recorded corpus replies, accepted with [Accept all], one layer-1 Domain filled
- *                                                 # so the goal-less reach (N26) can be seen; --keep and --clean as above
+ *                                                 # recorded corpus replies, accepted with [Accept all], layer 1's Domains filled
+ *                                                 # so the goal-less reach (N26) can be seen; then (rework 2, N34) a written map
+ *                                                 # whose layer 1 holds eight topics, accepted as two parts; --keep and --clean as above
  *   npx tsx scripts/roadmap-rehearse.ts --dry     # no database: the recorded replies' builder alone, fed the chain's request
  *                                                 # shapes (what a check can run anywhere); the rest of this script is the lead's
  *
@@ -55,34 +56,57 @@
  *
  * --topics (roadmap rework 1, 2026-10-25; the same guard, the same user, the same local database, and still no model):
  *   T1 The goal: a TOPICS intake on the user's first Field (saveIntakeCore, planKind TOPICS, a chosen date 700 days out,
- *      20 new cards a week typed, 4 layers set), then [Break it down] (breakDownCore) and the page's own poll
+ *      20 new cards a week and 10 h typed, depth Familiar (6), 4 layers set), then [Break it down] (breakDownCore) and the page's own poll
  *      (advanceTopicChainCore until the chain is done), with the model's replies INJECTED from the recorded corpus packs
  *      exactly as roadmap-server-check injects them (scripts/fixtures/roadmap-corpus/probe-v5-P1/P3/P4/P5.json: RATE P1
  *      verbatim, MAP P3 verbatim or cut to the schema with code's milestone lines, LINK in P4's shape keyed by name,
  *      GROUND P5 verbatim or adapted to the batch). deps.callModel answers; the keys stay blank and ROADMAP_CHECK=1, so
- *      nothing could reach Gemini even if the injection were bypassed.
+ *      nothing could reach Gemini even if the injection were bypassed. A rerun may read RATE and MAP back from the run an
+ *      earlier one stored (the chain's same-input reuse: no call), so those count 3 each or none.
+ *      Why depth Familiar (rework 2, the lead's mirror run): the chain rebuilds the draft's milestones after each step with
+ *      only layer 1 ticked (decision 64: from layer 2 on, you tick), so K = 1 and every layer-1 topic is the specialisation,
+ *      dated to L* through the reach model on the user's own measured pass rate; at Retained (8) the mirror's history
+ *      dated that past 3 years (layeredLadderOf TOO_FAR: "With these 1 layer, this map needs more than 3 years"), so no
+ *      draft row was written and accept read "There's no draft to accept". Familiar dates every topic to level 6 only,
+ *      the bar the gate, the layers' pay and the reach on cards read. When a rebuild is still refused, the run prints what
+ *      the ladder read (topicLadderProbeOf: the chain per layer, L*, hours, new cards, the writing rate, the reach model's
+ *      parameters) and the refusal's words.
  *   T2 [Accept all] under ruling N30: the sheet's own choices (topic-map-model acceptTopicChoicesOf with keepAll); a layer
  *      holding only not-checked names is first given one tap (chooseTopicCore on its first name, as the sheet's per-name
  *      tap does), since the server refuses it otherwise (ACCEPT_ALL_NOT_CHECKED); then acceptCore. The plan is ACTIVE and
- *      TOPICS, every layer a milestone, exactly `create` Domains made, none for an untapped not-checked name.
- *   T3 The page as accepted: layer 1 is the current milestone with its topics at 0 of 8 and no lock; layer 2 is locked
- *      on the whole layer before (ruling N27); with Start off the hero reads ADD_IDEA for a layer-1 topic (ruling N28).
- *   T4 Cards: TOPIC_FLOOR_CARDS SHORT cards seeded into the first layer-1 topic's Domain at OPEN_LEVEL, then the real
- *      leveling core (recalculateLeveling). The idea core itself (submitIdea) embeds every card through Gemini, which this
- *      script never calls, and a card written at level 1 would take weeks of reviews to reach level 6: so the rows are
- *      this script's own seed, tagged with the run, archived by the cleanup, and said so here.
+ *      TOPICS, every layer a milestone, exactly `create` Domains made, none for an untapped not-checked name. Two ways the
+ *      page itself gets a draft there: with no draft rows (a rebuild refused at K = 1), the shown names are ticked first
+ *      as [Accept all] ticks them, deepest layer first (a layer-4 name's tick chooses its closure down to layer 1, so the
+ *      first rebuild already reads K = 4 and spreads the specialisation); and while accept would refuse TOPIC_NAME_TAKEN
+ *      (a Gemini name your library already holds, an earlier run's Domain included), each such row's offer is tapped
+ *      (ruling N35: "Use your Domain «X»", useMyDomainCore).
+ *   T3 The page as accepted: layer 1 is the current milestone with its topics short of 8 and no lock; layer 2 is locked
+ *      on the whole layer before (ruling N27); with Start off the hero reads ADD_IDEA or STUDY for a layer-1 topic (ruling N28).
+ *   T4 Cards: TOPIC_FLOOR_CARDS SHORT cards seeded at OPEN_LEVEL into each paying layer-1 topic's Domain (every part of
+ *      the layer: layer 1 reaches only with all of them), then the real leveling core (recalculateLeveling). The idea core
+ *      itself (submitIdea) embeds every card through Gemini, which this script never calls, and a card written at level 1
+ *      would take weeks of reviews to reach level 6: so the rows are this script's own seed, tagged with the run, archived
+ *      by the cleanup, and said so here.
  *   T5 The reach on cards alone (ruling N26): the readings chain as the cron runs it (recordRoadmapReadings, caller
- *      LIFE_CRON: no throttle) stamps reachedDay on the PLANNED layer-1 row with no goal (isCardsReachRow); the view reads
+ *      LIFE_CRON: no throttle) stamps reachedDay on each PLANNED layer-1 row with no goal (isCardsReachRow); the view reads
  *      it REACHED with reachedOnCards, the Aim rank unchanged, no pay row, layer 2 the current milestone and open, and the
  *      hero the study of a layer-2 topic.
  *   T6 Cleanup (skipped with --keep): the seeded cards archived, the roadmap archived (archiveRoadmapCore: a DRAFT is
  *      discarded). The Domains accept made stay in the library, as accept's Undo leaves them; they are named at the end.
+ *   T7 A split layer (roadmap rework 2, ruling N34; no model: [Write the topics]): a second TOPICS goal on the same Field
+ *      (after T6, so it takes the seat T1's goal gave back; with --keep it needs a free one), 2 layers set, eight topics
+ *      you type in layer 1 and one in layer 2, accepted with [Accept all]'s choices. On the page: layer 1 is two LAYER
+ *      rows (parts) of four, split as realism's layerSplitOf splits their equal needs, each titled with its own Domains
+ *      and "· part i of 2", each paying only its own four topics; part 2 never locked on part 1, layer 2 locked on all
+ *      eight; the hero on part 1's first topic. Then part 1's four Domains filled (T4's seed): part 1 reached on cards,
+ *      layer 2 still locked (part 2 is not), part 2 the current milestone and the hero's. Archived after (as T6).
  *
  * Exit code: 0 when every check passed, 1 when any failed, 2 when the guard refused to run.
  */
 import "./_no-model";
 import type { DayKey } from "../src/lib/life-day";
-import type { Intake, RoadmapView, StartChoices } from "../src/lib/roadmap-types";
+import type { Intake, RoadmapView, StartChoices, TopicDepth, TopicRowView } from "../src/lib/roadmap-types";
+import type { TopicLadderProbe } from "../src/lib/roadmap-server";
 
 const KEEP = process.argv.includes("--keep");
 const CLEAN = process.argv.includes("--clean");
@@ -145,7 +169,7 @@ function guard(): void {
 }
 
 async function loadModules() {
-  const [prismaMod, cache, lifeDay, economy, types, server, quests, readings, tasks, board, momentumServer, momentum, nextAction, topicModel, xp, leveling] = await Promise.all([
+  const [prismaMod, cache, lifeDay, economy, types, server, quests, readings, tasks, board, momentumServer, momentum, nextAction, topicModel, xp, leveling, topics, realism] = await Promise.all([
     import("../src/lib/prisma"),
     import("../src/lib/cache"),
     import("../src/lib/life-day"),
@@ -162,8 +186,10 @@ async function loadModules() {
     import("../src/components/roadmap/topic-map-model"),
     import("../src/lib/xp"),
     import("../src/lib/leveling"),
+    import("../src/lib/roadmap-topics"),
+    import("../src/lib/roadmap-realism"),
   ]);
-  return { prisma: prismaMod.prisma, cache, lifeDay, economy, types, server, quests, readings, tasks, board, momentumServer, momentum, nextAction, topicModel, xp, leveling };
+  return { prisma: prismaMod.prisma, cache, lifeDay, economy, types, server, quests, readings, tasks, board, momentumServer, momentum, nextAction, topicModel, xp, leveling, topics, realism };
 }
 type Mods = Awaited<ReturnType<typeof loadModules>>;
 let M!: Mods;
@@ -223,10 +249,15 @@ const made: {
   goalId: string | null;
   practiceIds: string[];
   tick: { instanceId: string; templateId: string } | null;
-  /** --topics: the cards this run seeded (archived by the cleanup) and the Domains accept made (left in the library, named). */
+  /** --topics: the cards this run seeded (archived by the cleanup), the Domains they went into, and the Domains accept made (left in the library, named). */
   seededIdeaIds: string[];
+  seededDomainIds: string[];
   domainsMade: { id: string; name: string }[];
-} = { roadmapId: null, milestoneId: null, lineageId: null, goalId: null, practiceIds: [], tick: null, seededIdeaIds: [], domainsMade: [] };
+  /** --topics, T7: the split layer's goal (archived by its own cleanup). */
+  splitRoadmapId: string | null;
+  /** --topics: every layer-1 row of T1's plan (its parts, when split), for the reach on cards (T5). */
+  layerOneIds: string[];
+} = { roadmapId: null, milestoneId: null, lineageId: null, goalId: null, practiceIds: [], tick: null, seededIdeaIds: [], seededDomainIds: [], domainsMade: [], splitRoadmapId: null, layerOneIds: [] };
 
 /** The default user: DEFAULT_USER_ID, else the one LifeSettings row that isn't a rehearsal user's. */
 async function defaultUser(): Promise<string | null> {
@@ -611,9 +642,12 @@ async function stepReachAndPay(milestoneId: string, lineageId: string): Promise<
 
 // ── 8 · Cleanup ──────────────────────────────────────────────────────────
 
-async function cleanup(): Promise<void> {
-  stepName = TOPICS ? "T6 cleanup" : "8 cleanup";
-  console.log(`\n── ${TOPICS ? "T6" : "8"} · cleanup: archive what this run created`);
+/** --topics: the cards seeded so far, archived by the cleanup that follows them (T6, then T7's own). */
+let archivedSeeds = 0;
+
+async function cleanup(step = TOPICS ? "T6" : "8", roadmapId: string | null = made.roadmapId): Promise<void> {
+  stepName = `${step} cleanup`;
+  console.log(`\n── ${step} · cleanup: archive what this run created`);
   M.cache.invalidateAll();
   if (made.tick) {
     const u = await M.tasks.undoCompletionCore(userId, made.tick.instanceId, new Date());
@@ -622,9 +656,12 @@ async function cleanup(): Promise<void> {
   if (made.seededIdeaIds.length > 0) {
     const a = await M.prisma.idea.updateMany({ where: { id: { in: made.seededIdeaIds }, isArchived: false }, data: { isArchived: true } });
     check(`the ${made.seededIdeaIds.length} seeded cards are archived (this run's own rows, by id)`, a.count === made.seededIdeaIds.length, show(a));
-    for (const d of new Set(made.domainsMade.map((x) => x.id))) await M.leveling.recalculateLeveling(d).catch(() => undefined);
+    for (const d of new Set([...made.domainsMade.map((x) => x.id), ...made.seededDomainIds])) await M.leveling.recalculateLeveling(d).catch(() => undefined);
+    archivedSeeds += made.seededIdeaIds.length;
+    made.seededIdeaIds = [];
+    made.seededDomainIds = [];
   }
-  if (made.roadmapId) await archiveGoal(made.roadmapId);
+  if (roadmapId) await archiveGoal(roadmapId);
 }
 
 // ═══ --topics · roadmap rework 1: a TOPICS plan from the recorded replies, accepted, one Domain filled ═══════════════
@@ -659,6 +696,30 @@ const BUILDS_ON: Record<string, string> = {
 /** Ruling N8's milestone lines for a layer key, as the check writes them (P3 predates them; a layer key in a line is a shape the strip removes). */
 const STAGE_WORD: Readonly<Record<string, string>> = { L1: "budget", L2: "mortgage", L3: "portfolio", L4: "buffer", L5: "pension", L6: "legacy" };
 const MILESTONE_OF = (l: string) => ({ title: `Stage ${STAGE_WORD[l] ?? l} of the household plan`, hurdle: `The ${STAGE_WORD[l] ?? l} hurdle`, target: `The ${STAGE_WORD[l] ?? l} target` });
+
+/** The TOPICS intakes' depth (T1, T7): Familiar, every topic dated to level 6 (see T1's note in the header). */
+const TOPICS_DEPTH: TopicDepth = 6;
+
+/** A ladder probe (roadmap-server topicLadderProbeOf) in lines: its result first, then each layer, then what dated it. Pure. */
+function probeLinesOf(p: TopicLadderProbe): string[] {
+  const r = p.reach;
+  return [
+    p.result.ok ? `built ${p.result.rows} row(s), ${p.result.layerRows} of them layer milestones` : `refused: ${p.result.error}`,
+    `K ${p.layers.length}: ${p.layers.map((l) => `layer ${l.layer} ${l.paying} paying of ${l.topics} (${l.held} held, ${l.known} known, ${l.deep} DEEP; floors ${l.floors.join("/") || "-"})`).join(" · ") || "no layer with a chosen topic"}`,
+    `L* ${p.depth} · ${p.hoursPerWeek} h a week · ${p.newCardsPerWeek ?? "no"} new cards a week typed · ${p.dateMode} ${p.targetDay}`,
+    `source rate ${p.sourceRate ?? "none"} new cards a week (the chain writes its pace share of it) · reach model ${r ? `p ${r.p}, pLong ${r.pLong}, c ${r.c}, rho ${r.rho}, m ${r.m}, strikes ${r.strikeLimit}, grace ${r.graceExtra}` : "none"} · priors standing in: ${p.calibrating.join(", ") || "none"}`,
+  ];
+}
+
+/** [Accept all]'s ticks, as the rehearsal makes them one by one (T2, no draft rows): the deepest layer first, then the map's order within a layer. Pure. */
+function deepestFirstOf<T extends Pick<TopicRowView, "key" | "layer">>(rows: readonly T[]): T[] {
+  return [...rows].sort((a, b) => b.layer - a.layer);
+}
+
+/** T7's typed topics: eight in layer 1 and one in layer 2, the run's own words (no Domain of the library holds them). Pure. */
+function splitNamesOf(run: string): { layerOne: string[]; layerTwo: string } {
+  return { layerOne: ["A", "B", "C", "D", "E", "F", "G", "H"].map((x) => `Split ${run} topic ${x}`), layerTwo: `Split ${run} deep topic` };
+}
 
 /** The four recorded packs, read from the corpus directory (never edited). */
 async function readRecordedPacks() {
@@ -789,6 +850,48 @@ async function dryRun(): Promise<void> {
   await rec.callModel(req({ googleSearch: true, contents: "T9 · Expense Categorization\nT10 · Household Finance" }));
   check("GROUND answers P5 verbatim for P5's own three terms and P5's shape for any other batch", rec.replies[4] === `GROUND: P5 verbatim (${(packs.P5.terms as Term[]).length} terms)` && rec.replies[5] === "GROUND: P5 adapted (2 terms)", rec.replies.slice(4).join(" | "));
   check("the builder counted one call a phase shape (RATE 1, MAP 2, LINK 1, GROUND 2)", show(rec.calls) === show({ RATE: 1, MAP: 2, LINK: 1, GROUND: 2 }), show(rec.calls));
+  // Roadmap rework 2: the probe's lines, [Accept all]'s tick order (T2 with no draft rows) and T7's map, all pure.
+  const probe: TopicLadderProbe = {
+    layers: [{ layer: 1, topics: 3, paying: 3, held: 0, known: 0, deep: 3, floors: [25, 25, 25] }],
+    depth: 8,
+    hoursPerWeek: 10,
+    newCardsPerWeek: 20,
+    dateMode: "CHOSEN",
+    targetDay: "2028-09-24" as DayKey,
+    sourceRate: 20,
+    reach: { p: 0.62, pLong: 0.6, c: 0.55, rho: 0.3, m: 1, strikeLimit: 3, graceExtra: 0 },
+    calibrating: [],
+    result: { ok: false, error: "With these 1 layer, this map needs more than 3 years at 10 h a week. Plan fewer layers, lower the depth, or raise your hours." },
+  };
+  const lines = probeLinesOf(probe);
+  check(
+    "the ladder probe prints the refusal first, then K with each layer's paying, held, known and DEEP topics and their floors, then L*, hours, new cards and the date, then the source rate and the reach model's parameters",
+    lines.length === 4 &&
+      lines[0] === `refused: ${probe.result.ok ? "" : probe.result.error}` &&
+      lines[1] === "K 1: layer 1 3 paying of 3 (0 held, 0 known, 3 DEEP; floors 25/25/25)" &&
+      lines[2] === "L* 8 · 10 h a week · 20 new cards a week typed · CHOSEN 2028-09-24" &&
+      lines[3] === "source rate 20 new cards a week (the chain writes its pace share of it) · reach model p 0.62, pLong 0.6, c 0.55, rho 0.3, m 1, strikes 3, grace 0 · priors standing in: none",
+    show(lines)
+  );
+  const ticks = deepestFirstOf([
+    { key: "T2", layer: 2 },
+    { key: "T9", layer: 4 },
+    { key: "T3", layer: 2 },
+    { key: "T7", layer: 3 },
+  ]);
+  check("[Accept all]'s ticks made one by one run deepest layer first, the map's order within a layer (a layer-4 tick's closure reaches layer 1: K at once)", show(ticks.map((t) => t.key)) === show(["T9", "T7", "T2", "T3"]), show(ticks));
+  const split = splitNamesOf(RUN);
+  const realism = await import("../src/lib/roadmap-realism");
+  const t5 = await import("../src/lib/roadmap-types");
+  const expected = realism.layerSplitOf(
+    split.layerOne.map(() => t5.writeNeedOf(t5.TOPIC_FLOOR_CARDS, 0)),
+    Math.ceil(split.layerOne.length / t5.TOPICS_PER_MILESTONE)
+  );
+  check(
+    "T7's map: eight distinct layer-1 names of yours and one for layer 2, each within a topic's length, split as realism splits eight equal needs (4 and 4: ruling N34)",
+    new Set(split.layerOne).size === 8 && [...split.layerOne, split.layerTwo].every((n) => n.length <= t5.TOPIC_LABEL_MAX) && show(expected) === show([4, 4]),
+    show({ split, expected })
+  );
 }
 
 // ── T1 · the TOPICS goal from the recorded replies ─────────────────────────
@@ -828,8 +931,11 @@ async function stepTopicsGoal(): Promise<{ roadmapId: string; replies: string[];
     track: "CRAFT",
     domainIds: [],
     targetDay: M.lifeDay.addDays(today, 700),
-    // Retained (L8) at 10 h a week: Mastered (L12) at 5 h needs more than 3 years, so the realism check would refuse to
-    // rebuild the draft's milestones ("a topic step's milestones weren't rebuilt") and accept would find no draft rows.
+    // Rework 2: 10 h and 20 new cards a week typed, at Familiar (6). Mastered (L12) at 5 h, and then Retained (L8) at
+    // 10 h, dated the chain's K = 1 rebuilds (only layer 1 ticked while the chain runs) past 3 years on the mirror's
+    // measured pass rate, so no draft row was written ("a topic step's milestones weren't rebuilt") and accept found
+    // none. At 6 every topic is dated to the level the layers pay at; the probe below prints what the ladder read if
+    // it still refuses.
     hoursPerWeek: 10,
     newCardsPerWeek: 20,
     typicalHours: null,
@@ -842,7 +948,7 @@ async function stepTopicsGoal(): Promise<{ roadmapId: string; replies: string[];
     examLabel: null,
     dateMode: "CHOSEN",
     planKind: "TOPICS",
-    topicDepth: 8,
+    topicDepth: TOPICS_DEPTH,
     depth: null,
     label: LABEL,
   };
@@ -869,11 +975,35 @@ async function stepTopicsGoal(): Promise<{ roadmapId: string; replies: string[];
     }
     await settle();
   }
-  check("the page's poll runs RATE → MAP → LINK ∥ GROUND to done on the recorded replies (MAP: P3 verbatim with code's milestone lines)", done && rec.calls.RATE === 3 && rec.calls.MAP === 3 && rec.calls.LINK === 3 && (rec.calls.GROUND ?? 0) >= 1 && rec.replies.filter((r) => r.startsWith("MAP")).every((r) => r === "MAP: P3 verbatim + milestones"), show({ polls, calls: rec.calls, replies: rec.replies }));
+  // RATE and MAP are asked 3 times each, or read back from an earlier run's stored replies for the same inputs (the reuse: no call).
+  const askedOrReused = (n: number | undefined) => n === 3 || n == null;
+  check(
+    "the page's poll runs RATE → MAP → LINK ∥ GROUND to done on the recorded replies (MAP: P3 verbatim with code's milestone lines; RATE and MAP asked 3 times each, or reused from an earlier run with the same inputs)",
+    done && askedOrReused(rec.calls.RATE) && askedOrReused(rec.calls.MAP) && rec.calls.LINK === 3 && (rec.calls.GROUND ?? 0) >= 1 && rec.replies.filter((r) => r.startsWith("MAP")).every((r) => r === "MAP: P3 verbatim + milestones"),
+    show({ polls, calls: rec.calls, replies: rec.replies })
+  );
+  if (rec.calls.RATE == null || rec.calls.MAP == null) info("RATE and MAP were read back from an earlier run's stored replies (the chain's same-input reuse): no call");
   for (const r of rec.replies) info(r);
   const named = await M.prisma.roadmapTopic.count({ where: { roadmapId, nameOrigin: "GEMINI", decision: { notIn: ["REMOVED", "MERGED"] } } });
   check("Gemini's names are on the draft map (RoadmapTopic rows with nameOrigin GEMINI)", named > 0, String(named));
+  const rows = await draftRowCountOf(roadmapId);
+  info(`the draft holds ${rows} milestone row(s) after the chain`);
+  if (rows === 0) await printProbe(roadmapId, "the chain's last rebuild wrote no milestone row");
   return { roadmapId, replies: rec.replies, calls: rec.calls };
+}
+
+/** A TOPICS draft's milestone rows (DRAFT, at version + 1): none when every rebuild so far was refused. */
+async function draftRowCountOf(roadmapId: string): Promise<number> {
+  const r = await M.prisma.roadmap.findUnique({ where: { id: roadmapId }, select: { version: true } });
+  return r ? M.prisma.roadmapMilestone.count({ where: { roadmapId, version: r.version + 1, status: { in: ["DRAFT", "LATER"] } } }) : 0;
+}
+
+/** What the ladder read when a rebuild refused (topicLadderProbeOf), in lines (probeLinesOf), and its words. */
+async function printProbe(roadmapId: string, why: string): Promise<void> {
+  const probe = await M.server.topicLadderProbeOf(userId, roadmapId, new Date(), topicsDeps());
+  if (!probe) return info(`${why}; the ladder's inputs couldn't be read (no TOPICS draft)`);
+  info(`${why}; what realism's layeredLadderOf read:`);
+  for (const l of probeLinesOf(probe)) info(`  ${l}`);
 }
 
 // ── T2 · [Accept all] under ruling N30 ─────────────────────────────────────
@@ -896,14 +1026,40 @@ async function stepAcceptAll(roadmapId: string): Promise<void> {
     check(`layer ${layer} holds only not-checked names: its first (${first.key}) tapped as the sheet's checkbox taps it (chooseTopicCore)`, t.ok, t.ok ? "" : t.error);
     if (t.ok) tapped.push(first.name);
   }
-  const view = bare.length > 0 ? await M.server.loadRoadmapView(userId, new Date(), deps, roadmapId) : before;
+  // No draft rows (every rebuild refused while only layer 1 was ticked): the shown names ticked first as [Accept all] ticks
+  // them, deepest layer first, so the first tick's rebuild already reads K = layers (its closure chooses down to layer 1).
+  if ((await draftRowCountOf(roadmapId)) === 0) {
+    const tm1 = must("the map before the ticks", (await M.server.loadRoadmapView(userId, new Date(), deps, roadmapId)).draft?.topicMap ?? null);
+    const ticks = deepestFirstOf(M.topicModel.acceptAllTickedOf(tm1, M.topicModel.acceptAllListOf(tm1)));
+    info(`no draft row to accept: ticking the ${ticks.length} shown name(s) [Accept all] would tick, deepest layer first`);
+    for (const t of ticks) {
+      const r = await M.server.chooseTopicCore(userId, roadmapId, t.key, true, new Date(), deps);
+      info(`tick ${t.key} (layer ${t.layer}): ${r.ok ? `chose ${r.value.chosen.length} more` : `refused: ${r.error}`}`);
+    }
+    const rows = await draftRowCountOf(roadmapId);
+    if (rows === 0) await printProbe(roadmapId, "after the ticks the draft still holds no milestone row");
+    must("the draft holds milestone rows to accept once the shown names are ticked", rows > 0 ? rows : null, "every rebuild was refused (the probe above says what realism read)");
+  }
+  // Ruling N35: a Gemini name your library already holds (an earlier run's Domain too) refuses accept (TOPIC_NAME_TAKEN)
+  // until its row's offer is tapped, "Use your Domain «X»", as the page offers it (useMyDomainCore binds it).
+  const taken = must("the map before accept", (await M.server.loadRoadmapView(userId, new Date(), deps, roadmapId)).draft?.topicMap ?? null);
+  if (taken.acceptRefusal === M.types.TOPIC_NAME_TAKEN) {
+    const sameName = taken.layers.flatMap((l) => l.topics).filter((r) => r.domainOffer && M.topics.formKeyOf(r.name) === M.topics.formKeyOf(r.domainOffer.name));
+    for (const r of sameName) {
+      const u = await M.server.useMyDomainCore(userId, roadmapId, r.key, (r.domainOffer as { id: string }).id, new Date(), deps);
+      check(`«${r.name}» wears the name of your Domain «${r.domainOffer?.name}»: its offer tapped, as the row offers it (ruling N35, useMyDomainCore)`, u.ok, u.ok ? "" : u.error);
+    }
+  }
+  const view = await M.server.loadRoadmapView(userId, new Date(), deps, roadmapId);
   const tm = must("the map after the taps", view.draft?.topicMap ?? null);
   const choices = M.topicModel.acceptTopicChoicesOf(tm, { keepAll: true, aftercare: null });
   const needsOver = tm.needsOver === true;
   const field = must("the plan's Field", await M.prisma.roadmap.findUnique({ where: { id: roadmapId }, select: { fieldId: true } }))?.fieldId ?? null;
   const domainsBefore = field ? await M.prisma.domain.findMany({ where: { fieldId: field }, select: { id: true, name: true } }) : [];
   info(`[Accept all] creates ${choices.create} Domain(s) (${choices.geminiNamed.length} named by Gemini)${needsOver ? ", over your hours or pace (kept on, as the sheet's switch defaults)" : ""}`);
-  const acc = okOr("the plan is accepted with the sheet's own choices (acceptCore, keepAll)", await M.server.acceptCore(userId, roadmapId, { overAccepted: needsOver, topicMap: choices }, new Date(), deps));
+  const accepted = await M.server.acceptCore(userId, roadmapId, { overAccepted: needsOver, topicMap: choices }, new Date(), deps);
+  if (!accepted.ok) await printProbe(roadmapId, `accept refused ("${accepted.error}")`);
+  const acc = okOr("the plan is accepted with the sheet's own choices (acceptCore, keepAll)", accepted);
   info(`version ${acc.version}`);
   const r = must("the accepted roadmap reads back", await M.prisma.roadmap.findUnique({ where: { id: roadmapId }, select: { status: true, version: true, planKind: true } }));
   check("the roadmap is ACTIVE and TOPICS", r.status === "ACTIVE" && r.planKind === "TOPICS", show(r));
@@ -915,62 +1071,90 @@ async function stepAcceptAll(roadmapId: string): Promise<void> {
   check("no Domain was made from a not-checked name without its own tap", leaked.length === 0, show(leaked.map((d) => d.name)));
   const rows = await M.prisma.roadmapMilestone.findMany({ where: { roadmapId, version: r.version, status: "PLANNED" }, orderBy: { ord: "asc" }, select: { id: true, lineageId: true, ord: true, chainRole: true, layer: true, title: true } });
   const layerRows = rows.filter((m) => m.chainRole === "LAYER");
-  check("every kept layer is a milestone (LAYER rows in order), then the depth tail", layerRows.length >= 2 && layerRows.every((m, i) => m.layer === i + 1), show(rows.map((m) => `${m.ord} ${m.chainRole} ${m.layer ?? ""}`)));
+  // A layer of more than six paying topics is its parts, rows of one layer in ord order (ruling N34): the layers read 1..K in order, each once or more.
+  const layersInOrder = layerRows.map((m) => m.layer ?? 0).filter((l, i, a) => i === 0 || l !== a[i - 1]);
+  check("every kept layer is a milestone (LAYER rows in order, a large layer as its parts), then the depth tail", layersInOrder.length >= 2 && layersInOrder.every((l, i) => l === i + 1), show(rows.map((m) => `${m.ord} ${m.chainRole} ${m.layer ?? ""}`)));
   made.milestoneId = layerRows[0]?.id ?? null;
   made.lineageId = layerRows[0]?.lineageId ?? null;
+  made.layerOneIds = layerRows.filter((m) => m.layer === 1).map((m) => m.id);
 }
 
 // ── T3 · the page as accepted ──────────────────────────────────────────────
 
 const topicsDeps = () => ({ topicSwitches: { plans: true, rate: true, place: true, names: true, link: true, ground: true } });
 
-async function stepTopicsPage(roadmapId: string): Promise<{ domainId: string; name: string }> {
-  step("T3", "the accepted page: layer 1 current at 0 of 8, layer 2 locked on it, the hero an idea for a layer-1 topic (Start off)");
+/** A layer-1 topic to fill (T4, T7): its Domain and name. */
+type FillTopic = { domainId: string; name: string };
+
+async function stepTopicsPage(roadmapId: string): Promise<FillTopic[]> {
+  step("T3", "the accepted page: layer 1 current with its topics short of 8, layer 2 locked on it, the hero a layer-1 topic's study (Start off)");
   delete process.env[M.types.ROADMAP_GOALS_LIVE_ENV];
   const v = await M.server.loadRoadmapView(userId, new Date(), topicsDeps(), roadmapId);
   const cur = must("the current milestone", v.current);
   const l1 = v.milestones.find((m) => m.chainRole === "LAYER" && m.layer === 1);
   const l2 = v.milestones.find((m) => m.chainRole === "LAYER" && m.layer === 2);
-  check("layer 1 is the current milestone, PLANNED, with its topics at 0 of 8 and no lock (ruling N25, N27)", cur.milestone.id === l1?.id && cur.goalId == null && (cur.topics?.length ?? 0) > 0 && (cur.topics ?? []).every((t) => t.cards === 0 && t.floor === M.types.TOPIC_FLOOR_CARDS && !t.done) && cur.lock == null, show({ ord: cur.milestone.ord, topics: cur.topics?.map((t) => [t.name, t.cards, t.floor]), lock: cur.lock }));
-  check("layer 2 is locked on the whole layer before (opensAfter 1; every parent short of cards, the gate's own list)", l2?.opensAfter === 1 && l2.lock != null && l2.lock.wholeLayer && l2.lock.parents.length > 0 && l2.lock.parents.every((p) => !p.met), show(l2?.lock));
+  const made1 = new Set(made.domainsMade.map((d) => d.id));
+  check(
+    "layer 1 is the current milestone (its first part when split), PLANNED, no lock, its topics at n of 8 (0 on a Domain accept made; a Domain of yours already at 8 held when you began) (rulings N25, N27)",
+    cur.milestone.id === l1?.id && cur.goalId == null && (cur.topics?.length ?? 0) > 0 && (cur.topics ?? []).every((t) => t.floor === M.types.TOPIC_FLOOR_CARDS && (t.held || t.skipped || !t.done) && (!t.domainId || !made1.has(t.domainId) || t.cards === 0)) && cur.lock == null,
+    show({ ord: cur.milestone.ord, part: cur.part ?? null, topics: cur.topics?.map((t) => [t.name, t.cards, t.floor, t.held]), lock: cur.lock })
+  );
+  check("layer 2 is locked on the whole layer before (opensAfter 1; every parent short of cards, the gate's own list)", l2?.opensAfter === 1 && l2.lock != null && l2.lock.wholeLayer && l2.lock.parents.length > 0 && l2.lock.parents.some((p) => !p.met), show(l2?.lock));
   const hero = M.nextAction.nextActionOf(v).primary;
-  check("with Start off the hero is the study of a layer-1 topic: ADD_IDEA (no card due yet) to /add with its Domain preselected (ruling N28)", hero.kind === "ADD_IDEA" && hero.do.kind === "href" && /^\/add\?/.test(hero.do.href), show({ kind: hero.kind, label: hero.label, do: hero.do }));
-  const first = must("a layer-1 topic with a Domain to fill", (cur.topics ?? []).find((t) => t.domainId) ?? null);
-  return { domainId: first.domainId as string, name: first.name };
+  check(
+    "with Start off the hero is the study of a layer-1 topic: ADD_IDEA (no card due) to /add with its Domain preselected, or STUDY (a Domain of yours with cards due) to its review run (ruling N28)",
+    (hero.kind === "ADD_IDEA" && hero.do.kind === "href" && /^\/add\?/.test(hero.do.href)) || (hero.kind === "STUDY" && hero.do.kind === "href" && /^\/review\?view=run&domain=/.test(hero.do.href)),
+    show({ kind: hero.kind, label: hero.label, do: hero.do })
+  );
+  // Every paying topic of layer 1, each part's: layer 1 reaches only once all of them hold their floor.
+  const fill = v.milestones
+    .filter((m) => m.chainRole === "LAYER" && m.layer === 1)
+    .flatMap((m) => m.topics ?? [])
+    .filter((t) => t.domainId && !t.held && !t.skipped && !t.done)
+    .map((t) => ({ domainId: t.domainId as string, name: t.name }));
+  must("layer 1's paying topics with a Domain to fill", fill.length > 0 ? fill : null);
+  return fill;
 }
 
-// ── T4 · cards into one layer-1 Domain ─────────────────────────────────────
+// ── T4 · cards into layer 1's Domains ───────────────────────────────────────
 
-async function stepSeedCards(domainId: string, name: string): Promise<void> {
-  step("T4", `${M.types.TOPIC_FLOOR_CARDS} cards at level ${M.types.OPEN_LEVEL} in ${name} (this script's own seed: the idea core would call Gemini to embed them)`);
+/** TOPIC_FLOOR_CARDS SHORT cards at OPEN_LEVEL into each Domain (this script's own rows, tagged with the run), then the real leveling core. */
+async function seedCards(topics: readonly FillTopic[]): Promise<void> {
   const now = new Date();
   const level = M.types.OPEN_LEVEL;
   const base = M.xp.XP_BASE.SHORT;
-  for (let i = 1; i <= M.types.TOPIC_FLOOR_CARDS; i++) {
-    const due = M.lifeDay.addDays(today, 7 + i);
-    const row = await M.prisma.idea.create({
-      data: {
-        domainId,
-        collectionLabel: "BOOK",
-        level,
-        basePoints: base,
-        yieldPoints: base,
-        question: `P14 rehearsal card ${i} of ${name}: what does this card stand for?`,
-        questionType: "SHORT",
-        answer: `A rehearsal card (run ${RUN})`,
-        dueDate: new Date(`${due}T00:00:00.000Z`),
-        graceEndsAt: M.xp.graceEndsAt(new Date(`${due}T00:00:00.000Z`), level),
-        tags: ["rehearsal", `run:${RUN}`],
-      },
-      select: { id: true },
-    });
-    made.seededIdeaIds.push(row.id);
+  for (const { domainId, name } of topics) {
+    const before = made.seededIdeaIds.length;
+    for (let i = 1; i <= M.types.TOPIC_FLOOR_CARDS; i++) {
+      const due = M.lifeDay.addDays(today, 7 + i);
+      const row = await M.prisma.idea.create({
+        data: {
+          domainId,
+          collectionLabel: "BOOK",
+          level,
+          basePoints: base,
+          yieldPoints: base,
+          question: `P14 rehearsal card ${i} of ${name}: what does this card stand for?`,
+          questionType: "SHORT",
+          answer: `A rehearsal card (run ${RUN})`,
+          dueDate: new Date(`${due}T00:00:00.000Z`),
+          graceEndsAt: M.xp.graceEndsAt(new Date(`${due}T00:00:00.000Z`), level),
+          tags: ["rehearsal", `run:${RUN}`],
+        },
+        select: { id: true },
+      });
+      made.seededIdeaIds.push(row.id);
+    }
+    made.seededDomainIds.push(domainId);
+    const lv = await M.leveling.recalculateLeveling(domainId, { now });
+    const live = await M.prisma.idea.count({ where: { domainId, isArchived: false, level: { gte: level } } });
+    check(`${name}: ${M.types.TOPIC_FLOOR_CARDS} cards seeded (no embedding: the rows never go through dedup or routing), so its Domain holds ${M.types.TOPIC_FLOOR_CARDS} live cards at level ${level} or above (the gate's count; Domain level ${lv.domainLevel})`, made.seededIdeaIds.length - before === M.types.TOPIC_FLOOR_CARDS && live >= M.types.TOPIC_FLOOR_CARDS, String(live));
   }
-  check(`${M.types.TOPIC_FLOOR_CARDS} cards seeded (no embedding: the rows never go through dedup or routing)`, made.seededIdeaIds.length === M.types.TOPIC_FLOOR_CARDS);
-  const lv = await M.leveling.recalculateLeveling(domainId, { now });
-  info(`the Domain's level after the real leveling core: ${lv.domainLevel}`);
-  const live = await M.prisma.idea.count({ where: { domainId, isArchived: false, level: { gte: level } } });
-  check(`the Domain holds ${M.types.TOPIC_FLOOR_CARDS} live cards at level ${level} or above (the gate's count)`, live >= M.types.TOPIC_FLOOR_CARDS, String(live));
+}
+
+async function stepSeedCards(topics: readonly FillTopic[]): Promise<void> {
+  step("T4", `${M.types.TOPIC_FLOOR_CARDS} cards at level ${M.types.OPEN_LEVEL} in each of layer 1's ${topics.length} paying Domain(s) (this script's own seed: the idea core would call Gemini to embed them)`);
+  await seedCards(topics);
 }
 
 // ── T5 · the reach on cards alone ──────────────────────────────────────────
@@ -983,11 +1167,16 @@ async function stepCardsReach(roadmapId: string, milestoneId: string, lineageId:
   check("the chain ran for the goal (recordRoadmapReadings, caller LIFE_CRON: no throttle) and wrote readings", run.skipped == null && run.written > 0, show(run));
   const row = must("the layer-1 row reads back", await M.prisma.roadmapMilestone.findUnique({ where: { id: milestoneId }, select: { status: true, goalId: true, reachedDay: true, rankIndex: true, chainRole: true, feasibility: true } }));
   check("layer 1 reached on cards alone: reachedDay stamped on the PLANNED row with no goal (isCardsReachRow), nothing else changed", row.status === "PLANNED" && row.goalId == null && row.reachedDay != null && M.types.isCardsReachRow({ status: row.status, reachedDay: row.reachedDay, chainRole: row.chainRole, goalId: row.goalId, notes: M.readings.milestoneNotesOf(row.feasibility) }), show({ ...row, feasibility: undefined }));
+  // Ruling N34: a layer of more than six paying topics is its parts; every part reaches on its own topics' cards.
+  if (made.layerOneIds.length > 1) {
+    const parts = await M.prisma.roadmapMilestone.findMany({ where: { id: { in: made.layerOneIds } }, select: { id: true, status: true, goalId: true, reachedDay: true } });
+    check(`layer 1's ${made.layerOneIds.length} parts each reached on cards (PLANNED, no goal, reachedDay stamped)`, parts.length === made.layerOneIds.length && parts.every((m) => m.status === "PLANNED" && m.goalId == null && m.reachedDay != null), show(parts));
+  }
   M.cache.invalidateAll();
   const v = await M.server.loadRoadmapView(userId, new Date(), topicsDeps(), roadmapId);
-  const l1 = v.milestones.find((m) => m.chainRole === "LAYER" && m.layer === 1);
+  const l1s = v.milestones.filter((m) => m.chainRole === "LAYER" && m.layer === 1);
   const l2 = v.milestones.find((m) => m.chainRole === "LAYER" && m.layer === 2);
-  check("the rail reads layer 1 REACHED with reachedOnCards and no 'gave rank' line", l1?.state === "REACHED" && l1.reachedOnCards === true && l1.gaveRank == null, show({ state: l1?.state, onCards: l1?.reachedOnCards, gaveRank: l1?.gaveRank }));
+  check("the rail reads layer 1 REACHED with reachedOnCards and no 'gave rank' line (each part, when split)", l1s.length > 0 && l1s.every((l1) => l1.state === "REACHED" && l1.reachedOnCards === true && l1.gaveRank == null), show(l1s.map((l1) => ({ state: l1.state, onCards: l1.reachedOnCards, gaveRank: l1.gaveRank }))));
   check("the Aim rank is as it was (a reach on cards gives no rank)", show(v.rank) === show(rankBefore), show({ before: rankBefore, after: v.rank }));
   check("layer 2 is the current milestone and open (no lock, opensAfter null)", v.current?.milestone.id === l2?.id && l2?.lock == null && l2?.opensAfter == null, show({ current: v.current?.milestone.ord, lock: l2?.lock, opensAfter: l2?.opensAfter }));
   const hero = M.nextAction.nextActionOf(v).primary;
@@ -997,6 +1186,124 @@ async function stepCardsReach(roadmapId: string, milestoneId: string, lineageId:
   const again = await M.readings.recordRoadmapReadings(userId, new Date(), { caller: "LIFE_CRON" });
   const row2 = await M.prisma.roadmapMilestone.findUnique({ where: { id: milestoneId }, select: { reachedDay: true } });
   check("a second run stamps nothing again (reachedDay set once)", again.reaches === 0 && show(row2?.reachedDay) === show(row.reachedDay), show({ again, day: row2?.reachedDay }));
+}
+
+// ── T7 · a split layer (ruling N34) ────────────────────────────────────────
+
+async function stepSplit(): Promise<void> {
+  step("T7", "a written map whose layer 1 holds eight topics, accepted as two parts: the rows, their titles, the gate across parts");
+  const deps = topicsDeps();
+  const field = must("a Field for the written map (T1's)", await fieldForTopics());
+  const names = splitNamesOf(RUN);
+  const intake: Intake = {
+    aim: `${AIM_PREFIX}: a first layer too large for one milestone`,
+    fieldId: field.id,
+    track: "CRAFT",
+    domainIds: [],
+    targetDay: M.lifeDay.addDays(today, 700),
+    hoursPerWeek: 10,
+    newCardsPerWeek: 20,
+    typicalHours: null,
+    typicalHoursSource: null,
+    syllabus: null,
+    startPoint: "BASICS",
+    intensity: "STEADY",
+    practicesAllowed: true,
+    constraints: null,
+    examLabel: null,
+    dateMode: "CHOSEN",
+    planKind: "TOPICS",
+    topicDepth: TOPICS_DEPTH,
+    depth: null,
+    label: "P14 split",
+  };
+  const saved = okOr("a second TOPICS goal in a free seat (saveIntakeCore; T1's goal archived first, unless --keep)", await M.server.saveIntakeCore(userId, intake, new Date(), deps, { createKey: `p14-split-${RUN}` }));
+  const id = saved.roadmapId;
+  made.splitRoadmapId = id;
+  okOr("[Write the topics] writes the map with no model (writeTopicsCore)", await M.server.writeTopicsCore(userId, id, new Date(), deps));
+  okOr("2 layers set (setLayersCore SET 2)", await M.server.setLayersCore(userId, id, { kind: "SET", layers: 2 }, new Date(), deps));
+  for (const n of names.layerOne) okOr(`«${n}» typed in layer 1 (addTopicCore)`, await M.server.addTopicCore(userId, id, 1, n, new Date(), deps));
+  okOr(`«${names.layerTwo}» typed in layer 2`, await M.server.addTopicCore(userId, id, 2, names.layerTwo, new Date(), deps));
+  if ((await draftRowCountOf(id)) === 0) await printProbe(id, "the written map's rebuild wrote no milestone row");
+  const tm = must("the written map (DraftView.topicMap)", (await M.server.loadRoadmapView(userId, new Date(), deps, id)).draft?.topicMap ?? null);
+  check("the draft map reads layer 1 as two milestones (TopicLayerView.parts 2; nothing held large)", tm.layers.find((l) => l.layer === 1)?.parts === 2 && tm.layers.every((l) => l.large == null), show(tm.layers.map((l) => [l.layer, l.parts ?? 1, l.large ?? null])));
+  const choices = M.topicModel.acceptTopicChoicesOf(tm, { keepAll: true, aftercare: null });
+  const domainsBefore = new Set((await M.prisma.domain.findMany({ where: { fieldId: field.id }, select: { id: true } })).map((d) => d.id));
+  const accepted = await M.server.acceptCore(userId, id, { overAccepted: tm.needsOver === true, topicMap: choices }, new Date(), deps);
+  if (!accepted.ok) await printProbe(id, `accept refused ("${accepted.error}")`);
+  okOr("the written map is accepted with [Accept all]'s choices (acceptCore)", accepted);
+  const madeHere = (await M.prisma.domain.findMany({ where: { fieldId: field.id }, select: { id: true, name: true } })).filter((d) => !domainsBefore.has(d.id));
+  made.domainsMade.push(...madeHere);
+  check(`its ${choices.create} Domains made, one per topic you typed`, madeHere.length === choices.create && choices.create === names.layerOne.length + 1, show(madeHere.map((d) => d.name)));
+  const r = must("the accepted roadmap reads back", await M.prisma.roadmap.findUnique({ where: { id }, select: { version: true } }));
+  const rows = await M.prisma.roadmapMilestone.findMany({ where: { roadmapId: id, version: r.version, status: "PLANNED", chainRole: "LAYER" }, orderBy: { ord: "asc" }, select: { id: true, ord: true, layer: true, title: true } });
+  const l1 = rows.filter((m) => m.layer === 1);
+  const l2 = rows.filter((m) => m.layer === 2);
+  const pays = await M.prisma.roadmapMeasure.findMany({ where: { milestoneId: { in: l1.map((m) => m.id) }, role: "PAYS", kind: "CARDS_AT_LEVEL" }, select: { milestoneId: true, topicLineageId: true } });
+  const own = l1.map((m) => pays.filter((x) => x.milestoneId === m.id && x.topicLineageId).map((x) => x.topicLineageId as string));
+  // The split realism makes of eight equal needs (each Domain new and empty: writeNeedOf at the floor), at most six a part.
+  const expected = M.realism.layerSplitOf(
+    names.layerOne.map(() => M.types.writeNeedOf(M.types.TOPIC_FLOOR_CARDS, 0)),
+    Math.ceil(names.layerOne.length / M.types.TOPICS_PER_MILESTONE)
+  );
+  const all = own.flat();
+  check(
+    `layer 1 is two LAYER rows of one layer in ord order (no stored discriminator), ${expected.join(" and ")} topics as realism's layerSplitOf splits their equal needs, each paying only its own (disjoint, all eight between them); layer 2 one row`,
+    l1.length === 2 && show(own.map((o) => o.length)) === show(expected) && new Set(all).size === all.length && all.length === names.layerOne.length && l2.length === 1,
+    show({ rows: rows.map((m) => [m.ord, m.layer]), own: own.map((o) => o.length), expected })
+  );
+  check(
+    "each part is titled by code over its own Domains, in the map's order, with its place («… · layer 1 of 2 · part 1 of 2», «… part 2 of 2»); layer 2 «… · layer 2 of 2»",
+    l1[0]?.title.startsWith(`${names.layerOne[0]}, ${names.layerOne[1]}`) === true &&
+      l1[0].title.endsWith("· layer 1 of 2 · part 1 of 2") &&
+      l1[1]?.title.startsWith(`${names.layerOne[expected[0]]}, ${names.layerOne[expected[0] + 1]}`) === true &&
+      l1[1].title.endsWith("· layer 1 of 2 · part 2 of 2") &&
+      l2[0]?.title.endsWith("· layer 2 of 2") === true,
+    show(rows.map((m) => m.title))
+  );
+  M.cache.invalidateAll();
+  const v = await M.server.loadRoadmapView(userId, new Date(), deps, id);
+  const parts = v.milestones.filter((m) => m.chainRole === "LAYER" && m.layer === 1);
+  const deep = v.milestones.find((m) => m.chainRole === "LAYER" && m.layer === 2);
+  const part1 = names.layerOne.slice(0, expected[0]);
+  const part2 = names.layerOne.slice(expected[0]);
+  check(
+    "on the page: the rail's two layer-1 nodes read part 1 of 2 and 2 of 2 with their own topics; part 2 is never locked on part 1 (no lock, no opensAfter); layer 2 is locked on all eight (opensAfter 1, the whole layer)",
+    show(parts.map((m) => m.part)) === show([{ i: 1, p: 2 }, { i: 2, p: 2 }]) &&
+      show(parts.map((m) => (m.topics ?? []).map((t) => t.name))) === show([part1, part2]) &&
+      parts[1]?.lock == null &&
+      parts[1]?.opensAfter == null &&
+      deep?.opensAfter === 1 &&
+      deep.lock?.wholeLayer === true &&
+      deep.lock.parents.length === names.layerOne.length,
+    show({ parts: parts.map((m) => [m.part, m.lock, m.opensAfter]), deep: deep && [deep.opensAfter, deep.lock?.parents.length] })
+  );
+  const hero = M.nextAction.nextActionOf(v).primary;
+  check(
+    "the current milestone is part 1, and the hero (Start off) studies its first topic (ADD_IDEA: no card yet)",
+    v.current?.milestone.id === parts[0]?.id && show(v.current?.part ?? null) === show({ i: 1, p: 2 }) && hero.kind === "ADD_IDEA" && hero.name === part1[0],
+    show({ current: v.current?.milestone.title, part: v.current?.part, hero: [hero.kind, hero.label] })
+  );
+  // The gate across parts: part 1's four Domains filled, so part 1 reaches on cards; layer 2 waits on part 2 still.
+  await seedCards((parts[0]?.topics ?? []).filter((t) => t.domainId).map((t) => ({ domainId: t.domainId as string, name: t.name })));
+  const run = await M.readings.recordRoadmapReadings(userId, new Date(), { caller: "LIFE_CRON" });
+  check("the readings chain ran (LIFE_CRON) and stamped part 1's reach", run.skipped == null && run.reaches >= 1, show(run));
+  M.cache.invalidateAll();
+  const w = await M.server.loadRoadmapView(userId, new Date(), deps, id);
+  const parts2 = w.milestones.filter((m) => m.chainRole === "LAYER" && m.layer === 1);
+  const deep2 = w.milestones.find((m) => m.chainRole === "LAYER" && m.layer === 2);
+  const hero2 = M.nextAction.nextActionOf(w).primary;
+  check(
+    "part 1 reached on cards and part 2 not: layer 2 is still locked (opensAfter 1) on part 2's four topics alone, part 2 is the current milestone, and the hero studies its first topic",
+    parts2[0]?.state === "REACHED" &&
+      parts2[0].reachedOnCards === true &&
+      parts2[1]?.state !== "REACHED" &&
+      deep2?.opensAfter === 1 &&
+      show((deep2.lock?.parents ?? []).filter((p) => !p.met).map((p) => p.name).sort()) === show([...part2].sort()) &&
+      w.current?.milestone.id === parts2[1]?.id &&
+      hero2.name === part2[0],
+    show({ parts: parts2.map((m) => [m.state, m.reachedOnCards]), deep: deep2 && [deep2.opensAfter, (deep2.lock?.parents ?? []).filter((p) => !p.met).map((p) => p.name)], current: w.current?.milestone.title, hero: [hero2.kind, hero2.label] })
+  );
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
@@ -1053,8 +1360,8 @@ async function main(): Promise<void> {
     try {
       const { roadmapId } = await stepTopicsGoal();
       await stepAcceptAll(roadmapId);
-      const first = await stepTopicsPage(roadmapId);
-      await stepSeedCards(first.domainId, first.name);
+      const fill = await stepTopicsPage(roadmapId);
+      await stepSeedCards(fill);
       await stepCardsReach(roadmapId, made.milestoneId as string, made.lineageId as string);
     } catch (err) {
       if (err instanceof Abort) check("the topics rehearsal ran to its end", false, `stopped after: ${err.message}`);
@@ -1070,6 +1377,22 @@ async function main(): Promise<void> {
         check("the cleanup ran to its end", false, err instanceof Error ? (err.stack ?? err.message) : String(err));
       }
     }
+    // T7 (roadmap rework 2): after T6, so it takes the seat T1's goal gave back.
+    try {
+      await stepSplit();
+    } catch (err) {
+      if (err instanceof Abort) check("the split rehearsal ran to its end", false, `stopped after: ${err.message}`);
+      else check("the split rehearsal ran to its end", false, err instanceof Error ? (err.stack ?? err.message) : String(err));
+    }
+    if (KEEP) console.log(`Kept: goal ${made.splitRoadmapId ?? "-"} (layer 1 as two parts; ${made.seededIdeaIds.length} seeded cards in all). Archive the goals with --topics --clean.`);
+    else {
+      try {
+        await cleanup("T7", made.splitRoadmapId);
+      } catch (err) {
+        check("the split cleanup ran to its end", false, err instanceof Error ? (err.stack ?? err.message) : String(err));
+      }
+    }
+    if (archivedSeeds > 0) console.log(`\nThe ${archivedSeeds} cards this run seeded are archived (by id; the Domains they went into recalculated).`);
     if (made.domainsMade.length > 0) console.log(`\nThe Domains accept made stay in the library, as accept's Undo leaves them: ${made.domainsMade.map((d) => d.name).join(", ")}.`);
   } else {
     try {

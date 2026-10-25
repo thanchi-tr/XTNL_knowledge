@@ -197,7 +197,7 @@ const { states: ROADMAP_FIXTURE_STATES, from: ROADMAP_STATES_FROM } = roadmapFix
 const FIXTURE_ROUTES = [
   "/dev/style",
   "/dev/style/today",
-  ...["hub", "empty", "question", "correct", "seal", "miss", "retry", "relearned", "boss", "recap", "boss-won"].map((s) => `/dev/style/review?state=${s}`),
+  ...["hub", "hub-part", "empty", "question", "correct", "seal", "miss", "retry", "relearned", "boss", "recap", "boss-won"].map((s) => `/dev/style/review?state=${s}`),
   "/dev/style/celebrate",
   "/dev/style/art",
   "/dev/style/art/you",

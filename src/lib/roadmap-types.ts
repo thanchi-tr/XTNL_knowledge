@@ -2430,6 +2430,10 @@ export const CODE_TEMPLATES = [
   "{domains} · layer {k} of {n}",
   "Layer {k} of {n}",
   "Layer {k} · {n} topics",
+  // ── Roadmap rework 2 (contracts §22.20 ruling N34): a layer of more than TOPICS_PER_MILESTONE paying topics is split
+  // into consecutive milestones of its own ("parts"); each part's title is its layer's with the part's place ({i} of {p}).
+  "{domains} · layer {k} of {n} · part {i} of {p}",
+  "Layer {k} of {n} · part {i} of {p}",
 ] as const;
 export type CodeTemplate = (typeof CODE_TEMPLATES)[number];
 export interface CodeFill {
@@ -2445,6 +2449,9 @@ export interface CodeFill {
   /** A track stage's place and the plan's count ({k} of {n}), 1..MAX_MILESTONES. */
   k?: number;
   n?: number;
+  /** Ruling N34: a split layer's part and its count of parts ({i} of {p}), 1..MAX_MILESTONES_TOPICS. */
+  i?: number;
+  p?: number;
 }
 
 /** "A, B, C or D" (join "or", the week quest labels) or "A, B" (join "comma", code names). */
@@ -2505,6 +2512,12 @@ export function codeText(template: CodeTemplate, fill: CodeFill = {}): CodeText 
         if (v == null || !Number.isInteger(v) || v < 1 || v > MAX_MILESTONES) throw new Error(`codeText: {${slot}} needs a whole number 1..${MAX_MILESTONES}`);
         return String(v);
       }
+      case "i":
+      case "p": {
+        const v = fill[slot];
+        if (v == null || !Number.isInteger(v) || v < 1 || v > MAX_MILESTONES_TOPICS) throw new Error(`codeText: {${slot}} needs a whole number 1..${MAX_MILESTONES_TOPICS}`);
+        return String(v);
+      }
       case "exam":
         if (!fill.exam || !String(fill.exam).trim()) throw new Error("codeText: {exam} needs the exam's name");
         return String(fill.exam).trim();
@@ -2516,7 +2529,8 @@ export function codeText(template: CodeTemplate, fill: CodeFill = {}): CodeText 
   // One pass: a filled-in name that itself holds "{L}" or "{aim}" is never filled again.
   // "Layer {k} · {n} topics" counts topics in {n}, not layers (revision 5, lane 8): its layer may exceed its count.
   if (template !== "Layer {k} · {n} topics" && template.includes("{k}") && template.includes("{n}") && fill.k != null && fill.n != null && fill.k > fill.n) throw new Error("codeText: {k} is past {n}");
-  return template.replace(/\{(stage|domains|L|k|n|exam|aim)\}/g, (_m, slot: string) => value(slot)) as CodeText;
+  if (template.includes("{i}") && template.includes("{p}") && fill.i != null && fill.p != null && fill.i > fill.p) throw new Error("codeText: {i} is past {p}");
+  return template.replace(/\{(stage|domains|L|k|n|i|p|exam|aim)\}/g, (_m, slot: string) => value(slot)) as CodeText;
 }
 
 /** A DomainName from a Domain row (its name on one line). */
@@ -3272,6 +3286,34 @@ export const MILESTONE_NOTES: readonly MilestoneNote[] = ["NO_STUDY_SLOT", "NOT_
  */
 export function isCardsReachRow(m: { status: string; reachedDay: unknown; chainRole?: string | null; goalId?: string | null; notes?: readonly string[] | null }): boolean {
   return m.status === "PLANNED" && m.chainRole === "LAYER" && m.reachedDay != null && !m.goalId && !(m.notes ?? []).includes("HELD_AT_START");
+}
+
+/**
+ * Ruling N34 (contracts §22.20, roadmap rework 2): a layer whose chosen paying topics exceed TOPICS_PER_MILESTONE is
+ * split into consecutive LAYER milestones of the same `layer` ("parts"). A part is derived, never stored: the plan's
+ * layer rows of one layer in ord order (no column, no note, no migration; the review round: every TOPICS rebuild writes
+ * its ords in chain order beside the carried rows, roadmap-server chainOrdsOf, so ord order is the parts' order on the
+ * map, as realism's chainSplitsOf places them). `{i, p}`: this row's place and its layer's
+ * count of parts; null on a row that is no layer row, or the one row of its layer (an unsplit layer reads as before).
+ * `rows`: the plan as it stands (the server's planRowsOf less a superseded row; a draft's rows; a ladder's).
+ */
+export interface LayerPart {
+  i: number;
+  p: number;
+}
+export function layerPartOf(rows: readonly { id?: string | null; lineageId: string; ord: number; chainRole?: string | null; layer?: number | null }[], m: { id?: string | null; lineageId: string; chainRole?: string | null; layer?: number | null }): LayerPart | null {
+  if (m.chainRole !== "LAYER" || m.layer == null) return null;
+  const same = rows.filter((r) => r.chainRole === "LAYER" && r.layer === m.layer).sort((a, b) => a.ord - b.ord);
+  if (same.length <= 1) return null;
+  // The row itself by its id, else its position (a "Start again" copy, a draft of it) by its lineage.
+  const byId = m.id != null ? same.findIndex((r) => r.id === m.id) : -1;
+  const i = byId >= 0 ? byId : same.findIndex((r) => r.lineageId === m.lineageId);
+  return i < 0 ? null : { i: i + 1, p: same.length };
+}
+
+/** Ruling N34: a split layer's part in code's words ("part 1 of 2"); "" for an unsplit layer. */
+export function layerPartWordsOf(part: LayerPart | null | undefined): string {
+  return part && part.p > 1 ? `part ${part.i} of ${part.p}` : "";
 }
 
 /** One milestone of a draft or version (mirrors RoadmapMilestone, with its items and measures). */
@@ -5179,6 +5221,9 @@ export interface MilestoneRowView {
   lock?: MilestoneLockView | null;
   /** Reached on cards alone (isCardsReachRow): REACHED, no rank, nothing paid, never started. */
   reachedOnCards?: boolean;
+  // ── Roadmap rework 2 (contracts §22.20 ruling N34) ──
+  /** A split layer's part (its place and its layer's count of parts; `topics` are its own); absent on an unsplit layer. */
+  part?: LayerPart;
 }
 
 /**
@@ -5293,6 +5338,9 @@ export interface CurrentMilestoneView {
   topics?: MilestoneTopicView[];
   /** The lock while the layer's prerequisites are open; null on an open layer. */
   lock?: MilestoneLockView | null;
+  // ── Roadmap rework 2 (ruling N34) ──
+  /** A split layer's part ("part 1 of 2"; `topics` are its own); absent on an unsplit layer. */
+  part?: LayerPart;
 }
 
 /** "Toward the aim": the end state's own meters, never blended. */
@@ -7322,6 +7370,21 @@ export interface TopicRowView {
   domain: { id: string; name: string; geminiNamed: boolean } | null;
   /** Rulings N30 and N31: why a NOT_CHECKED (or KEPT_NOT_CHECKED) row sat behind the fold, inline beside its name; absent on a shown row. */
   hide?: TopicHideView | null;
+  /**
+   * Ruling N35 (a draft): one of your free Domains whose name equals this topic's or holds it (roadmap-topics
+   * domainOffersOf: N31's normalisation), offered under the row as "Use your Domain «X» · n cards" (`cards`: its live
+   * cards); a tap is useMyDomain, never automatic. Absent on a bound row, a plan, and with no match; a row behind the
+   * fold carries one only for a Domain whose name it already wears (the review round: addTopic would refuse that Domain
+   * as on the map, so it is offered there, in the fold, never in the tray).
+   */
+  domainOffer?: TopicDomainOffer;
+}
+/** Ruling N35: a free Domain offered on a topic's row (its id, its name with the mark's input, its live cards). */
+export interface TopicDomainOffer {
+  id: string;
+  name: string;
+  geminiNamed: boolean;
+  cards: number;
 }
 export interface TopicLayerView {
   layer: number;
@@ -7343,6 +7406,14 @@ export interface TopicLayerView {
   rebreak?: "OPEN" | "STARTED";
   /** With `rebreak`: the names a re-break of this layer replaces (Gemini's, not kept by you), listed in its confirm. */
   rebreakGoes?: string[];
+  /**
+   * Ruling N34: this layer's milestones when it is split into parts (absent on one milestone), and `large`: the most
+   * paying topics one of its milestones holds when the milestone cap left it over TOPICS_PER_MILESTONE (the band says
+   * "Large: 9 topics in one milestone"); the review round: only on a plan or draft at milestoneCapOf("TOPICS"), so a
+   * plan accepted before the ruling, under the cap, carries none; absent otherwise.
+   */
+  parts?: number;
+  large?: number;
 }
 /** Ruling N30: one not-checked name in [Accept all]'s list: its key (the per-name tap is chooseTopic), its name and why it sits behind the fold. */
 export interface AcceptAllUncheckedView {
@@ -7359,7 +7430,13 @@ export interface TopicMapView {
   cautions: Caution[];
   acceptRefusal: string | null;
   requestsLeft: { requests: number; grounded: number };
-  /** Your free Domains of the Area, unticked; geminiNamed renders pv.named (a Domain kept from an earlier goal). */
+  /**
+   * Your free Domains of the Area (in none of this map's topics, held by no other goal); geminiNamed renders pv.named (a
+   * Domain kept from an earlier goal). Ruling N35: no longer rows of layer 1. One offered on a topic's row
+   * (TopicRowView.domainOffer) is offered there; every other sits in the map's one folded tray ("Your Domains · n",
+   * topic-map-model libraryTrayOf), each added to the layer you pick through addTopic (default layer 1); the topic's ▸
+   * ([Use my Domain…]) lists them all. A draft's only ([] on a plan).
+   */
   layerOneSeeds: { id: string; name: string; geminiNamed: boolean }[];
   lastLayerSeeds: AimClause[];
   /**

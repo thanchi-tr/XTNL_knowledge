@@ -56,6 +56,7 @@ import {
   clauseSplitOf,
   containKeyOf,
   containedKeyOf,
+  domainOffersOf,
   duplicateOfOf,
   kFinalOf,
   mapAgreementOf,
@@ -1114,6 +1115,68 @@ console.log("— the study focus (N14): the open layer, one topic now, the rest 
     [RT.topicDoneOf(7), RT.topicDoneOf(8), RT.topicDoneOf(3, 3), RT.cardsAtOpenCountOf([5, 6, 7, 12, 0].map((level) => ({ level }))), RT.cardsAtOpenCountOf([{ level: 6 }, { level: 6, questionType: "MULTI" }, { level: 7, questionType: "SHORT" }, { level: 9, questionType: "MULTI" }])],
     [false, true, true, 3, 2]
   );
+  // Ruling N34 (roadmap rework 2): a layer of more than six paying topics is milestones of its own, one per part, each
+  // read as a layer row is over its own topics (StudyMilestoneIn.topics), in order; the focus names the part.
+  const split: StudyFocusInput = {
+    ...unstarted,
+    milestones: [
+      { layer: 1, title: "Layer 1", status: "PLANNED", reached: true },
+      { layer: 2, title: "Layer 2 · part 1", status: "PLANNED", reached: false, part: { i: 1, p: 2 }, topics: ["T2", "T3"] },
+      { layer: 2, title: "Layer 2 · part 2", status: "PLANNED", reached: false, part: { i: 2, p: 2 }, topics: ["T4", "T6"] },
+      { layer: 3, title: "Layer 3", status: "PLANNED", reached: false },
+    ],
+    topics: [...unstarted.topics, { key: "T6", layer: 2, name: "Beta Hedging", domainId: "f", chosen: true, decision: "KEPT", skipped: false, held: false }],
+    domains: [...unstarted.domains, { id: "f", name: "Beta Hedging", atOpen: 2, due: 1, cards: 3 }],
+  };
+  const p1 = studyFocusOf(split);
+  const p2 = studyFocusOf({ ...split, domains: split.domains.map((d) => (d.id === "c" ? { ...d, atOpen: 8 } : d)) });
+  eq(
+    "N34 studyFocusOf over a split layer: part 1's own topics first (Correlation Coefficient now, 2 topics, part 1 of 2); its topics done, part 2's (Beta Hedging now; Efficient Frontier known); an unsplit layer carries no part",
+    [
+      p1 && { layer: p1.layer, part: p1.part, now: p1.current?.name, total: p1.total },
+      p2 && { layer: p2.layer, part: p2.part, now: p2.current?.name, total: p2.total, done: p2.done },
+      studyFocusOf(unstarted)?.part ?? null,
+    ],
+    [
+      { layer: 2, part: { i: 1, p: 2 }, now: "Correlation Coefficient", total: 2 },
+      { layer: 2, part: { i: 2, p: 2 }, now: "Beta Hedging", total: 2, done: 1 },
+      null,
+    ]
+  );
+  // A part is derived, never stored (ruling N34): a layer's rows in ord order; its title is code's template with its place.
+  const rowsN34 = [
+    { id: "m1", lineageId: "L1", ord: 1, chainRole: "LAYER", layer: 1 },
+    { id: "m3", lineageId: "L3", ord: 3, chainRole: "LAYER", layer: 2 },
+    { id: "m2", lineageId: "L2", ord: 2, chainRole: "LAYER", layer: 2 },
+    { id: "m4", lineageId: "L4", ord: 4, chainRole: "DEPTH", layer: null },
+  ];
+  const dn34 = (name: string) => RT.domainName({ id: name, name });
+  eq(
+    "N34 layerPartOf: a layer's rows in ord order are its parts (m2 is part 1 of 2, m3 part 2), by id, else by lineage (a 'Start again' copy); a layer's one row and a depth row have none; layerPartWordsOf and the part titles",
+    [
+      ["m1", "m2", "m3", "m4"].map((id) => RT.layerPartOf(rowsN34, rowsN34.find((r) => r.id === id) as (typeof rowsN34)[number])),
+      RT.layerPartOf(rowsN34, { id: "copy", lineageId: "L3", chainRole: "LAYER", layer: 2 }),
+      [RT.layerPartWordsOf({ i: 2, p: 3 }), RT.layerPartWordsOf(null)],
+      [
+        String(RT.codeText("{domains} · layer {k} of {n} · part {i} of {p}", { domains: [dn34("Budgeting"), dn34("Cash Flow")], k: 1, n: 5, i: 1, p: 2 })),
+        String(RT.codeText("Layer {k} of {n} · part {i} of {p}", { k: 1, n: 5, i: 2, p: 2 })),
+        (() => {
+          try {
+            RT.codeText("Layer {k} of {n} · part {i} of {p}", { k: 1, n: 5, i: 3, p: 2 });
+            return "no throw";
+          } catch {
+            return "throws";
+          }
+        })(),
+      ],
+    ],
+    [
+      [null, { i: 1, p: 2 }, { i: 2, p: 2 }, null],
+      { i: 2, p: 2 },
+      ["part 2 of 3", ""],
+      ["Budgeting, Cash Flow · layer 1 of 5 · part 1 of 2", "Layer 1 of 5 · part 2 of 2", "throws"],
+    ]
+  );
 }
 
 // ═══ 14. The containment dedupe (contracts §22.20 N31: a name contained in another name of the map, after normalisation, is its duplicate) ═══
@@ -1185,6 +1248,54 @@ console.log("— containment dedupe (N31): containKeyOf, the gate's step 8b, dup
       shown: ["Budget Variance 3", "Cash Flow 3", "Compound Interest 3", "Current Ratio 3", "Equity 3", "Interest 3", "Variance 3"],
       hidden: [["Ratio", { name: "Current Ratio", kind: "PART" }], ["Variance Analysis", { name: "Variance", kind: "SAME" }]],
     }
+  );
+}
+
+// ═══ Ruling N35 (roadmap rework 2, P2): your Domains offered on the topic they name ═══════════════════════
+console.log("— your Domains on the topic they name (N35): domainOffersOf —");
+{
+  // The user's case: a Field whose library is mostly an earlier plan's Domains, beside a new map's names.
+  const rows35 = [
+    { key: "T1", name: "Emergency Fund" },
+    { key: "T2", name: "Variance" },
+    { key: "T3", name: "Ratio" },
+    { key: "T4", name: "Interest" },
+    { key: "T5", name: "Cash Flow Statements" },
+    { key: "T6", name: "Diversification" },
+  ];
+  const domains35 = [
+    { id: "d1", name: "Compound Interest" },
+    { id: "d2", name: "Emergency funds" },
+    { id: "d3", name: "Variance Analysis" },
+    { id: "d4", name: "Current Ratio" },
+    { id: "d5", name: "Cash flow statement analysis" },
+    { id: "d6", name: "Portfolio Diversification" },
+    { id: "d7", name: "Liquidity Ratio" },
+  ];
+  eq(
+    "N35 domainOffersOf: a Domain is offered on the topic its name equals (Emergency funds on Emergency Fund: case and plural folded), holds as a chapter (Variance Analysis on Variance) or holds as its bare tail word (Current Ratio on Ratio, the first in your library of two), and N31's normalisation (Cash flow statement analysis on Cash Flow Statements: the analysis tail dropped); two concepts get none (Compound Interest beside Interest, Portfolio Diversification beside Diversification); each Domain once, each row once",
+    [...domainOffersOf(rows35, domains35)].sort(),
+    [
+      ["T1", "d2"],
+      ["T2", "d3"],
+      ["T3", "d4"],
+      ["T5", "d5"],
+    ]
+  );
+  eq(
+    "N35 domainOffersOf: the closest pair first (a Domain equal to the topic before one that is its chapter, whatever the library's order), then the row's place in the map (a Domain two rows match goes to the first), then the library's order; a topic that is a Domain's chapter is offered that Domain (Investing Basics, your Investing)",
+    [
+      [...domainOffersOf([{ key: "T1", name: "Variance" }], [{ id: "chap", name: "Variance Analysis" }, { id: "eq", name: "variance" }])],
+      [...domainOffersOf([{ key: "T1", name: "Budgeting" }, { key: "T2", name: "Budgeting Basics" }], [{ id: "b", name: "Budgeting basics" }])],
+      [...domainOffersOf([{ key: "T7", name: "Bayes rule" }, { key: "T8", name: "bayes RULE" }], [{ id: "x", name: "Bayes Rule" }])],
+      [...domainOffersOf([{ key: "T1", name: "Investing Basics" }], [{ id: "inv", name: "Investing" }])],
+    ],
+    [[["T1", "eq"]], [["T2", "b"]], [["T7", "x"]], [["T1", "inv"]]]
+  );
+  eq(
+    "N35 domainOffersOf: never throws; nothing, junk and empty names offer nothing",
+    [domainOffersOf([], domains35).size, domainOffersOf(rows35, []).size, domainOffersOf(null as never, undefined as never).size, domainOffersOf([{ key: "T1", name: "" }], [{ id: "d", name: "" }]).size, domainOffersOf([{ key: 3 } as never], [{ id: 4 } as never]).size],
+    [0, 0, 0, 0, 0]
   );
 }
 

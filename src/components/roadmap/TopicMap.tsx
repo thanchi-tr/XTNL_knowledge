@@ -8,12 +8,18 @@
  * lead-only gate): with the switch off nothing here renders for a user.
  *
  *   heading   the EstimateChip, the caution chips, the card Key (i). No app words of its own.
- *   layers    LayerBand per layer, broad (layer 1) to deep (layer K). Layer 1 lists the Area's free
- *             Domains as unticked pv.library seeds (pv.named after a Gemini-named one); under the last
- *             band, the aim's clauses as m.quote seeds, verbatim (data-wc="own"), never spell-corrected.
+ *   layers    LayerBand per layer, broad (layer 1) to deep (layer K). Under the last band, the aim's clauses
+ *             as m.quote seeds, verbatim (data-wc="own"), never spell-corrected. Ruling N35: the Area's free
+ *             Domains are no longer layer-1 rows: one whose name equals or holds a topic's is offered under
+ *             that topic's row ("Use your Domain «X» · n cards", one tap: useMyDomain).
  *             A plan (ruling N32) expands only the open layer: the layers behind it fold to "n done", the
  *             ones after it to their header, each with its one who-word chip and a ▸ to its topics; a
  *             draft shows the layers up to the first not done and steps through the rest.
+ *   tray      ruling N35 (a draft): every other free Domain in one folded <details> under the map, "[pv.library]
+ *             Your Domains · 34 · add one to a layer"; each row its name (pv.named after a Gemini-named one), a
+ *             44 px layer picker (layer 1 first) and a 44 px [Add] (addTopic in that layer binds the Domain; a layer
+ *             the draft hasn't shown yet is stepped open, so the new row shows). A Domain offered on a row stays
+ *             there (a later layer's row once that layer shows; a hidden name's, in its fold).
  *   foot      [Accept all] (a draft): its confirm says first what it creates ("Creates n Domains", ruling N30),
  *             then lists, layer by layer and by name, every shown Gemini name and every not-checked link it
  *             would keep (AcceptTopicChoices.keepAll), and under each layer its not-checked names unticked,
@@ -79,6 +85,11 @@ import {
   trackClauseQuestion,
   writeTopicAria,
   HIDE_LATER_LAYERS,
+  LIBRARY_ADD_WORD,
+  LIBRARY_TRAY_LEAD,
+  LIBRARY_TRAY_WORD,
+  libraryAddAria,
+  libraryLayerAria,
   showNextLayerLine,
 } from "./roadmap-copy";
 import { Icon } from "@/components/ui/Icon";
@@ -87,7 +98,7 @@ import { EstimateChip } from "./EstimateChip";
 import { LayerBand } from "./LayerBand";
 import { CautionChips, TopicSheet } from "./TopicSheet";
 import { HideReason } from "./TopicMapRow";
-import { TOPIC_MARK, acceptAllBareLayersOf, acceptAllListOf, acceptTopicChoicesOf, rowsByKey, topicNamesOn, traceOf, type TopicGates } from "./topic-map-model";
+import { TOPIC_MARK, acceptAllBareLayersOf, acceptAllListOf, acceptTopicChoicesOf, libraryTrayOf, rowsByKey, topicNamesOn, traceOf, type TopicGates } from "./topic-map-model";
 
 export interface TopicMapProps {
   map: TopicMapView;
@@ -108,6 +119,32 @@ export interface TopicMapProps {
   /** Fixtures only (/dev/style/roadmap): a row's sheet open at mount (its TopicSheet, or the sources or parents sheet in it), or [Accept all]'s sheet (ruling N30; `key` unused). */
   fixtureOpen?: { key: string; sheet: "topic" | "sources" | "parents" | "accept" } | null;
   className?: string;
+}
+
+/**
+ * Ruling N35: one of your Domains in the map's folded tray: its mark and name (pv.named after a Gemini-named one), the
+ * layer it goes to (a 44 px picker, layer 1 first) and [Add] (44 px; addTopic in that layer, which binds the Domain).
+ */
+function LibraryTrayRow({ domain, layers, pending, onAdd }: { domain: TopicMapView["layerOneSeeds"][number]; layers: readonly number[]; pending: boolean; onAdd: (layer: number, name: string) => void }) {
+  const [layer, setLayer] = useState(layers[0] ?? 1);
+  return (
+    <li className="rm-tm-trow" data-cls="LIBRARY" data-domain={domain.id}>
+      <span className="rm-tm-mark" aria-hidden="true">
+        <Glyph name="pv.library" size={16} inherit />
+      </span>
+      <DomainName name={domain.name} geminiNamed={domain.geminiNamed} className="rm-tm-name" />
+      <select className="st-input rm-tm-to" value={layer} disabled={pending} aria-label={libraryLayerAria(domain.name)} onChange={(e) => setLayer(Number(e.currentTarget.value))}>
+        {layers.map((k) => (
+          <option key={k} value={k}>
+            {layerWord(k)}
+          </option>
+        ))}
+      </select>
+      <button type="button" className="chip btn-chip rm-tm-add" disabled={pending} aria-label={libraryAddAria(domain.name, layer)} onClick={() => onAdd(layer, domain.name)}>
+        {LIBRARY_ADD_WORD}
+      </button>
+    </li>
+  );
 }
 
 /** A client nonce for trackClauseAsGoal's createKey ([A-Za-z0-9_-]{8,64}). */
@@ -172,6 +209,15 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
   };
 
   const choose = (key: string, chosen: boolean) => run((a) => a.chooseTopic(map.roadmapId, key, chosen));
+  // Ruling N35: a row's offered Domain bound in one tap (useMyDomain); a tray Domain added to the layer you picked (addTopic binds it there).
+  const bindDomain = (key: string, domainId: string) => run((a) => a.useMyDomain(map.roadmapId, key, domainId));
+  const addFromTray = (layer: number, name: string) => {
+    // The review round: a Domain added to a layer the draft hasn't shown yet steps the draft through to it, so its row shows.
+    const at = map.layers.findIndex((l) => l.layer === layer);
+    if (stepFocus >= 0 && at > stepThrough) setStepExtra(at - stepFocus);
+    run((a) => a.addTopic(map.roadmapId, layer, name));
+  };
+  const tray = draft ? libraryTrayOf(map) : [];
   const keep = (layer: number) => run((a) => a.keepLayer(map.roadmapId, layer));
   const toggleHidden = (layer: number) =>
     setHiddenOpen((s) => {
@@ -269,6 +315,7 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
             trace={trace}
             onTrace={(k) => setTraced((t) => (t === k ? null : k))}
             onChoose={draft ? choose : null}
+            onUse={draft ? bindDomain : null}
             onMore={(k) => setSheetKey(k)}
             onKeep={draft ? keep : null}
             onWrite={draft ? (k) => setWriteLayer(k) : null}
@@ -282,27 +329,6 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
             stepHidden={i > stepThrough}
             fold={foldOf(i)}
           >
-            {l.layer === 1 && map.layerOneSeeds.length > 0 && (
-              <ul className="rm-tm-rows rm-tm-seeds">
-                {map.layerOneSeeds.map((d) => (
-                  <li key={d.id} className="rm-tm-row rm-tm-row-ck" data-cls="LIBRARY">
-                    <span className="rm-tm-rail" aria-hidden="true" />
-                    <span className="rm-tm-hit rm-tm-hit-static">
-                      <span className="rm-tm-mark" aria-hidden="true">
-                        <Glyph name="pv.library" size={16} inherit />
-                      </span>
-                      <DomainName name={d.name} geminiNamed={d.geminiNamed} className="rm-tm-name" />
-                    </span>
-                    <span className="rm-tm-lv" aria-hidden="true" />
-                    <span className="rm-tm-acts">
-                      <label className="rm-tm-ck">
-                        <input type="checkbox" className="rm-avd-box" checked={false} disabled={!draft || pending} aria-label={inPlanAria(d.name)} onChange={() => run((a) => a.addTopic(map.roadmapId, 1, d.name))} />
-                      </label>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
             {l.layer === lastBand && map.lastLayerSeeds.length > 0 && (
               <ul className="rm-tm-rows rm-tm-seeds">
                 {map.lastLayerSeeds.map((c, ci) => (
@@ -352,6 +378,25 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
         </div>
       )}
       {mergedNote && <p className="t-meta rm-tm-note">{mergedNote}</p>}
+      {/* Ruling N35: your other Domains, folded under the map (never layer-1 rows); each added to the layer you pick. */}
+      {tray.length > 0 && (
+        <details className="rm-adv rm-tm-tray" data-library-tray="">
+          <summary data-wc-block="topic-tray">
+            <Icon name="chev" />
+            <span className="rm-tm-mark" aria-hidden="true">
+              <Glyph name="pv.library" size={16} inherit />
+            </span>
+            <span>
+              {LIBRARY_TRAY_WORD} · {tray.length} · {LIBRARY_TRAY_LEAD}
+            </span>
+          </summary>
+          <ul className="rm-tm-rows rm-tm-seeds">
+            {tray.map((d) => (
+              <LibraryTrayRow key={d.id} domain={d} layers={map.layers.map((l) => l.layer)} pending={pending} onAdd={addFromTray} />
+            ))}
+          </ul>
+        </details>
+      )}
       {draft && (
         <div className="rm-tm-foot" data-wc-block="topic-map-foot">
           <Button variant="secondary" disabled={pending} onClick={() => setAcceptOpen(true)}>

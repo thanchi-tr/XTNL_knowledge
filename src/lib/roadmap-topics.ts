@@ -670,6 +670,45 @@ export function containedKeyOf(a: readonly string[], b: readonly string[]): "EQU
   return null;
 }
 
+/**
+ * Ruling N35: which of your free Domains is offered on which topic's row ("Use your Domain «X» · n cards"; a tap binds
+ * it, never this). A Domain is offered on a topic whose name it equals or holds under N31's normalisation (containKeyOf,
+ * containRelationOf): EQUAL; CHAPTER either way (the Domain is the topic plus one tail word, or the topic the Domain
+ * plus one: one concept, as the dedupe reads it); PART when the topic is the bare tail word the Domain holds ("Ratio"
+ * beside your "Current Ratio"). Any other run of words is two concepts ("Interest" beside your "Compound Interest"): no
+ * offer. Each Domain is offered once and each row once: the closest pairs first (EQUAL, then CHAPTER, then PART), then
+ * the row's place in `rows` (map order), then the Domain's in `domains`. `rows`: the shown, unbound live topics in map
+ * order; `domains`: your free Domains. Row key → Domain id. Pure; never throws.
+ */
+export function domainOffersOf(rows: readonly { key: string; name: string }[], domains: readonly { id: string; name: string }[]): Map<string, string> {
+  const out = new Map<string, string>();
+  try {
+    const rowKeys = arr(rows).filter((r) => r && typeof r.key === "string" && typeof r.name === "string").map((r) => ({ key: r.key, words: containKeyOf(r.name) }));
+    const doms = arr(domains).filter((d) => d && typeof d.id === "string" && typeof d.name === "string").map((d) => ({ id: d.id, words: containKeyOf(d.name) }));
+    const pairs: { rank: number; row: number; dom: number }[] = [];
+    rowKeys.forEach((r, i) =>
+      doms.forEach((d, j) => {
+        const rel = containRelationOf(d.words, r.words);
+        const back = containRelationOf(r.words, d.words);
+        const rank = rel === "EQUAL" ? 0 : rel === "CHAPTER" || back === "CHAPTER" ? 1 : back === "PART" ? 2 : -1;
+        if (rank >= 0) pairs.push({ rank, row: i, dom: j });
+      })
+    );
+    pairs.sort((a, b) => a.rank - b.rank || a.row - b.row || a.dom - b.dom);
+    const used = new Set<string>();
+    for (const p of pairs) {
+      const key = rowKeys[p.row].key;
+      const id = doms[p.dom].id;
+      if (out.has(key) || used.has(id)) continue;
+      out.set(key, id);
+      used.add(id);
+    }
+  } catch {
+    return new Map();
+  }
+  return out;
+}
+
 /** Ruling N31: the names a map shows (live, not behind the fold, not hidden by the agreement): what REBREAK's and DEEPER's new names are duplicates of. */
 function shownNamesOf(topics: readonly TopicDraft[]): string[] {
   return topics.filter((t) => t && live(t) && !hiddenByAgreement(t) && topicClassOf(t) !== "NOT_CHECKED").map((t) => t.name);

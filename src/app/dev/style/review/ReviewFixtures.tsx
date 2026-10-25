@@ -46,6 +46,28 @@ const FOCUS: StudyFocus = {
   layerDue: 5,
 };
 
+/**
+ * Roadmap ruling N34 (the review round): the focus on a split layer's part (layer 1 of 4, part 1 of 2) under the user's own
+ * long aim, so 344 px shows the goal keeping its room in the top row (the part rides the title) and the card's words say
+ * "part" ("1 more in this part").
+ */
+const FOCUS_PART: StudyFocus = {
+  ...FOCUS,
+  goal: "Have skill to Pick stock, read financial report, diversify and balance portfolio of 100k size.",
+  layer: 1,
+  title: "Layer 1",
+  geminiTitle: false,
+  current: { key: "T2", name: "Liquidity Ratio", domainId: "d5", cards: 3, floor: 8, due: 2, live: 6, done: false },
+  rest: [
+    { key: "T3", name: "Emergency Fund", domainId: "d6", cards: 0, floor: 8, due: 0, live: 0, done: false },
+    { key: "T1", name: "Net Worth", domainId: "d7", cards: 8, floor: 8, due: 0, live: 9, done: true },
+  ],
+  done: 1,
+  total: 3,
+  layerDue: 2,
+  part: { i: 1, p: 2 },
+};
+
 function Nav({ state }: { state: FixtureState }) {
   return (
     <div className="page" style={{ paddingBottom: 0 }}>
@@ -98,7 +120,7 @@ export function ReviewFixtures({ state, data, loadoutStrip }: { state: FixtureSt
   const [selected, setSelected] = useState(ALL_FIELDS);
   const choose = async (k: BoonKind) => (k ? null : "No such boon.");
 
-  if (state === "hub" || state === "empty") {
+  if (state === "hub" || state === "hub-part" || state === "empty") {
     const empty = state === "empty";
     return (
       <>
@@ -106,7 +128,7 @@ export function ReviewFixtures({ state, data, loadoutStrip }: { state: FixtureSt
         <div className="page cq-main">
           <div className="rv-hub">
             <div className="rv-col">
-              {!empty && <RoadmapFocus focus={FOCUS} onReview={() => undefined} />}
+              {!empty && <RoadmapFocus focus={state === "hub-part" ? FOCUS_PART : FOCUS} onReview={() => undefined} />}
               <SessionSummary
                 quest={empty ? { done: 17, target: 15 } : data.questStart}
                 dueCount={empty ? 0 : selected === ALL_FIELDS ? 17 : selected === "Statistics" ? 8 : 5}

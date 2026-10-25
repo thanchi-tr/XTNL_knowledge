@@ -14,7 +14,10 @@
  *   ▸ 4 more in this layer
  *
  * Word-light: figures and names carry it. Review starts a run of the topic's due cards in one tap; with none due,
- * "Add an idea" is the one action (it files under the topic's Domain, /add?field=&domain=).
+ * "Add an idea" is the one action (it files under the topic's Domain, /add?field=&domain=). A split layer's part
+ * (ruling N34) lists its own topics and says "part" where an unsplit layer says "layer": its place rides the title as a
+ * meta ("Layer 1 · part 1 of 2", the h2 wraps), never the eyebrow, whose single nowrap row the goal shares (the review
+ * round: at 344 px the goal kept 53 px there). An unsplit layer's words are as they were.
  */
 import Link from "next/link";
 import { useState } from "react";
@@ -24,7 +27,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Mark } from "@/components/glyph/Glyph";
 import { GEMINI_MILESTONE_LABEL } from "@/components/roadmap/roadmap-copy";
 import type { StudyFocus, StudyTopic } from "@/lib/roadmap-study";
-import { OPEN_LEVEL } from "@/lib/roadmap-types";
+import { OPEN_LEVEL, layerPartWordsOf } from "@/lib/roadmap-types";
 
 const ADD_HREF = (fieldId: string | null, domainId: string): string => {
   const q = new URLSearchParams();
@@ -49,6 +52,9 @@ export function RoadmapFocus({ focus, onReview }: RoadmapFocusProps) {
     ...todo.map((t): Segment => (t === now ? "cur" : "off")),
   ];
   const others = [...todo.filter((t) => t !== now), ...focus.rest.filter((t) => t.done)];
+  // Ruling N34: a part's words ("part 1 of 2"; "this part"); "" and "this layer" on an unsplit layer.
+  const part = focus.part ? layerPartWordsOf(focus.part) || null : null;
+  const unit = part ? "part" : "layer";
   return (
     <section className="card rv-focus" aria-labelledby="rv-focus-h">
       <div className="rv-focus-top">
@@ -73,8 +79,9 @@ export function RoadmapFocus({ focus, onReview }: RoadmapFocusProps) {
         ) : (
           focus.title
         )}
+        {part && <span className="t-meta rv-focus-part"> · {part}</span>}
       </h2>
-      {focus.total > 0 && <SegmentStrip segs={segs} label={`${focus.done} of ${focus.total} topics done in layer ${focus.layer}`} />}
+      {focus.total > 0 && <SegmentStrip segs={segs} label={`${focus.done} of ${focus.total} topics done in ${part ?? `layer ${focus.layer}`}`} />}
 
       {now ? (
         <div className="rv-focus-now">
@@ -102,7 +109,7 @@ export function RoadmapFocus({ focus, onReview }: RoadmapFocusProps) {
               </Button>
             )}
             {todo.length > 1 && (
-              <button type="button" className="icon-btn rv-focus-next" aria-label="Next topic in this layer" onClick={() => setAt((i) => i + 1)}>
+              <button type="button" className="icon-btn rv-focus-next" aria-label={`Next topic in this ${unit}`} onClick={() => setAt((i) => i + 1)}>
                 <Icon name="chev" />
               </button>
             )}
@@ -110,7 +117,15 @@ export function RoadmapFocus({ focus, onReview }: RoadmapFocusProps) {
         </div>
       ) : (
         <p className="t-meta rv-focus-wait">
-          <Icon name="check" /> Layer {focus.layer} done · it opens the next once reached.
+          {part ? (
+            <>
+              <Icon name="check" /> Part {focus.part?.i} of {focus.part?.p} done · it counts once reached.
+            </>
+          ) : (
+            <>
+              <Icon name="check" /> Layer {focus.layer} done · it opens the next once reached.
+            </>
+          )}
         </p>
       )}
 
@@ -118,7 +133,7 @@ export function RoadmapFocus({ focus, onReview }: RoadmapFocusProps) {
         <div className="rv-focus-more">
           <button type="button" className="rv-focus-fold" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
             <Icon name="chev" />
-            {others.length} more in this layer
+            {others.length} more in this {unit}
           </button>
           {open && (
             <ul className="rv-focus-list">

@@ -2630,6 +2630,14 @@ export const KEEP_THESE_KEY = "Keep these: keeps this layer's names, placements 
 export function needsParentLine(n: number): string {
   return `${n} need a parent`;
 }
+/**
+ * Ruling N34: a layer the milestone cap left over TOPICS_PER_MILESTONE paying topics in one milestone (its parts could
+ * be raised no further), said under its header in a block of its own (the review round: the header's "Layer 1" is not
+ * said twice, and the layer block keeps its 6 words): "Large: 9 topics in one milestone".
+ */
+export function largeLayerLine(n: number): string {
+  return `Large: ${n} topics in one milestone`;
+}
 export function writeTopicAria(k: number): string {
   return `Write a topic in layer ${k}`;
 }
@@ -2645,6 +2653,27 @@ export function inPlanAria(name: string): string {
 }
 export function moreAboutAria(name: string): string {
   return `More about ${name}`;
+}
+// ─── Your Domains on a draft map (ruling N35) ───
+
+/** A topic's row offers the free Domain whose name equals or holds the topic's: "Use your Domain «Emergency Fund» · 12 cards" (one tap binds it). */
+export const USE_DOMAIN_WORD = "Use your Domain";
+export function domainCardsWord(n: number): string {
+  return `· ${plural(n, "card")}`;
+}
+export function useDomainAria(name: string, topic: string, n: number): string {
+  return `Use your Domain ${name} for ${topic}: ${plural(n, "card")}`;
+}
+/** The map's one folded tray of the rest: "Your Domains · 34 · add one to a layer". */
+export const LIBRARY_TRAY_WORD = "Your Domains";
+export const LIBRARY_TRAY_LEAD = "add one to a layer";
+/** A tray row's picker (44 px): the layer it adds to (default layer 1), then [Add]. */
+export const LIBRARY_ADD_WORD = "Add";
+export function libraryLayerAria(name: string): string {
+  return `Layer for ${name}`;
+}
+export function libraryAddAria(name: string, k: number): string {
+  return `Add ${name} to layer ${k}`;
 }
 // ─── Break a milestone down again (ruling N16) ───
 
@@ -2897,7 +2926,7 @@ export function afterLayerShort(k: number): string {
   return `after ${k}`;
 }
 export function lockedLayerSr(k: number): string {
-  return `builds on layer ${k}; opens when milestone ${k} is reached`;
+  return `builds on layer ${k}; opens when layer ${k} is reached`;
 }
 export const HELD_LAYER_WORD = "held";
 export const KNOWN_LAYER_SR = "you said you know these";

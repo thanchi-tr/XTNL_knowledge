@@ -3294,8 +3294,16 @@ function topicsViolationsOf(input: ProgressionInput, p: Progression): string[] {
   return out;
 }
 
-/** An accepted TOPICS layer milestone's title (ruling 22): "{domains} · layer {k} of {n}" over its Domains (domainsShort); with none, the draft's "Layer {k} of {n}". */
-export function topicLayerTitleOf(names: readonly DomainName[], layer: number, layers: number): CodeText {
+/**
+ * An accepted TOPICS layer milestone's title (ruling 22): "{domains} · layer {k} of {n}" over its Domains (domainsShort);
+ * with none, the draft's "Layer {k} of {n}". Ruling N34: a split layer's part reads the same with " · part {i} of {p}",
+ * over its own Domains (`part`: its place and its layer's count of parts; null or absent on an unsplit layer).
+ */
+export function topicLayerTitleOf(names: readonly DomainName[], layer: number, layers: number, part: { i: number; p: number } | null = null): CodeText {
+  if (part && part.p > 1) {
+    const fill = { k: layer, n: layers, i: part.i, p: part.p };
+    return names.length ? codeText("{domains} · layer {k} of {n} · part {i} of {p}", { domains: names, ...fill }) : codeText("Layer {k} of {n} · part {i} of {p}", fill);
+  }
   return names.length ? codeText("{domains} · layer {k} of {n}", { domains: names, k: layer, n: layers }) : codeText("Layer {k} of {n}", { k: layer, n: layers });
 }
 

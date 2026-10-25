@@ -23,14 +23,15 @@
  *   description "builds on: A, B" or "after layer k". The ▸ opens the TopicSheet.
  * - Trace (§15.5): data-trace="self" | "rel" | "other". A related row's 2 px rail fades in; every other
  *   row's marks, rails and checkboxes go ink-mute by class; names stay at ink-2 or darker (D35).
+ * - Ruling N35 (a draft): DomainOfferRow, the line under a row that offers your matching Domain in one tap.
  */
 import { useId } from "react";
 import { cx } from "@/components/ui/cx";
 import { Glyph, Mark } from "@/components/glyph/Glyph";
-import { NamedMark } from "@/components/glyph/NamedMark";
+import { DomainName, NamedMark } from "@/components/glyph/NamedMark";
 import { gateOfLevel } from "@/components/glyph/paths/stage";
-import type { TopicHideView, TopicRowView } from "@/lib/roadmap-types";
-import { HELD_TOPIC_SR, KNOWN_TOPIC_SR, TOPIC_CLASS_WORDS, afterLayerLine, buildsOnLine, hideReasonWordsOf, inPlanAria, moreAboutAria } from "./roadmap-copy";
+import type { TopicDomainOffer, TopicHideView, TopicRowView } from "@/lib/roadmap-types";
+import { HELD_TOPIC_SR, KNOWN_TOPIC_SR, TOPIC_CLASS_WORDS, USE_DOMAIN_WORD, afterLayerLine, buildsOnLine, domainCardsWord, hideReasonWordsOf, inPlanAria, moreAboutAria, useDomainAria } from "./roadmap-copy";
 import { isOwnWords, rowHasCheckbox, topicMarkOf } from "./topic-map-model";
 
 export type TraceRole = "self" | "rel" | "other" | null;
@@ -84,6 +85,26 @@ export function HideReason({ hide, lead, className }: { hide: TopicHideView; lea
         </>
       )}
     </span>
+  );
+}
+
+/**
+ * Ruling N35: the free Domain offered on a topic (TopicRowView.domainOffer), the line under its row in the same list:
+ * one 44 px button "[pv.library] Use your Domain «Emergency Fund» · 12 cards" (the name through DomainName, its mark
+ * after a Gemini-named one). The tap is useMyDomain (the topic bound to it, its cards counted); nothing binds without it.
+ * Its app words are its own block (topic-offer), never the row's: a topic row still holds none. Its spoken name says the
+ * topic it binds (the review round: useDomainAria, "Use your Domain X for <topic>: n cards").
+ */
+export function DomainOfferRow({ row, offer, onUse, pending }: { row: Pick<TopicRowView, "key" | "name">; offer: TopicDomainOffer; onUse: (key: string, domainId: string) => void; pending?: boolean }) {
+  return (
+    <li className="rm-tm-offer" data-offer={row.key} data-wc-block="topic-offer">
+      <button type="button" className="rm-tm-use" aria-label={useDomainAria(offer.name, row.name, offer.cards)} disabled={pending} onClick={() => onUse(row.key, offer.id)}>
+        <Glyph name="pv.library" size={16} inherit />
+        <span className="rm-tm-use-t">
+          {USE_DOMAIN_WORD} <DomainName name={offer.name} geminiNamed={offer.geminiNamed} /> {domainCardsWord(offer.cards)}
+        </span>
+      </button>
+    </li>
   );
 }
 

@@ -456,7 +456,11 @@ class FakeWorld {
     const m = t.roadmapMilestone.find((x) => x.id === milestoneId && x.roadmapId === roadmapId);
     if (!m || !t.roadmap.some((r) => r.id === roadmapId && r.userId === userId)) return false;
     const layer = m.layer ?? null;
-    if (t.roadmapMilestone.some((p) => p.roadmapId === m.roadmapId && p.chainRole === "LAYER" && layer != null && p.layer === layer - 1 && p.reachedDay != null && p.status !== "DISCARDED")) return true;
+    // Ruling N34: the layer before is reached when a row of it is and every live part of it (each lineage) is.
+    const before = t.roadmapMilestone.filter((p) => p.roadmapId === m.roadmapId && p.chainRole === "LAYER" && layer != null && p.layer === layer - 1);
+    const reachedRow = (p: (typeof before)[number]) => p.reachedDay != null && p.status !== "DISCARDED";
+    const livePart = (p: (typeof before)[number]) => ["PLANNED", "STARTING", "STARTED", "LATER"].includes(p.status);
+    if (before.some(reachedRow) && before.every((q) => !livePart(q) || t.roadmapMilestone.some((x) => x.roadmapId === q.roadmapId && x.lineageId === q.lineageId && reachedRow(x)))) return true;
     const live = (x: TopicRowRec) => x.roadmapId === m.roadmapId && x.version === m.version && x.chosen && x.decision !== "REMOVED" && x.decision !== "MERGED";
     const counting = (x: EdgeRowRec) => x.roadmapId === m.roadmapId && x.version === m.version && x.decision !== "REMOVED" && (x.origin !== "GEMINI" || x.drawn);
     const floor = 8; // TOPIC_FLOOR_CARDS
@@ -8965,6 +8969,515 @@ async function main() {
     const lw = world();
     const lid = await accepted(lw);
     eq("N27 page: a LEVELS plan refuses a parent pick", editErr(await S.editPlanCore(USER, lid, { kind: "PICK_PARENT", childKey: "T1", parentKey: "T2" }, NOW, depsFor(lw))), S.PLAN_EDIT_PARENT_TOPICS);
+  });
+
+  // ═══ Roadmap rework 2 (contracts §22.20 ruling N34): a large layer split into parts ═══════════════
+  //
+  // The user's words (2026-10-26): "after i use that feature, it break out really good, with 1 major problem milestone 1
+  // is too heavy (too many topic) relative to other mile stone."
+  await topicBlock("roadmap rework 2, P1: a layer of ten topics as two parts (ruling N34): the parts' views, the gate across parts equal to PREREQS_MET, edits re-split with Undo", async () => {
+    const w = world();
+    const id = await writtenTopics(w, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains"]);
+    const deps = topicDepsFor(w);
+    // Layer 2 holds ten topics: Bayes rule and nine more, in map order.
+    const extra = ["Conditional odds", "Expectation", "Variance rules", "Joint laws", "Moment generators", "Covariance", "Sampling plans", "Order statistics", "Transforms"];
+    for (const name of extra) must(await S.addTopicCore(USER, id, 2, name, NOW, deps), `add ${name}`);
+    const draftView = await S.loadRoadmapView(USER, NOW, deps, id);
+    const draftRows = rowsOf(w, id, (w.t.roadmap.find((r) => r.id === id) as RoadmapRec).version + 1).filter((m) => m.status === "DRAFT").sort((a, b) => a.ord - b.ord);
+    eq(
+      "N34 the draft: layer 2's ten topics are two milestones of five ('Layer 2 of 3 · part 1 of 2', '… part 2 of 2'), the other layers one each; the draft map says layer 2 is two milestones",
+      [draftRows.map((m) => [m.chainRole, m.layer, m.title]), draftView.draft?.topicMap?.layers.map((l) => l.parts ?? 1)],
+      [
+        [
+          ["LAYER", 1, "Inference · layer 1 of 3"],
+          ["LAYER", 2, "Layer 2 of 3 · part 1 of 2"],
+          ["LAYER", 2, "Layer 2 of 3 · part 2 of 2"],
+          ["LAYER", 3, "Layer 3 of 3"],
+          ["DEPTH", null, draftRows[4]?.title ?? ""],
+        ],
+        [1, 2, 1],
+      ]
+    );
+    must(await S.acceptCore(USER, id, topicAccept(11), NOW, deps), "accept the topic plan");
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const v = row().version;
+    const layerRows = (version = row().version) => rowsOf(w, id, version).filter((m) => m.chainRole === "LAYER" && (m.status === "PLANNED" || m.status === "STARTED")).sort((a, b) => a.ord - b.ord);
+    const partRow = (layer: number, i: number, version = row().version) => layerRows(version).filter((m) => m.layer === layer)[i - 1] as MilestoneRec;
+    const view = () => S.loadRoadmapView(USER, NOW, deps, id);
+    const node = (vw: Awaited<ReturnType<typeof S.loadRoadmapView>>, m: MilestoneRec | undefined) => vw.milestones.find((r) => r.id === m?.id);
+    const ownNames = (vw: Awaited<ReturnType<typeof S.loadRoadmapView>>, m: MilestoneRec | undefined) => node(vw, m)?.topics?.map((t) => t.name) ?? null;
+    const v0 = await view();
+    const part1 = ["Bayes rule", "Conditional odds", "Expectation", "Variance rules", "Joint laws"];
+    const part2 = ["Moment generators", "Covariance", "Sampling plans", "Order statistics", "Transforms"];
+    eq(
+      "N34 accepted: layer 2's parts are two rows of one layer (no stored discriminator: their place is their ord), each titled with its own Domains and its place, each paying only its own five topics; the rail reads part 1 of 2 and 2 of 2 with each part's own topics",
+      [
+        layerRows().map((m) => [m.layer, m.title, measuresOf(w, m.id).filter((x) => x.role === "PAYS" && x.kind === "CARDS_AT_LEVEL").length]),
+        [node(v0, partRow(2, 1))?.part, node(v0, partRow(2, 2))?.part, node(v0, partRow(1, 1))?.part ?? null],
+        [ownNames(v0, partRow(2, 1)), ownNames(v0, partRow(2, 2))],
+        v0.topicMap?.layers.map((l) => [l.layer, l.parts ?? 1, l.large ?? null]),
+      ],
+      [
+        [
+          [1, "Inference · layer 1 of 3", 1],
+          [2, "Bayes rule, Conditional odds and three more · layer 2 of 3 · part 1 of 2", 5],
+          [2, "Moment generators, Covariance and three more · layer 2 of 3 · part 2 of 2", 5],
+          [3, "Markov chains · layer 3 of 3", 1],
+        ],
+        [{ i: 1, p: 2 }, { i: 2, p: 2 }, null],
+        [part1, part2],
+        [
+          [1, 1, null],
+          [2, 2, null],
+          [3, 1, null],
+        ],
+      ]
+    );
+    const domainOf = (name: string) => w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === row().version && t.name === name)?.domainId as string;
+    const fill = (name: string, n: number) => {
+      const d = w.tree.flatMap((f) => f.domains).find((x) => x.id === domainOf(name));
+      if (d) d.cards.push(...Array.from({ length: n }, () => card(d.id, 6)));
+    };
+    const guard = (m: MilestoneRec) => w.applyNow(USER, [{ op: "guard", guard: { g: "PREREQS_MET", roadmapId: id, milestoneId: m.id } }]);
+    const agree = async (label: string) => {
+      const vw = await view();
+      const got = [partRow(2, 1), partRow(2, 2), partRow(3, 1)].map((m) => [m.layer, node(vw, m)?.lock == null, guard(m) === "ok"]);
+      check(`N34 ${label}: on every layer row, each part too, the lock is null exactly when the store's PREREQS_MET guard holds`, got.every(([, open, met]) => open === met), json(got));
+      return vw;
+    };
+    const va = await agree("as accepted (layer 2's parts locked on Inference, layer 3 on all ten)");
+    eq(
+      "N34 parts share their layer's parents: both parts of layer 2 wait on Inference (4 of 8) alone, part 2 never on part 1's topics; layer 3 waits on all ten topics of layer 2, both parts",
+      [node(va, partRow(2, 1))?.lock?.parents.map((p) => p.name), node(va, partRow(2, 2))?.lock?.parents.map((p) => p.name), node(va, partRow(3, 1))?.lock?.parents.length, node(va, partRow(2, 2))?.opensAfter],
+      [["Inference"], ["Inference"], 10, 1]
+    );
+    // Layer 1 reached on cards: both parts open at once (part 2 is never held back by part 1: only the one-live-milestone rule orders them).
+    (w.t.roadmapMilestone.find((m) => m.id === partRow(1, 1).id) as MilestoneRec).reachedDay = TODAY;
+    const vb = await agree("layer 1 reached on cards (both parts of layer 2 open)");
+    eq(
+      "N34 with layer 1 reached, both parts of layer 2 open (no lock, no opensAfter), the current milestone is part 1 with its own five topics, and the hero studies part 1's first topic",
+      [node(vb, partRow(2, 1))?.lock, node(vb, partRow(2, 2))?.lock, node(vb, partRow(2, 2))?.opensAfter, vb.current?.milestone.id === partRow(2, 1).id, vb.current?.topics?.map((t) => t.name), vb.current?.part],
+      [null, null, null, true, part1, { i: 1, p: 2 }]
+    );
+    // Part 1's topics at their floor and the part reached on cards: layer 3 still waits (part 2 is not reached, and its topics are short).
+    for (const name of part1) fill(name, 8);
+    (w.t.roadmapMilestone.find((m) => m.id === partRow(2, 1).id) as MilestoneRec).reachedDay = TODAY;
+    const vc = await agree("part 1 reached on cards, part 2 not (layer 3 still locked)");
+    const NA = await import("../src/components/roadmap/next-action");
+    const depsOff = topicDepsFor(w, { goalsLive: false });
+    const heroC = NA.nextActionOf(await S.loadRoadmapView(USER, NOW, depsOff, id)).primary.label;
+    const cardC = (await S.loadAimCards(USER, NOW, depsOff)).find((x) => x.roadmapId === id);
+    eq(
+      "N34 every part of a layer must be reached: with part 1 reached on cards and part 2 not, layer 3 stays locked, now on part 2's five topics alone (part 1's at their floor); the current milestone moves to part 2 (its own topics), and the hero, Today and GET /quests study part 2's first topic",
+      [node(vc, partRow(3, 1))?.lock?.parents.filter((p) => !p.met).map((p) => p.name), vc.current?.milestone.id === partRow(2, 2).id, vc.current?.topics?.map((t) => t.name), vc.current?.part, heroC, cardC?.study?.name ?? null, cardC?.milestone?.title ?? null],
+      [part2, true, part2, { i: 2, p: 2 }, "Add an idea to Moment generators", "Moment generators", "Moment generators, Covariance and three more · layer 2 of 3 · part 2 of 2"]
+    );
+    // The Review hub's own rows (review-data studyFocusFromRows over the rows its loader selects) land on the same part.
+    const RD = await import("../src/app/review/review-data");
+    const hubFocus = () => {
+      const r = row();
+      const rows = {
+        roadmap: { id, aim: r.aim, label: r.label ?? null, version: r.version, fieldId: r.fieldId ?? null, rating: r.rating },
+        topics: w.t.roadmapTopic
+          .filter((t) => t.roadmapId === id && t.version === r.version)
+          .map((t) => ({ key: t.key, lineageId: t.lineageId, layer: t.layer, name: t.name, domainId: t.domainId, chosen: t.chosen, decision: t.decision, skippedDay: t.skippedDay ? NOW : null, heldDay: t.heldDay ? NOW : null })),
+        milestones: w.t.roadmapMilestone
+          .filter((m) => m.roadmapId === id && m.chainRole === "LAYER" && ["PLANNED", "STARTING", "STARTED"].includes(m.status))
+          .sort((a, b) => b.version - a.version)
+          .map((m) => ({ layer: m.layer ?? null, title: m.title, status: m.status, reachedDay: m.reachedDay ? NOW : null, lineageId: m.lineageId, ord: m.ord, measures: measuresOf(w, m.id).filter((x) => x.kind === "CARDS_AT_LEVEL").map((x) => ({ topicLineageId: x.topicLineageId ?? null, target: x.target, role: x.role })) })),
+      };
+      const fields = w.tree.map((fd) => ({ id: fd.id, name: fd.name, domains: fd.domains.map((d) => ({ id: d.id, name: d.name, ideas: d.cards.map((c) => ({ dueDate: NOW, level: c.level, questionType: c.type ?? null })) })) }));
+      return RD.studyFocusFromRows(rows, fields, () => true);
+    };
+    const hub = hubFocus();
+    eq(
+      "N34 the Review hub's focus reads the split too: on layer 2, part 2 of 2 (part 1 reached on cards), its own five topics, Moment generators now",
+      hub && { layer: hub.layer, part: hub.part, total: hub.total, now: hub.current?.name },
+      { layer: 2, part: { i: 2, p: 2 }, total: 5, now: "Moment generators" }
+    );
+    eq(
+      "N34 the topic map reads layer 2 open while a part of it is still to reach (DONE only when every part is)",
+      vc.topicMap?.layers.map((l) => [l.layer, l.state]),
+      [
+        [1, "DONE"],
+        [2, "OPEN"],
+        [3, "AFTER"],
+      ]
+    );
+    (w.t.roadmapMilestone.find((m) => m.id === partRow(2, 2).id) as MilestoneRec).reachedDay = TODAY;
+    const vd = await agree("both parts reached on cards (layer 3 opens by the first branch, part 2's topics still short)");
+    eq(
+      "N34 both parts reached: layer 3 opens in the view and in the guard (the first branch: every part of layer 2 reached), the map reads layer 2 DONE",
+      [node(vd, partRow(3, 1))?.lock, guard(partRow(3, 1)), vd.topicMap?.layers.find((l) => l.layer === 2)?.state],
+      [null, "ok", "DONE"]
+    );
+    check(
+      "N34 the PREREQS_MET SQL's first branch reads every part (each live layer row of the layer before has a reached row of its lineage), with lockParentsOf's first branch beside it (layerBeforeReachedOf, PART_LIVE_STATUSES)",
+      /AND NOT EXISTS \(SELECT 1 FROM "RoadmapMilestone" m JOIN "RoadmapMilestone" q ON q\."roadmapId" = m\."roadmapId"\n\s+WHERE m\."id" = \$\{g\.milestoneId\} AND q\."chainRole" = 'LAYER' AND q\."layer" = m\."layer" - 1\n\s+AND q\."status" IN \(\$\{Prisma\.join\(\[\.\.\.PART_LIVE_STATUSES\]\)\}\)\n\s+AND NOT EXISTS \(SELECT 1 FROM "RoadmapMilestone" x WHERE x\."roadmapId" = q\."roadmapId" AND x\."lineageId" = q\."lineageId"/.test(readLf("src/lib/roadmap-server.ts")) &&
+        /if \(layerBeforeReachedOf\(b, row\)\) return null;/.test(readLf("src/lib/roadmap-server.ts")) &&
+        /const PART_LIVE_STATUSES: readonly MilestoneStatus\[\] = \["PLANNED", "STARTING", "STARTED", "LATER"\];/.test(readLf("src/lib/roadmap-server.ts"))
+    );
+    for (const m of [partRow(1, 1), partRow(2, 1), partRow(2, 2)]) (w.t.roadmapMilestone.find((x) => x.id === m.id) as MilestoneRec).reachedDay = null;
+
+    // Plan edits re-split the layer in the rebuilt version (version + 1), each part keeping its position's lineage; Undo restores the split before.
+    const lineages = (version: number) => layerRows(version).filter((m) => m.layer === 2).map((m) => m.lineageId);
+    const before = lineages(v);
+    const f = w.tree.find((x) => x.id === "f-stats") as TreeField;
+    f.domains.push({ id: "d-odds", name: "Odds Ratios", fieldId: "f-stats", cards: [...Array(3)].map(() => card("d-odds", 2)) });
+    const add = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: partRow(2, 2).id, domainId: "d-odds" }, NOW, deps);
+    const v2 = row().version;
+    const va2 = await view();
+    eq(
+      "N34 an added topic re-splits its layer at version + 1: eleven topics as 6 and 5 (the earlier part the larger), each part's lineage kept, the new topic last in map order (part 2)",
+      [add.ok, v2, lineages(v2), [ownNames(va2, partRow(2, 1, v2))?.length, ownNames(va2, partRow(2, 2, v2))]],
+      [true, v + 1, before, [6, ["Covariance", "Sampling plans", "Order statistics", "Transforms", "Odds Ratios"]]]
+    );
+    const typedName = (name: string) => w.tree.flatMap((x) => x.domains).find((d) => d.id === domainOf(name))?.name ?? name;
+    const rm = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: partRow(2, 1, v2).id, domainId: domainOf("Expectation"), typed: typedName("Expectation") }, NOW, deps);
+    const v3 = row().version;
+    const va3 = await view();
+    eq(
+      "N34 a removed topic re-splits its layer too, by card need: ten again, the four of part 1 already at their floor needing 3 cards each, so 6 and 4 (34 cards and 41) rather than 5 and 5 (23 and 52); the lineages kept",
+      [rm.ok, v3, lineages(v3), [ownNames(va3, partRow(2, 1, v3)), ownNames(va3, partRow(2, 2, v3))]],
+      [true, v2 + 1, before, [["Bayes rule", "Conditional odds", "Variance rules", "Joint laws", "Moment generators", "Covariance"], ["Sampling plans", "Order statistics", "Transforms", "Odds Ratios"]]]
+    );
+    for (const name of ["Joint laws", "Covariance", "Sampling plans", "Order statistics"]) {
+      const cur = row().version;
+      const vw = await view();
+      const holder = layerRows(cur).find((m) => m.layer === 2 && (ownNames(vw, m) ?? []).includes(name)) as MilestoneRec;
+      must(await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: holder.id, domainId: domainOf(name), typed: typedName(name) }, NOW, deps), `remove ${name}`);
+    }
+    const v7 = row().version;
+    const vu = await view();
+    eq(
+      "N34 down to six topics the layer is one milestone again: its first part's lineage, no part on the row, the old part 2 superseded; titled as an unsplit layer",
+      [lineages(v7), node(vu, partRow(2, 1, v7))?.part ?? null, partRow(2, 1, v7)?.title, w.t.roadmapMilestone.filter((m) => m.lineageId === before[1] && m.version === v7 - 1).map((m) => m.status)],
+      [[before[0]], null, "Bayes rule, Conditional odds and four more · layer 2 of 3", ["SUPERSEDED"]]
+    );
+    const undo = await S.undoAcceptCore(USER, id, v7, NOW, deps);
+    eq("N34 Undo restores the version before, split as it was (two parts, the lineages as they were)", [undo.ok, row().version, lineages(row().version).length], [true, v7 - 1, 2]);
+
+    // A started part keeps its topics through a rebuild (the split never moves a topic into or out of a part under way).
+    const w2 = world();
+    const id2 = await writtenTopics(w2, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains"]);
+    const deps2 = topicDepsFor(w2);
+    for (const name of extra) must(await S.addTopicCore(USER, id2, 2, name, NOW, deps2), `add ${name}`);
+    must(await S.acceptCore(USER, id2, topicAccept(11), NOW, deps2), "accept the second plan");
+    const row2 = () => w2.t.roadmap.find((r) => r.id === id2) as RoadmapRec;
+    const parts2 = (version = row2().version) => rowsOf(w2, id2, version).filter((m) => m.chainRole === "LAYER" && m.layer === 2 && (m.status === "PLANNED" || m.status === "STARTED")).sort((a, b) => a.ord - b.ord);
+    const started = parts2()[0];
+    const startedPays = measuresOf(w2, started.id).filter((x) => x.role === "PAYS" && x.kind === "CARDS_AT_LEVEL").map((x) => x.topicLineageId).sort();
+    w2.templates.push({ id: "g-l2-part1", title: "layer 2 part 1", normTitle: "layer 2 part 1", kind: "GOAL", recurrence: null, parentId: null, archivedAt: null, closedScore: null, completedAt: null, dueDay: null, stated: 6, captureKey: null, link: null, parsed: null, horizon: "MID" });
+    Object.assign(started, { status: "STARTED", goalId: "g-l2-part1" });
+    const f2 = w2.tree.find((x) => x.id === "f-stats") as TreeField;
+    f2.domains.push({ id: "d-odds", name: "Odds Ratios", fieldId: "f-stats", cards: [...Array(3)].map(() => card("d-odds", 2)) });
+    const add2 = await S.editPlanCore(USER, id2, { kind: "ADD_TOPIC", milestoneId: parts2()[1].id, domainId: "d-odds" }, NOW, deps2);
+    // The started part stays at its version (a version never copies it); the rebuilt part is the new version's.
+    const after2 = [w2.t.roadmapMilestone.find((m) => m.id === started.id) as MilestoneRec, ...parts2()];
+    const vw2 = await S.loadRoadmapView(USER, NOW, deps2, id2);
+    const lin = (version: number) => new Map(w2.t.roadmapTopic.filter((t) => t.roadmapId === id2 && t.version === version).map((t) => [t.lineageId, t.name] as const));
+    const names2 = lin(row2().version);
+    eq(
+      "N34 a started part keeps its five topics (its row as it was, never copied); the unstarted part takes the rest and the new topic (six, one part), so the layer reads part 1 of 2 (started) and 2 of 2",
+      [
+        add2.ok,
+        after2.map((m) => [m.status, m.version === row2().version, measuresOf(w2, m.id).filter((x) => x.role === "PAYS" && x.kind === "CARDS_AT_LEVEL").length]),
+        measuresOf(w2, after2[0].id).filter((x) => x.role === "PAYS" && x.kind === "CARDS_AT_LEVEL").map((x) => x.topicLineageId).sort(),
+        measuresOf(w2, after2[1]?.id ?? "").filter((x) => x.role === "PAYS" && x.kind === "CARDS_AT_LEVEL").map((x) => names2.get(x.topicLineageId as string)),
+        after2[1]?.title,
+        after2.map((m) => vw2.milestones.find((r) => r.id === m?.id)?.part ?? null),
+      ],
+      [
+        true,
+        [
+          ["STARTED", false, 5],
+          ["PLANNED", true, 6],
+        ],
+        startedPays,
+        ["Moment generators", "Covariance", "Sampling plans", "Order statistics", "Transforms", "Odds Ratios"],
+        "Moment generators, Covariance and four more · layer 2 of 3 · part 2 of 2",
+        [
+          { i: 1, p: 2 },
+          { i: 2, p: 2 },
+        ],
+      ]
+    );
+    // A part reached on cards keeps its topics too (ruling N26 carries its day to version + 1, so the split must not move them).
+    const w3 = world();
+    const id3 = await writtenTopics(w3, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains"]);
+    const deps3 = topicDepsFor(w3);
+    for (const name of extra) must(await S.addTopicCore(USER, id3, 2, name, NOW, deps3), `add ${name}`);
+    must(await S.acceptCore(USER, id3, topicAccept(11), NOW, deps3), "accept the third plan");
+    const row3 = () => w3.t.roadmap.find((r) => r.id === id3) as RoadmapRec;
+    const parts3 = (version = row3().version) => rowsOf(w3, id3, version).filter((m) => m.chainRole === "LAYER" && m.layer === 2 && m.status === "PLANNED").sort((a, b) => a.ord - b.ord);
+    const own3 = (m: MilestoneRec) => measuresOf(w3, m.id).filter((x) => x.kind === "CARDS_AT_LEVEL" && x.minLevel === 6 && x.topicLineageId).map((x) => x.topicLineageId).sort();
+    const reached3 = parts3()[0];
+    const before3 = own3(reached3);
+    (w3.t.roadmapMilestone.find((m) => m.id === reached3.id) as MilestoneRec).reachedDay = TODAY;
+    const f3 = w3.tree.find((x) => x.id === "f-stats") as TreeField;
+    f3.domains.push({ id: "d-odds", name: "Odds Ratios", fieldId: "f-stats", cards: [...Array(3)].map(() => card("d-odds", 2)) });
+    const add3 = await S.editPlanCore(USER, id3, { kind: "ADD_TOPIC", milestoneId: parts3()[1].id, domainId: "d-odds" }, NOW, deps3);
+    const after3 = parts3();
+    eq(
+      "N34 a part reached on cards keeps its five topics through a rebuild (its lineage and day carried to version + 1, as ruling N26 carries them), and the added topic joins the other part (six)",
+      [add3.ok, after3.length, after3[0]?.lineageId === reached3.lineageId, after3[0]?.reachedDay, after3[0] ? own3(after3[0]) : null, after3[1] ? own3(after3[1]).length : null],
+      [true, 2, true, TODAY, before3, 6]
+    );
+
+    // The review round: part 1 reached on cards and part 2 started (the Start sheet's own order), then two plan edits. A
+    // rebuilt part takes its place in chain order beside the carried one (chainOrdsOf), so the titles, the view's part and
+    // the hero agree, and the next edit's CARRY practices read as written.
+    const w4 = world();
+    const id4 = await writtenTopics(w4, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains"]);
+    const deps4 = topicDepsFor(w4);
+    for (const name of extra) must(await S.addTopicCore(USER, id4, 2, name, NOW, deps4), `add ${name}`);
+    must(await S.acceptCore(USER, id4, topicAccept(11), NOW, deps4), "accept the fourth plan");
+    const row4 = () => w4.t.roadmap.find((r) => r.id === id4) as RoadmapRec;
+    const live4 = () => w4.t.roadmapMilestone.filter((m) => m.roadmapId === id4 && m.chainRole === "LAYER" && (m.status === "PLANNED" || m.status === "STARTED")).sort((a, b) => a.ord - b.ord);
+    (live4().find((m) => m.layer === 1) as MilestoneRec).reachedDay = TODAY;
+    const p41 = live4().filter((m) => m.layer === 2)[0];
+    for (const x of measuresOf(w4, p41.id).filter((x) => x.role === "PAYS" && x.kind === "CARDS_AT_LEVEL" && x.minLevel === 6)) {
+      const d = w4.tree.flatMap((fd) => fd.domains).find((y) => y.id === (x.scope as { domainIds?: string[] }).domainIds?.[0]);
+      if (d) d.cards.push(...Array.from({ length: 8 }, () => card(d.id, 6)));
+    }
+    (w4.t.roadmapMilestone.find((m) => m.id === p41.id) as MilestoneRec).reachedDay = TODAY;
+    const p42 = live4().filter((m) => m.layer === 2)[1];
+    w4.templates.push({ id: "g-l2-part2", title: "layer 2 part 2", normTitle: "layer 2 part 2", kind: "GOAL", recurrence: null, parentId: null, archivedAt: null, closedScore: null, completedAt: null, dueDay: null, stated: 6, captureKey: null, link: null, parsed: null, horizon: "MID" });
+    Object.assign(p42, { status: "STARTED", goalId: "g-l2-part2" });
+    const f4 = w4.tree.find((x) => x.id === "f-stats") as TreeField;
+    const placesOf = async () => {
+      const vw = await S.loadRoadmapView(USER, NOW, deps4, id4);
+      return {
+        rows: live4()
+          .filter((m) => m.layer === 2)
+          .map((m) => [/part (\d) of (\d)$/.exec(m.title)?.slice(1).map(Number) ?? null, vw.milestones.find((r) => r.id === m.id)?.part ?? null, m.status, m.lineageId === p41.lineageId ? "p1" : m.lineageId === p42.lineageId ? "p2" : "?"]),
+        current: [vw.current?.milestone.id === p42.id, vw.current?.part ?? null],
+        ords: live4().map((m) => m.layer),
+      };
+    };
+    const results4: string[] = [];
+    for (const [k, name] of ["Odds Ratios", "Rare events"].entries()) {
+      f4.domains.push({ id: `d-x4${k}`, name, fieldId: "f-stats", cards: [] });
+      const l3 = live4().find((m) => m.layer === 3) as MilestoneRec;
+      const r = await S.editPlanCore(USER, id4, { kind: "ADD_TOPIC", milestoneId: l3.id, domainId: `d-x4${k}` }, NOW, deps4);
+      results4.push(r.ok ? "ok" : r.error);
+    }
+    const after4 = await placesOf();
+    eq(
+      "N34 (the review round): part 1 reached on cards, part 2 started, then two ADD_TOPIC edits to layer 3: both are saved (version 3); each layer-2 title's place equals the view's part (part 1 the reached one, part 2 the started one), the current milestone is part 2 of 2, and the plan's ords read the chain (layers 1, 2, 2, 3)",
+      [results4, row4().version, after4.rows, after4.current, after4.ords],
+      [
+        ["ok", "ok"],
+        3,
+        [
+          [[1, 2], { i: 1, p: 2 }, "PLANNED", "p1"],
+          [[2, 2], { i: 2, p: 2 }, "STARTED", "p2"],
+        ],
+        [true, { i: 2, p: 2 }],
+        [1, 2, 2, 3],
+      ]
+    );
+    // REMOVE_TOPIC names its part: a topic of part 1 sent with part 2's row is refused (it isn't that part's), so a started
+    // part's topic always goes in place (N24) through its own row, never through another part's rebuild.
+    const w5 = world();
+    const id5 = await writtenTopics(w5, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains"]);
+    const deps5 = topicDepsFor(w5);
+    for (const name of extra) must(await S.addTopicCore(USER, id5, 2, name, NOW, deps5), `add ${name}`);
+    must(await S.acceptCore(USER, id5, topicAccept(11), NOW, deps5), "accept the fifth plan");
+    const row5 = () => w5.t.roadmap.find((r) => r.id === id5) as RoadmapRec;
+    const parts5 = () => w5.t.roadmapMilestone.filter((m) => m.roadmapId === id5 && m.chainRole === "LAYER" && m.layer === 2 && (m.status === "PLANNED" || m.status === "STARTED")).sort((a, b) => a.ord - b.ord);
+    const [p51, p52] = parts5();
+    w5.templates.push({ id: "g-l2-part1b", title: "layer 2 part 1", normTitle: "layer 2 part 1", kind: "GOAL", recurrence: null, parentId: null, archivedAt: null, closedScore: null, completedAt: null, dueDay: null, stated: 6, captureKey: null, link: null, parsed: null, horizon: "MID" });
+    Object.assign(p51, { status: "STARTED", goalId: "g-l2-part1b" });
+    const bayes5 = w5.t.roadmapTopic.find((t) => t.roadmapId === id5 && t.version === row5().version && t.name === "Bayes rule")?.domainId as string;
+    const bayesName5 = w5.tree.flatMap((x) => x.domains).find((d) => d.id === bayes5)?.name ?? "Bayes rule";
+    const v5 = row5().version;
+    const rm5 = await S.editPlanCore(USER, id5, { kind: "REMOVE_TOPIC", milestoneId: p52.id, domainId: bayes5, typed: bayesName5 }, NOW, deps5);
+    eq(
+      "N34 (the review round): REMOVE_TOPIC with part 2's row for a topic of the started part 1 is refused (PLAN_EDIT_NOT_HERE: not that part's), nothing changed; with part 1's own row it goes in place (N24: the row still STARTED, its four others kept)",
+      [rm5.ok ? "ok" : rm5.error, row5().version === v5],
+      [S.PLAN_EDIT_NOT_HERE, true]
+    );
+    must(await S.editPlanCore(USER, id5, { kind: "REMOVE_TOPIC", milestoneId: p51.id, domainId: bayes5, typed: bayesName5 }, NOW, deps5), "remove Bayes rule through its own part");
+    eq("N34 (the review round): …through its own part it leaves the started row in place", [w5.t.roadmapMilestone.find((m) => m.id === p51.id)?.status, measuresOf(w5, p51.id).filter((x) => x.role === "PAYS" && x.kind === "CARDS_AT_LEVEL" && x.minLevel === 6).length], ["STARTED", 4]);
+    // A started part 2 whose part 1 is removed topic by topic: the layer is then the started part alone, matched by its
+    // topics (never a duplicate PLANNED row paying them, whatever its old place).
+    const w6 = world();
+    const id6 = await writtenTopics(w6, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains"]);
+    const deps6 = topicDepsFor(w6);
+    for (const name of extra) must(await S.addTopicCore(USER, id6, 2, name, NOW, deps6), `add ${name}`);
+    must(await S.acceptCore(USER, id6, topicAccept(11), NOW, deps6), "accept the sixth plan");
+    const row6 = () => w6.t.roadmap.find((r) => r.id === id6) as RoadmapRec;
+    const parts6 = () => w6.t.roadmapMilestone.filter((m) => m.roadmapId === id6 && m.chainRole === "LAYER" && m.layer === 2 && (m.status === "PLANNED" || m.status === "STARTED")).sort((a, b) => a.ord - b.ord);
+    const p62 = parts6()[1];
+    const p62Pays = measuresOf(w6, p62.id).filter((x) => x.role === "PAYS" && x.kind === "CARDS_AT_LEVEL" && x.minLevel === 6).map((x) => x.topicLineageId).sort();
+    w6.templates.push({ id: "g-l2-part2c", title: "layer 2 part 2", normTitle: "layer 2 part 2", kind: "GOAL", recurrence: null, parentId: null, archivedAt: null, closedScore: null, completedAt: null, dueDay: null, stated: 6, captureKey: null, link: null, parsed: null, horizon: "MID" });
+    Object.assign(p62, { status: "STARTED", goalId: "g-l2-part2c" });
+    const rm6: string[] = [];
+    for (const name of ["Bayes rule", "Conditional odds", "Expectation", "Variance rules", "Joint laws"]) {
+      const d = w6.t.roadmapTopic.find((t) => t.roadmapId === id6 && t.version === row6().version && t.name === name)?.domainId as string;
+      const typed = w6.tree.flatMap((x) => x.domains).find((x) => x.id === d)?.name ?? name;
+      const holder = parts6().find((m) => m.status === "PLANNED") as MilestoneRec;
+      const r = await S.editPlanCore(USER, id6, { kind: "REMOVE_TOPIC", milestoneId: holder.id, domainId: d, typed }, NOW, deps6);
+      rm6.push(r.ok ? "ok" : r.error);
+    }
+    const paying6 = w6.t.roadmapMilestone
+      .filter((m) => m.roadmapId === id6 && m.status === "PLANNED" && m.version === row6().version)
+      .flatMap((m) => measuresOf(w6, m.id).filter((x) => x.role === "PAYS" && x.kind === "CARDS_AT_LEVEL" && x.minLevel === 6 && p62Pays.includes(x.topicLineageId)));
+    eq(
+      "N34 (the review round): with part 2 started and part 1's five topics removed one by one, layer 2 is the started part alone: no PLANNED row of the new version pays any of its topics (it is matched by its topics, never by a place), and the plan reads one row for layer 2",
+      [rm6, paying6.length, parts6().map((m) => m.status)],
+      [["ok", "ok", "ok", "ok", "ok"], 0, ["STARTED"]]
+    );
+
+    // The review round: pinned parts count against the cap. Five layers at L* 12 with layer 1 split (8 milestones) and
+    // part 1 started: a new layer would need 9, so the edit sheet offers no place for one and a sent one is refused in
+    // the cap's words, the version unchanged (the depth tail is never cut).
+    const w7 = world();
+    const id7 = await writtenTopics(w7, { ...TOPICS_INTAKE, depth: 12, targetDay: addDays(TODAY, 1000) }, ["Bayes rule", "Markov chains", "Martingales", "Ergodic theory"]);
+    const deps7 = topicDepsFor(w7);
+    for (const name of ["Odds one", "Odds two", "Odds three", "Odds four", "Odds five", "Odds six"]) must(await S.addTopicCore(USER, id7, 1, name, NOW, deps7), `add ${name}`);
+    must(await S.acceptCore(USER, id7, topicAccept(10), NOW, deps7), "accept the seventh plan");
+    const row7 = () => w7.t.roadmap.find((r) => r.id === id7) as RoadmapRec;
+    const plan7 = () => w7.t.roadmapMilestone.filter((m) => m.roadmapId === id7 && (m.status === "PLANNED" || m.status === "STARTED")).sort((a, b) => a.ord - b.ord);
+    const before7 = plan7().map((m) => [m.chainRole, m.layer ?? m.stage]);
+    const afterBefore7 = (await S.loadRoadmapView(USER, NOW, deps7, id7)).planEdit?.after ?? null;
+    const p71 = plan7().find((m) => m.chainRole === "LAYER" && m.layer === 1) as MilestoneRec;
+    w7.templates.push({ id: "g-l1-part1", title: "layer 1 part 1", normTitle: "layer 1 part 1", kind: "GOAL", recurrence: null, parentId: null, archivedAt: null, closedScore: null, completedAt: null, dueDay: null, stated: 6, captureKey: null, link: null, parsed: null, horizon: "MID" });
+    Object.assign(p71, { status: "STARTED", goalId: "g-l1-part1" });
+    (w7.tree.find((x) => x.id === "f-stats") as TreeField).domains.push({ id: "d-stop", name: "Stopping times", fieldId: "f-stats", cards: [] });
+    const v7a = row7().version;
+    const afterStarted7 = (await S.loadRoadmapView(USER, NOW, deps7, id7)).planEdit?.after ?? null;
+    const add7 = await S.editPlanCore(USER, id7, { kind: "ADD_TOPIC", milestoneId: null, newMilestone: { after: 5 }, domainId: "d-stop" }, NOW, deps7);
+    eq(
+      "N34 (the review round): the split 5-layer plan at L* 12 is the 8 already (two parts, four layers, Fluent and Mastered); before a part starts a new layer is offered anywhere (layer 1 would go back to one milestone within the 8), but with part 1 started it is not (PlanEditView.after empty) and a sent one is refused in the cap's words (PLAN_EDIT_CAP_NEW_LAYER), the version and both depth rows as they were",
+      [before7.length, before7.filter(([role]) => role === "DEPTH").length, afterBefore7, afterStarted7, add7.ok ? "ok" : add7.error, row7().version === v7a, plan7().filter((m) => m.chainRole === "DEPTH").map((m) => m.stage)],
+      [8, 2, [0, 1, 2, 3, 4, 5], [], S.PLAN_EDIT_CAP_NEW_LAYER, true, ["FLUENT", "MASTERED"]]
+    );
+  });
+
+  // ═══ Roadmap rework 2, P2 (contracts §22.20 ruling N35): no library flood in layer 1 ═════════════════════════════
+  //
+  // Read on production: the user's new draft listed its 6 layer-1 names beside all 34 of the Field's Domains as unticked
+  // layer-1 seed rows (decision 67's "your Domains as layer-1 seeds"), ~40 rows against 5 in each other layer.
+  await topicBlock("roadmap rework 2, P2: your Domains offered on the topic they name, the rest in one tray (ruling N35); a bind counts its cards; a tray Domain goes to the layer you pick", async () => {
+    const w = world();
+    const stats = w.tree.find((f) => f.id === "f-stats") as TreeField;
+    // The library as an earlier goal left it (one Domain named by Gemini), mostly unrelated to this map.
+    stats.domains.push(
+      { id: "d-bayes", name: "Bayes Rule", fieldId: "f-stats", cards: [...Array(5)].map(() => card("d-bayes", 6)).concat([card("d-bayes", 2)]), nameOrigin: "GEMINI", originName: "Bayes Rule" },
+      { id: "d-var", name: "Variance Analysis", fieldId: "f-stats", cards: [card("d-var", 3)] },
+      { id: "d-ratio", name: "Odds Ratio", fieldId: "f-stats", cards: [] },
+      { id: "d-ci", name: "Compound Interest", fieldId: "f-stats", cards: [card("d-ci", 1), card("d-ci", 1)] },
+      { id: "d-ev", name: "Expected Value", fieldId: "f-stats", cards: [] },
+      { id: "d-held", name: "Markov Chains", fieldId: "f-stats", cards: [] },
+      { id: "d-hmm", name: "Hidden Markov Models", fieldId: "f-stats", cards: [] }
+    );
+    const id = await writtenTopics(w, TOPICS_INTAKE, ["Sampling plans"]);
+    const deps = topicDepsFor(w);
+    // Goal 2 holds Markov Chains and Hidden Markov Models (a Domain in another goal shows as before: never offered, never in the tray).
+    await seatedGoal(w, { ...INTAKE, aim: "Markov, properly", domainIds: ["d-held", "d-hmm"], hoursPerWeek: 3, label: "Markov" }, 2, "ACTIVE");
+    geminiTopicRow(w, id, "T11", "Bayes rule");
+    geminiTopicRow(w, id, "T12", "Variance");
+    geminiTopicRow(w, id, "T13", "Ratio", { layer: 2 });
+    geminiTopicRow(w, id, "T14", "Interest", { layer: 2 });
+    // Goal 2's Markov Chains: its topic is not ticked (a layer-2 name waits for your tick), so its name refuses nothing here.
+    geminiTopicRow(w, id, "T15", "Markov chains", { layer: 2, chosen: false });
+    // A name behind the fold (GROUND never linked it) that wears a free Domain's name: addTopic would refuse that Domain as
+    // on the map (TOPIC_TWICE), so it is offered on the hidden row, in the fold beside it, never in the tray (the review round).
+    geminiTopicRow(w, id, "T16", "Expected value", { layer: 2, grounding: "NOT_RUN", sources: [], decision: "PENDING", chosen: false });
+    const { libraryTrayOf } = await import("../src/components/roadmap/topic-map-model");
+    const topicsBefore = json(w.t.roadmapTopic);
+    const mapOf = async () => (await S.loadRoadmapView(USER, NOW, deps, id)).draft?.topicMap ?? null;
+    const offersOf = (m: TopicMapView | null) => (m?.layers ?? []).flatMap((l) => l.topics.filter((r) => r.domainOffer).map((r) => [r.key, r.domainOffer?.name, r.domainOffer?.cards, r.domainOffer?.geminiNamed]));
+    const m0 = await mapOf();
+    eq(
+      "N35 the draft: a free Domain is offered on the shown, unbound topic its name equals or holds (N31's normalisation): Bayes Rule on Bayes rule (equal; named by Gemini; 6 cards), Variance Analysis on Variance (its chapter), Odds Ratio on Ratio (the bare tail word it holds); Compound Interest is two concepts beside Interest (none), Markov Chains is goal 2's (none), and a hidden name gets one only for a Domain it already wears (the review round: Expected Value on the hidden Expected value, whose tray [Add] could only refuse)",
+      offersOf(m0),
+      [
+        ["T11", "Bayes Rule", 6, true],
+        ["T12", "Variance Analysis", 1, false],
+        ["T13", "Odds Ratio", 0, false],
+        ["T16", "Expected Value", 0, false],
+      ]
+    );
+    eq(
+      "N35 the draft: your free Domains (none in the map, none held by another goal) still ride layerOneSeeds for Use my Domain…, and the tray is the rest of them in the library's order; no layer-1 row is a seed; reading the view wrote nothing (never automatic)",
+      [m0?.layerOneSeeds.map((d) => d.id), libraryTrayOf(m0 as TopicMapView).map((d) => d.id), m0?.layers[0]?.topics.map((r) => r.key), json(w.t.roadmapTopic) === topicsBefore],
+      [["d-prob", "d-bayes", "d-var", "d-ratio", "d-ci", "d-ev"], ["d-prob", "d-ci"], ["U1", "T11", "T12"], true]
+    );
+    eq("N35 the draft: accept refuses while Bayes rule wears your Domain's name (TOPIC_NAME_TAKEN: «Use my Domain… instead»), the offer one tap away", m0?.acceptRefusal, TOPIC_NAME_TAKEN);
+    // The tap: the existing bind path (useMyDomain), its cards counted.
+    must(await S.useMyDomainCore(USER, id, "T11", "d-bayes", NOW, deps), "use your Domain Bayes Rule");
+    const m1 = await mapOf();
+    const t1 = m1?.layers[0]?.topics.find((r) => r.key === "T11");
+    eq(
+      "N35 a tap on the offer binds it (useMyDomain): Bayes rule reads as your Domain Bayes Rule (LIBRARY, chosen, named by it), its recall cards at level 6 counted (5 of 8), the offer gone, the Domain out of the seeds and the tray, and accept no longer refused for its name",
+      [t1?.cls, t1?.chosen, t1?.name, t1?.domain?.id, t1?.cards, t1?.floor, t1?.domainOffer ?? null, m1?.layerOneSeeds.some((d) => d.id === "d-bayes"), libraryTrayOf(m1 as TopicMapView).map((d) => d.id), m1?.acceptRefusal ?? null, offersOf(m1).map((o) => o[0])],
+      ["LIBRARY", true, "Bayes Rule", "d-bayes", 5, 8, null, false, ["d-prob", "d-ci"], null, ["T12", "T13", "T16"]]
+    );
+    // The payload: the draft's milestones now name your Gemini-named Domain (its item, code's title over the layer's Domains),
+    // in parts (the view loads under THROW here: a bare name would have thrown, and in production read "this topic").
+    const dv1 = await S.loadRoadmapView(USER, NOW, deps, id);
+    const bayesItems = (dv1.draft?.milestones ?? []).flatMap((m) => m.items).filter((i) => i.domainId === "d-bayes");
+    const bayesTitles = (dv1.draft?.milestones ?? []).filter((m) => m.title.includes("Bayes Rule"));
+    check(
+      "N35 (the payload): once bound, the draft's milestones name your Gemini-named Domain in parts (each item naming Bayes Rule carries labelParts with its mark, a title naming it titleParts), so the tripwire reads the mark and nothing is redacted",
+      bayesItems.length > 0 && bayesItems.every((i) => (i.labelParts ?? []).some((x) => x.geminiNamed && x.text === "Bayes Rule")) && bayesTitles.every((m) => (m.titleParts ?? []).some((x) => x.geminiNamed && x.text === "Bayes Rule")),
+      json({ items: bayesItems.map((i) => [i.label, i.labelParts]), titles: bayesTitles.map((m) => [m.title, m.titleParts]) })
+    );
+    // The tray: a Domain added to the layer you pick (addTopic binds a free Domain of that name in any layer now; layer 1 alone before).
+    must(await S.addTopicCore(USER, id, 2, "Compound Interest", NOW, deps), "add Compound Interest to layer 2");
+    must(await S.addTopicCore(USER, id, 1, "probability", NOW, deps), "add Probability to layer 1");
+    const m2 = await mapOf();
+    const byName = (m: TopicMapView | null, name: string) => (m?.layers ?? []).flatMap((l) => l.topics).find((r) => r.name === name);
+    const ci = byName(m2, "Compound Interest");
+    const pr = byName(m2, "Probability");
+    eq(
+      "N35 the tray: «Add» puts your Domain in the layer picked, bound (LIBRARY, chosen, its cards counted): Compound Interest in layer 2, Probability in layer 1 (12 of its 20 cards at level 6); each leaves the tray, which is then empty (Expected Value is offered on its hidden row); Interest still gets no offer",
+      [ci && [ci.layer, ci.cls, ci.chosen, ci.domain?.id, ci.cards], pr && [pr.layer, pr.cls, pr.domain?.id, pr.cards], libraryTrayOf(m2 as TopicMapView).map((d) => d.id), byName(m2, "Interest")?.domainOffer ?? null],
+      [[2, "LIBRARY", true, "d-ci", 0], [1, "LIBRARY", "d-prob", 12], [], null]
+    );
+    // Goal 2's Domain: typing its name in a layer is refused as before (its seat named), never bound.
+    const takenAdd = await S.addTopicCore(USER, id, 2, "Hidden Markov Models", NOW, deps);
+    eq("N35 a Domain another goal holds stays out: addTopic with its name is refused with its seat (DOMAIN_TAKEN), as layer 1 always was", takenAdd.ok ? "ok" : takenAdd.error, S.DOMAIN_TAKEN(2));
+    // The rehearsal's read (scripts/roadmap-rehearse.ts prints it when a rebuild refuses): what the draft's rebuild hands
+    // layeredLadderOf, and its result; it writes nothing, and reads null with no TOPICS draft.
+    const beforeProbe = json([w.t.roadmapMilestone, w.t.roadmapTopic]);
+    const probe = await S.topicLadderProbeOf(USER, id, NOW, deps);
+    eq(
+      "N35 (the rehearsal's probe): topicLadderProbeOf reads the draft's chain per layer (layer 1: Inference, Bayes Rule, Variance and Probability, all paying; layer 2: Ratio, Interest, Sampling plans and Compound Interest), L* (the default, Mastered), the hours, the date and the ladder's result, writing nothing; another goal's id reads null",
+      [probe?.layers.map((l) => [l.layer, l.topics, l.paying, l.held, l.known]), probe?.depth, probe?.hoursPerWeek, probe?.dateMode, probe?.targetDay, probe?.result.ok, json([w.t.roadmapMilestone, w.t.roadmapTopic]) === beforeProbe, await S.topicLadderProbeOf(USER, "no-such-goal", NOW, deps)],
+      [[[1, 4, 4, 0, 0], [2, 4, 4, 0, 0]], 12, TOPICS_INTAKE.hoursPerWeek, "CHOSEN", TOPICS_INTAKE.targetDay, true, true, null]
+    );
+    // The review round: the Domain a hidden name wears. Its [Add] would refuse (the name is on the map); the offer on the
+    // hidden row binds it, and the topic leaves the fold as your Domain (LIBRARY, chosen) in its own layer.
+    const evAdd = await S.addTopicCore(USER, id, 1, "Expected Value", NOW, deps);
+    const m3 = await mapOf();
+    const t16 = (m3?.layers ?? []).flatMap((l) => l.topics).find((r) => r.key === "T16");
+    eq(
+      "N35 (the review round): a Domain a hidden topic's name wears is never in the tray (addTopic refuses it: on the map already); the offer on that hidden row is the way in, in its fold (cls NOT_CHECKED, layer 2)",
+      [evAdd.ok ? "ok" : evAdd.error, t16 && [t16.cls, t16.layer, t16.domainOffer?.id], libraryTrayOf(m3 as TopicMapView).map((d) => d.id)],
+      ["That topic is on the map already.", ["NOT_CHECKED", 2, "d-ev"], []]
+    );
+    must(await S.useMyDomainCore(USER, id, "T16", "d-ev", NOW, deps), "use your Domain Expected Value on the hidden row");
+    const t16b = ((await mapOf())?.layers ?? []).flatMap((l) => l.topics).find((r) => r.key === "T16");
+    eq("N35 (the review round): the tap on the hidden row's offer binds it: Expected value reads as your Domain (LIBRARY, chosen, layer 2), out of the fold, its offer gone", t16b && [t16b.cls, t16b.chosen, t16b.layer, t16b.name, t16b.domain?.id, t16b.domainOffer ?? null], ["LIBRARY", true, 2, "Expected Value", "d-ev", null]);
+    // A plan offers nothing and lists no seeds (the tray and the offers are a draft's).
+    const p = world();
+    (p.tree.find((f) => f.id === "f-stats") as TreeField).domains.push({ id: "d-bb", name: "Bayes rule basics", fieldId: "f-stats", cards: [card("d-bb", 6)] });
+    const pid = await writtenTopics(p, TOPICS_INTAKE, ["Bayes rule"]);
+    const pdeps = topicDepsFor(p);
+    const pView = await S.loadRoadmapView(USER, NOW, pdeps, pid);
+    const pDraft = pView.draft?.topicMap ?? null;
+    eq("N35 (the payload): a draft naming no Gemini-named Domain reads as before (no labelParts, no titleParts on its milestones)", (pView.draft?.milestones ?? []).some((m) => m.titleParts != null || m.items.some((i) => i.labelParts != null)), false);
+    must(await S.acceptCore(USER, pid, topicAccept(1), NOW, pdeps), "accept the plan");
+    const pPlan = (await S.loadRoadmapView(USER, NOW, pdeps, pid)).topicMap ?? null;
+    eq(
+      "N35 an accepted plan: no row carries an offer and no seed is listed (the draft offered Bayes rule basics on Bayes rule: its chapter)",
+      [offersOf(pDraft).map((o) => [o[0], o[1]]), offersOf(pPlan), pPlan?.layerOneSeeds ?? null],
+      [[["T1", "Bayes rule basics"]], [], []]
+    );
   });
 
   if (failed > 0) {

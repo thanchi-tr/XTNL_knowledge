@@ -26,7 +26,7 @@
  *             inside the current node's ring, idle inside a planned ring
  *   locked    PLANNED with `opensAfter`: a thin ink-mute ring, layer.k idle in ink-mute, an m.builds
  *             badge and "after {k}" in ink-2; never m.lock, no dash, no strike. sr "builds on layer k;
- *             opens when milestone k is reached"
+ *             opens when layer k is reached" (ruling N34: a split layer's parts are milestones of their own)
  *   held      `heldLayer` (every topic held or skipped): a thin ink-2 ring, layer.k idle, the word
  *             "held"; no rank, no motion; pv.you as a badge when `known` ("you said you know these")
  *   depth     chainRole DEPTH: t.hourglass and «set by reviews»
@@ -96,7 +96,7 @@ export function afterLayerWord(k: number): string {
 }
 /** A locked node's spoken line. */
 export function lockedNodeSr(k: number): string {
-  return `builds on layer ${k}; opens when milestone ${k} is reached`;
+  return `builds on layer ${k}; opens when layer ${k} is reached`;
 }
 export const HELD_LAYER_WORD = "held";
 export const KNOWN_LAYER_SR = "you said you know these";

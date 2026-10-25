@@ -96,8 +96,11 @@ export function loadLastSeen(userId: string): Promise<LastSeen> {
 export interface StudyFocusRows {
   roadmap: { id: string; aim: string; label: string | null; version: number; fieldId: string | null; rating: unknown };
   topics: { key: string; lineageId: string; layer: number; name: string; domainId: string | null; chosen: boolean; decision: string; skippedDay: Date | null; heldDay: Date | null }[];
-  /** Each layer row with its paying card measures (ruling N25, the review round: a topic's floor is the row's target, n_d on the last layer). */
-  milestones: { layer: number | null; title: string; status: string; reachedDay: Date | null; measures: { topicLineageId: string | null; target: number }[] }[];
+  /**
+   * Each layer row with its card measures (ruling N25, the review round: a topic's floor is the row's paying target, n_d
+   * on the last layer; ruling N34: a split layer's part names its own topics, so its lineage and ord ride too).
+   */
+  milestones: { layer: number | null; title: string; status: string; reachedDay: Date | null; lineageId?: string; ord?: number; measures: { topicLineageId: string | null; target: number; role?: string }[] }[];
 }
 
 /**
@@ -121,7 +124,7 @@ export async function loadStudyFocusRows(userId: string): Promise<StudyFocusRows
       prisma.roadmapMilestone.findMany({
         where: { roadmapId: roadmap.id, chainRole: "LAYER", status: { in: ["PLANNED", "STARTING", "STARTED"] } },
         orderBy: [{ version: "desc" }],
-        select: { layer: true, title: true, status: true, reachedDay: true, measures: { where: { kind: "CARDS_AT_LEVEL", role: "PAYS" }, select: { topicLineageId: true, target: true } } },
+        select: { layer: true, title: true, status: true, reachedDay: true, lineageId: true, ord: true, measures: { where: { kind: "CARDS_AT_LEVEL" }, select: { topicLineageId: true, target: true, role: true } } },
       }),
     ]);
     return { roadmap, topics, milestones };
@@ -143,16 +146,31 @@ export function studyFocusFromRows(
   const domains = fields.flatMap((f) =>
     f.domains.map((d) => ({ id: d.id, name: d.name, atOpen: cardsAtOpenCountOf(d.ideas.map((i) => ({ level: i.level, questionType: i.questionType }))), cards: d.ideas.length, due: d.ideas.filter((i) => isDue(i.dueDate)).length }))
   );
-  // One row per layer: the newest version's.
-  const seen = new Set<number>();
-  const layerRows = rows.milestones.filter((m): m is typeof m & { layer: number } => {
-    if (m.layer == null || seen.has(m.layer)) return false;
-    seen.add(m.layer);
-    return true;
-  });
+  // One row per layer: the newest version's. Ruling N34: a layer holding rows of more than one lineage is split, one row
+  // per part (each lineage's newest), in ord order, each naming its own topics.
+  const withLayer = rows.milestones.filter((m): m is typeof m & { layer: number } => m.layer != null);
+  const lineagesOf = (layer: number): Set<string> => new Set(withLayer.filter((m) => m.layer === layer && m.lineageId != null).map((m) => m.lineageId as string));
+  const seen = new Set<string>();
+  const layerRows = withLayer
+    .filter((m) => {
+      const split = lineagesOf(m.layer).size > 1;
+      const key = split ? `${m.layer}:${m.lineageId}` : `${m.layer}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.layer - b.layer || (a.ord ?? 0) - (b.ord ?? 0));
   // Ruling N25 (the review round): a topic's floor is its layer row's paying target (n_d on the last layer's specialisation), else TOPIC_FLOOR_CARDS.
   const floors = new Map<string, number>();
-  for (const m of layerRows) for (const x of m.measures ?? []) if (x.topicLineageId && Number.isFinite(x.target) && x.target > TOPIC_FLOOR_CARDS) floors.set(x.topicLineageId, Math.round(x.target));
+  for (const m of layerRows) for (const x of m.measures ?? []) if ((x.role ?? "PAYS") === "PAYS" && x.topicLineageId && Number.isFinite(x.target) && x.target > TOPIC_FLOOR_CARDS) floors.set(x.topicLineageId, Math.round(x.target));
+  // Ruling N34: a part's own topics are the topics of its layer its measures name; its place among its layer's rows.
+  const layerOfLineage = new Map(rows.topics.map((t) => [t.lineageId, t] as const));
+  const partOf = (m: (typeof layerRows)[number]): { part?: { i: number; p: number }; topics?: string[] } => {
+    const same = layerRows.filter((r) => r.layer === m.layer);
+    if (same.length <= 1) return {};
+    const keys = Array.from(new Set((m.measures ?? []).map((x) => (x.topicLineageId ? layerOfLineage.get(x.topicLineageId) : undefined)).filter((t): t is (typeof rows.topics)[number] => !!t && t.layer === m.layer).map((t) => t.key)));
+    return { part: { i: same.indexOf(m) + 1, p: same.length }, topics: keys };
+  };
   const rating = r.rating && typeof r.rating === "object" && !Array.isArray(r.rating) ? (r.rating as { milestones?: unknown }) : null;
   const geminiMilestones = (Array.isArray(rating?.milestones) ? rating.milestones : []).filter(
     (m): m is LayerMilestone => !!m && typeof m === "object" && typeof (m as LayerMilestone).layer === "number" && typeof (m as LayerMilestone).title === "string"
@@ -163,7 +181,7 @@ export function studyFocusFromRows(
     fieldId: r.fieldId,
     fieldName: field?.name ?? null,
     topics: rows.topics.map((t) => ({ key: t.key, layer: t.layer, name: t.name, domainId: t.domainId, chosen: t.chosen, decision: t.decision, skipped: t.skippedDay != null, held: t.heldDay != null, ...(floors.has(t.lineageId) ? { floor: floors.get(t.lineageId) } : {}) })),
-    milestones: layerRows.map((m) => ({ layer: m.layer, title: m.title, status: m.status, reached: m.reachedDay != null })),
+    milestones: layerRows.map((m) => ({ layer: m.layer, title: m.title, status: m.status, reached: m.reachedDay != null, ...partOf(m) })),
     geminiMilestones,
     domains,
   });

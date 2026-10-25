@@ -637,6 +637,7 @@ import {
   LAYERS_BOUNDS,
   LAYERS_MAX,
   LAYERS_MIN,
+  MAX_MILESTONES_TOPICS,
   OPEN_LEVEL,
   PREREQS_OPEN,
   RATING_ORIGINS,
@@ -654,6 +655,7 @@ import {
   geminiNamedOf,
   isCardsReachRow,
   isTopicDepth,
+  layerPartOf,
   layersOfDiff,
   milestoneCapOf,
   namedPartsOf,
@@ -667,6 +669,7 @@ import {
   type MilestoneLockSuggestionView,
   type AimStudyView,
   type MilestoneLockView,
+  type LayerPart,
   type MilestoneTopicView,
   type ParentPick,
   type PlanKind,
@@ -676,6 +679,7 @@ import {
   type SplitClause,
   type TopicClass,
   type TopicDepth,
+  type TopicDomainOffer,
   type TopicDraft,
   type TopicEdit,
   type TopicLayerView,
@@ -1513,14 +1517,21 @@ function guardCondition(userId: string, g: StoreGuard): Prisma.Sql {
     // layer at OPEN_LEVEL over its floor (counted as cardsAtOpenOf counts: live recall cards at level 6 or above, never a
     // NON_RECALL_TYPES card, the paying key's own count: ruling N25 as the review round reads it), held or skipped,
     // and every cross-goal parent Domain at OPEN_LEVEL over its floor. A parent is a counting link (yours, cross-goal, or
-    // Gemini's drawn one, none removed), else every chosen topic of the layer before.
+    // Gemini's drawn one, none removed), else every chosen topic of the layer before. Ruling N34: the layer before is
+    // reached when every one of its parts is (each live layer row of it, by lineage: PART_LIVE_STATUSES), so a split
+    // layer opens the next only once its last part is reached; an unsplit layer's one lineage reads as before.
     case "PREREQS_MET":
       return Prisma.sql`EXISTS (SELECT 1 FROM "RoadmapMilestone" m JOIN "Roadmap" r ON r."id" = m."roadmapId"
           WHERE m."id" = ${g.milestoneId} AND m."roadmapId" = ${g.roadmapId} AND r."userId" = ${userId})
         AND (
-          EXISTS (SELECT 1 FROM "RoadmapMilestone" m JOIN "RoadmapMilestone" p ON p."roadmapId" = m."roadmapId"
+          (EXISTS (SELECT 1 FROM "RoadmapMilestone" m JOIN "RoadmapMilestone" p ON p."roadmapId" = m."roadmapId"
             WHERE m."id" = ${g.milestoneId} AND p."chainRole" = 'LAYER' AND p."layer" = m."layer" - 1
               AND p."reachedDay" IS NOT NULL AND p."status" <> 'DISCARDED')
+          AND NOT EXISTS (SELECT 1 FROM "RoadmapMilestone" m JOIN "RoadmapMilestone" q ON q."roadmapId" = m."roadmapId"
+            WHERE m."id" = ${g.milestoneId} AND q."chainRole" = 'LAYER' AND q."layer" = m."layer" - 1
+              AND q."status" IN (${Prisma.join([...PART_LIVE_STATUSES])})
+              AND NOT EXISTS (SELECT 1 FROM "RoadmapMilestone" x WHERE x."roadmapId" = q."roadmapId" AND x."lineageId" = q."lineageId"
+                AND x."reachedDay" IS NOT NULL AND x."status" <> 'DISCARDED')))
           OR (
             NOT EXISTS (SELECT 1 FROM "RoadmapMilestone" m
               JOIN "RoadmapTopic" c ON c."roadmapId" = m."roadmapId" AND c."version" = m."version" AND c."layer" = m."layer"
@@ -2385,8 +2396,9 @@ function codeFillCandidates(it: ItemDraft, m: MilestoneDraft, ctx: ModelTextCont
 
 /**
  * The Domain lists a TOPICS row's CARRY part may be filled with (contracts §22.13; realism topicPartNamesOf): on a
- * layer row, each row of the layer before (its Domains in item order); on a depth row, the base topics (every layer
- * row's Domains, in plan order, less the row's own specialisation). [] on a LEVELS row.
+ * layer row, each row of the layer before (its Domains in item order), and, when that layer is split (ruling N34),
+ * every one of its parts together in plan order; on a depth row, the base topics (every layer row's Domains, in plan
+ * order, less the row's own specialisation). [] on a LEVELS row.
  */
 function topicCarryDomainsOf(m: MilestoneDraft, plan: readonly MilestoneDraft[]): string[][] {
   if (m.chainRole == null || plan.length === 0) return [];
@@ -2409,7 +2421,12 @@ function topicCarryDomainsOf(m: MilestoneDraft, plan: readonly MilestoneDraft[])
     return base.length ? [base] : [];
   }
   if (m.layer == null) return [];
-  return layers.filter((r) => r.layer === (m.layer as number) - 1).map(domainsOf).filter((ids) => ids.length > 0);
+  const before = layers.filter((r) => r.layer === (m.layer as number) - 1);
+  const each = before.map(domainsOf).filter((ids) => ids.length > 0);
+  if (before.length <= 1) return each;
+  const all: string[] = [];
+  for (const ids of each) for (const id of ids) if (!all.includes(id)) all.push(id);
+  return [...each, all];
 }
 
 /**
@@ -8662,6 +8679,8 @@ export const PLAN_EDIT_PARENT_LAYER_ONE = "A layer-1 topic builds on nothing bef
 export const PLAN_EDIT_PARENT_BEFORE = "A topic builds on topics of the layer just before it.";
 export const PLAN_EDIT_PARENT_STARTED = "This layer has started: it builds on what it had.";
 export const PLAN_EDIT_LAST_PAYING = "A started milestone keeps at least one paying topic: this one is its last.";
+// Ruling N34 (the review round): a new layer the milestone cap can't hold beside the parts a rebuild keeps (editAftersOf).
+export const PLAN_EDIT_CAP_NEW_LAYER = `A roadmap holds at most ${MAX_MILESTONES_TOPICS} milestones: add the topic to a layer already in the plan.`;
 export const PLAN_EDIT_BEHIND = "This milestone is behind you: its topics stay as they were.";
 export const PLAN_EDIT_SHARED = "This milestone counts that Domain together with others: re-plan to change it.";
 /** The Domain a new name will make, as the dry run reads it before it is made (never written). */
@@ -8915,11 +8934,32 @@ function editAftersOf(b: RoadmapBundle): number[] {
   if (carried.some((m) => m.chainRole === "DEPTH")) return [];
   const K = Math.max(0, ...rows.filter((m) => m.chainRole === "LAYER" && m.layer != null).map((m) => m.layer as number));
   const depth = topicDepthOfRow(b.roadmap) ?? AIM_DEPTHS[DEPTH_DEFAULT];
-  if (K + 1 > LAYERS_MAX || K + 1 + DEPTH_TAIL[depth] > milestoneCapOf("TOPICS")) return [];
+  // Ruling N34 (the review round): positions, not layers. A rebuild keeps each part under way or reached on cards (its
+  // topics pinned) and needs one row for each layer's rest, then the new layer and the depth tail: a place the rebuilt
+  // plan couldn't hold within milestoneCapOf("TOPICS") is never offered (realism refuses it in words: CAP).
+  const layerRows = rows.filter((m) => m.chainRole === "LAYER" && m.layer != null && !superseded(b, m));
+  let positions = 0;
+  for (const k of new Set(layerRows.map((m) => m.layer as number))) {
+    const own = layerRows.filter((m) => m.layer === k);
+    const pinned = own.filter((m) => isCarried(m) || cardsReachRow(m)).length;
+    positions += pinned + (own.length > pinned ? 1 : 0);
+  }
+  if (K + 1 > LAYERS_MAX || Math.max(K, positions) + 1 + DEPTH_TAIL[depth] > milestoneCapOf("TOPICS")) return [];
   const from = Math.max(0, ...carried.filter((m) => m.chainRole === "LAYER" && m.layer != null).map((m) => m.layer as number));
   const out: number[] = [];
   for (let k = from; k <= K; k++) out.push(k);
   return out;
+}
+
+/**
+ * Why editAftersOf offers no place for a new layer, in words: a depth milestone has started, the plan holds LAYERS_MAX
+ * layers, or (ruling N34, the review round) the rebuilt plan would pass the milestone cap (PLAN_EDIT_CAP_NEW_LAYER).
+ */
+function newLayerRefusalOf(b: RoadmapBundle): string {
+  const rows = planRowsOf(b);
+  if (rows.some((m) => isCarried(m) && !superseded(b, m) && m.chainRole === "DEPTH")) return PLAN_EDIT_AFTER_STARTED;
+  const K = Math.max(0, ...rows.filter((m) => m.chainRole === "LAYER" && m.layer != null).map((m) => m.layer as number));
+  return K + 1 > LAYERS_MAX ? `A plan holds at most ${LAYERS_MAX} layers.` : PLAN_EDIT_CAP_NEW_LAYER;
 }
 
 /** Ruling N24: the plan's live milestone: started, its goal open (not closed or dropped), not reached or pending a reach, no "Start again" copy in its place. */
@@ -9342,13 +9382,17 @@ async function topicsPlanEditOf(
   const planRows = planRowsOf(b);
   const carriedRows = planRows.filter(isCarried);
   const keptCarried = planRows.filter((m) => isCarried(m) && m.chainRole != null && !superseded(b, m));
-  const keyOf = (m: { chainRole?: string | null; layer?: number | null; stage?: string | null }): string => `${m.chainRole ?? ""}:${m.layer ?? m.stage ?? ""}`;
-  const underWay = new Set(keptCarried.map(keyOf));
+  // Ruling N34 (the review round): a rebuilt row is the plan's row that holds its topics (a part under way, or one
+  // reached on cards), else its layer's next unstarted row, else its stage's (ladderMatchOf); never an index.
+  const partRows = partRowsOf(b);
   let oldLayerOf: (layer: number) => number | null = (layer) => layer;
   const ctx = await topicsContextOf(e, userId, b, depth, now);
   const held = new Map<string, DayKey>();
   let drafts: MilestoneDraft[];
   let liveEdit: LiveRemoval | null = null;
+  // A rebuild's layer rows whose title is code's (none you wrote), by lineage, and the plan's layer count: titled once the ords stand.
+  const codeTitled = new Set<string>();
+  let layersK = LAYERS_MIN;
 
   if (ed.kind === "RENAME") {
     drafts = unstarted.map((m) => editCopyOf(m, v));
@@ -9393,7 +9437,7 @@ async function topicsPlanEditOf(
         const after = ed.newMilestone?.after;
         const afters = editAftersOf(b);
         if (after == null) return fail(PLAN_EDIT_PLACE);
-        if (!afters.includes(after)) return fail(afters.length > 0 && after < afters[0] ? PLAN_EDIT_AFTER_STARTED : `A plan holds at most ${LAYERS_MAX} layers.`);
+        if (!afters.includes(after)) return fail(afters.length > 0 && after < afters[0] ? PLAN_EDIT_AFTER_STARTED : newLayerRefusalOf(b));
         layer = after + 1;
         // The layers after it move one down; a link into the layer before it would now skip a layer (C1), so the moved
         // layer's own links go and it builds on the new layer (cross-goal parents stay).
@@ -9443,6 +9487,9 @@ async function topicsPlanEditOf(
       const layer = target?.layer as number;
       const t = map.topics.find((x) => topicLive(x) && x.chosen && x.layer === layer && x.domainId === domain.id);
       if (!t) return fail(PLAN_EDIT_NOT_HERE);
+      // Ruling N34 (the review round): a split layer's part removes only its own topics, so a topic of the started part
+      // always goes in place (N24) through that part, never through another part's rebuild.
+      if (target && layerPartOf(partRows, target) && !ownTopicLineagesOf(target, live).has(t.lineageId)) return fail(PLAN_EDIT_NOT_HERE);
       if (target && isCarried(target)) {
         // Ruling N24: the live layer keeps its row; the topic's measures leave it in place (at least one paying topic stays).
         const removal = liveRemovalOf(target, domain.id, t.lineageId);
@@ -9452,22 +9499,24 @@ async function topicsPlanEditOf(
       map = withoutTopicLinksOf(withTopicChanged(map, { ...t, decision: "REMOVED", chosen: false }), t.lineageId, "BOTH");
     }
     map = settledTopicMapOf(map);
-    const ladder = layeredPlanOf(e, ctx, map, depth, v);
+    // Ruling N34: the layers are split again as the map now stands; a started part, and one reached on cards, keeps its
+    // topics (an ADD_TOPIC's own row reached on cards excepted: its paying terms change, so its topics split again).
+    const pp = carriedPinsOf(partRows, keptCarried, live, ed.kind === "ADD_TOPIC" ? (target?.id ?? null) : null);
+    const ladder = layeredPlanOf(e, ctx, map, depth, v, pp.pins);
     if (!ladder.ok) return fail(ladder.error);
-    const rows0 = ladder.plan.filter((m) => !underWay.has(keyOf(m)));
-    const K = Math.max(LAYERS_MIN, ...rows0.map((m) => m.layer ?? 0), ...keptCarried.map((m) => m.layer ?? 0));
-    const oldByKey = new Map(unstarted.map((m) => [keyOf(m), m] as const));
-    drafts = rows0.map((m) => {
-      const oldLayer = m.chainRole === "LAYER" && m.layer != null ? oldLayerOf(m.layer) : null;
-      const old = m.chainRole === "LAYER" ? (oldLayer != null ? oldByKey.get(`LAYER:${oldLayer}`) : undefined) : oldByKey.get(keyOf(m));
+    // Each rebuilt row is the plan's row of its topics or place (the review round: never an index); a part under way is left out.
+    const match = ladderMatchOf(ladder.plan, map, pp, keptCarried, unstarted, oldLayerOf);
+    const rows0 = ladder.plan.map((m, i) => ({ m, old: match.old.get(i) ?? null, i })).filter((x) => !match.underWay.has(x.i));
+    const K = Math.max(LAYERS_MIN, ...rows0.map((x) => x.m.layer ?? 0), ...keptCarried.map((m) => m.layer ?? 0));
+    layersK = K;
+    drafts = rows0.map(({ m, old }) => {
       const yours = !!old && (old.titleOrigin === "USER" || old.titleDecision === "EDITED");
-      const layerIds = m.chainRole === "LAYER" ? Array.from(new Set(map.topics.filter((t) => topicLive(t) && t.chosen && t.layer === m.layer && t.domainId).map((t) => t.domainId as string))) : [];
-      const names = layerIds.map((id) => ctx.domains.get(id)).filter((d): d is DomainFacts => !!d).map((d) => domainName(d));
-      const title = yours && old ? old.title : m.chainRole === "LAYER" && m.layer != null ? String(topicLayerTitleOf(names, m.layer, K)) : m.title;
+      // A layer's code title is written once the ords stand (its part's place is read from them: layerTitlesOf below).
+      if (!yours && m.chainRole === "LAYER" && m.layer != null) codeTitled.add(old?.lineageId ?? m.lineageId);
       const row: MilestoneDraft = {
         ...m,
         lineageId: old?.lineageId ?? m.lineageId,
-        title,
+        title: yours && old ? old.title : m.title,
         ...(yours && old ? { titleOrigin: old.titleOrigin as Origin, titleDecision: old.titleDecision as Decision } : {}),
         status: (old?.status === "LATER" ? "LATER" : "DRAFT") as MilestoneStatus,
       };
@@ -9482,11 +9531,19 @@ async function topicsPlanEditOf(
     if (rating) rating = { ...rating, layers: K };
   }
 
-  // Ords after the carried rows, then every topic card measure keyed and baselined as acceptTopicsStep does.
-  const baseOrd = Math.max(0, ...carriedRows.map((m) => m.ord));
-  drafts = drafts.map((d, i) => ({
+  // Ords in chain order beside the carried rows (ruling N34, the review round: chainOrdsOf; before it every row followed
+  // the carried ones), then every topic card measure keyed and baselined as acceptTopicsStep does.
+  const ords = chainOrdsOf(drafts, keptCarried, map, carriedRows.map((m) => m.ord));
+  drafts = layerTitlesOf(
+    drafts.map((d, i) => ({ ...d, ord: ords[i] })),
+    keptCarried,
+    map,
+    ctx,
+    layersK,
+    codeTitled
+  );
+  drafts = drafts.map((d) => ({
     ...d,
-    ord: baseOrd + i + 1,
     measures: d.measures.map((x) => {
       // A PART or BETWEEN checkpoint stays keyless (its key would collide with its topic's own).
       if (x.kind !== "CARDS_AT_LEVEL" || x.minLevel == null || x.gate) return x;
@@ -14544,8 +14601,12 @@ function topicFloorOf(tree: readonly TreeField[], t: Pick<TopicDraft, "role" | "
 
 // ── The chain: the map's milestones (realism layeredLadderOf) ──
 
-/** The chain the ladder reads: the filled layers' chosen live topics, held and skipped marked, each with its floor. */
-function layeredChainOf(map: TopicMap, depth: TopicDepth, tree: readonly TreeField[], examDay: DayKey | null): realism.TopicChainInput {
+/**
+ * The chain the ladder reads: the filled layers' chosen live topics, held and skipped marked, each with its floor.
+ * `pins` (ruling N34): a started part's topics, and a part's reached on cards, stay together (lineage → its part's pin,
+ * a mark: carriedPinsOf), so the split of a rebuilt layer never moves a topic into or out of such a part.
+ */
+function layeredChainOf(map: TopicMap, depth: TopicDepth, tree: readonly TreeField[], examDay: DayKey | null, pins: ReadonlyMap<string, number> = new Map()): realism.TopicChainInput {
   const settled = settledTopicMapOf(map);
   const k = filledBandsOf(settled);
   const layers: realism.TopicChainInput["layers"] = [];
@@ -14553,21 +14614,202 @@ function layeredChainOf(map: TopicMap, depth: TopicDepth, tree: readonly TreeFie
     const ts = settled.topics.filter((t) => topicLive(t) && t.chosen && t.layer === layer);
     layers.push({
       layer,
-      topics: ts.map((t) => ({ lineageId: t.lineageId, domainId: t.domainId, role: t.role, held: t.heldDay != null, skipped: t.skippedDay != null, nd: topicFloorOf(tree, t) })),
+      topics: ts.map((t) => ({
+        lineageId: t.lineageId,
+        domainId: t.domainId,
+        role: t.role,
+        held: t.heldDay != null,
+        skipped: t.skippedDay != null,
+        nd: topicFloorOf(tree, t),
+        ...(pins.has(t.lineageId) ? { part: pins.get(t.lineageId) } : {}),
+      })),
     });
   }
   return { layers, depth, ...(examDay ? { examDay } : {}) };
 }
+
+// ── Ruling N34: a split layer's parts (derived: a layer's rows in ord order; roadmap-types layerPartOf) ──
+
+/** The plan's rows as its parts read them: planRowsOf less a superseded row (a "Start again" copy stands in its place). */
+function partRowsOf(b: RoadmapBundle): MilestoneBundle[] {
+  return planRowsOf(b).filter((m) => !superseded(b, m));
+}
+
+/**
+ * A layer row's own topics (lineages): the card measures it names of its own layer, the map placing each topic (a split
+ * layer's part names its own topics only; the "climbing to 8" rows of the layers before are not its own).
+ */
+function ownTopicLineagesOf(m: { layer?: number | null; measures: readonly { kind: string; topicLineageId?: string | null }[] }, map: Pick<TopicMap, "topics">): Set<string> {
+  const out = new Set<string>();
+  if (m.layer == null) return out;
+  for (const x of m.measures) {
+    if (x.kind !== "CARDS_AT_LEVEL" || !x.topicLineageId || out.has(x.topicLineageId)) continue;
+    if (map.topics.find((t) => t.lineageId === x.topicLineageId)?.layer === m.layer) out.add(x.topicLineageId);
+  }
+  return out;
+}
+
+/** A layer row's own topics when its layer is split (ruling N34), else null: an unsplit layer row reads every chosen topic of its layer, as before. */
+function partTopicsOf(rows: readonly MilestoneBundle[], m: MilestoneBundle, map: Pick<TopicMap, "topics">): ReadonlySet<string> | null {
+  return layerPartOf(rows, m) ? ownTopicLineagesOf(m, map) : null;
+}
+
+/**
+ * The topics a rebuild keeps with their parts: every carried layer row's own topics, and every layer row's reached on
+ * cards (ruling N26: its day goes with it to version + 1, so its topics must too), each row's topics under one pin
+ * (`pins`: topic lineage → the row's pin; `rowOf`: pin → that row). A pin is a mark, never a place (the review round):
+ * realism's chainSplitsOf keeps a pin's topics together and reads every part's place from the map's order of its first
+ * topic, and a rebuilt row is matched to its row by those topics (ladderMatchOf), never by an index. A carried unsplit
+ * layer's topics are one pin, so the rebuilt chain leaves a started layer out whole as before. `rows`: the plan as it
+ * stands (partRowsOf); `map`: the version that places each topic; `except`: a row reached on cards that is not pinned
+ * (an ADD_TOPIC's own row: its paying terms change, so the chain splits its topics again with the new one).
+ */
+interface PartPins {
+  pins: Map<string, number>;
+  rowOf: Map<number, MilestoneBundle>;
+}
+function carriedPinsOf(rows: readonly MilestoneBundle[], carried: readonly MilestoneBundle[], map: Pick<TopicMap, "topics">, except: string | null = null): PartPins {
+  const pins = new Map<string, number>();
+  const rowOf = new Map<number, MilestoneBundle>();
+  for (const m of [...carried, ...rows.filter((r) => cardsReachRow(r) && !carried.includes(r) && r.id !== except)]) {
+    if (m.chainRole !== "LAYER" || m.layer == null) continue;
+    const own = ownTopicLineagesOf(m, map);
+    if (own.size === 0) continue;
+    const pin = rowOf.size + 1;
+    rowOf.set(pin, m);
+    for (const l of own) if (!pins.has(l)) pins.set(l, pin);
+  }
+  return { pins, rowOf };
+}
+
+/**
+ * Ruling N34 (the review round): which rows of the plan a rebuilt ladder's rows are, by their topics, never by an index:
+ * a layer row holding a pinned part's topics is that part (`underWay` when its row is carried: left out of the fresh
+ * rows, as a stage under way always was; else its row reached on cards, `old`, whose lineage and day it takes); each
+ * layer's other rows take that layer's other unstarted rows (`unstarted`, of the layer `oldLayerOf` gives: none for a
+ * new layer) in order; a depth row is its stage's (under way when a carried row holds that stage). Ladder indices.
+ */
+function ladderMatchOf(
+  ladder: readonly MilestoneDraft[],
+  map: Pick<TopicMap, "topics">,
+  pp: PartPins,
+  carried: readonly MilestoneBundle[],
+  unstarted: readonly MilestoneBundle[],
+  oldLayerOf: (layer: number) => number | null = (layer) => layer
+): { underWay: Set<number>; old: Map<number, MilestoneBundle> } {
+  const underWay = new Set<number>();
+  const old = new Map<number, MilestoneBundle>();
+  const pinnedRows = new Set(pp.rowOf.values());
+  const carriedStages = new Set(carried.filter((m) => m.chainRole === "DEPTH").map((m) => m.stage ?? ""));
+  const freeOld = new Map<number, MilestoneBundle[]>();
+  ladder.forEach((m, i) => {
+    if (m.chainRole === "DEPTH") {
+      if (carriedStages.has(m.stage ?? "")) underWay.add(i);
+      else {
+        const o = unstarted.find((r) => r.chainRole === "DEPTH" && r.stage === m.stage);
+        if (o) old.set(i, o);
+      }
+      return;
+    }
+    if (m.chainRole !== "LAYER" || m.layer == null) return;
+    const pin = [...ownTopicLineagesOf(m, map)].map((l) => pp.pins.get(l)).find((x): x is number => x != null);
+    const row = pin != null ? pp.rowOf.get(pin) : undefined;
+    if (row) {
+      if (carried.includes(row)) underWay.add(i);
+      else old.set(i, row);
+      return;
+    }
+    const oldLayer = oldLayerOf(m.layer);
+    if (oldLayer == null) return;
+    if (!freeOld.has(oldLayer)) freeOld.set(oldLayer, unstarted.filter((r) => r.chainRole === "LAYER" && r.layer === oldLayer && !pinnedRows.has(r)).sort(byOrd));
+    const next = (freeOld.get(oldLayer) as MilestoneBundle[]).shift();
+    if (next) old.set(i, next);
+  });
+  return { underWay, old };
+}
+
+/**
+ * Ruling N34 (the review round): a TOPICS version + 1's ords. The rows in chain order (each layer by layer, its parts in
+ * the map's order of their first topic, as realism's chainSplitsOf places them; the depth rows after by stage): the
+ * carried rows keep theirs, and every other row takes the next ord no carried row holds, below the next carried row, so
+ * layerPartOf, the tripwire's carry fill and realism's plan order (all of which read ord) read the chain as the ladder
+ * wrote it. Before the ruling every rebuilt row followed the carried ones, so a layer reached on cards before a started
+ * one moved after it (a part's place then swapped with its neighbour's, and a depth row's CARRY practice read the base
+ * topics out of order). A row with no room there keeps its layer's order if it can (below its layer's next carried row),
+ * else follows every row, as before. With nothing carried this is the ladder's own 1..n. `map`: the version the rows are
+ * of; returns the non-carried rows' ords in `drafts` order.
+ */
+function chainOrdsOf(drafts: readonly MilestoneDraft[], carried: readonly MilestoneBundle[], map: Pick<TopicMap, "topics">, taken: readonly number[]): number[] {
+  const at = new Map<string, number>();
+  map.topics.forEach((t, j) => {
+    if (!at.has(t.lineageId)) at.set(t.lineageId, j);
+  });
+  const layerOf = new Map(map.topics.map((t) => [t.lineageId, t.layer] as const));
+  // Each row's own topics read from the map (the place's first topic), as ownTopicLineagesOf reads them.
+  const firstOf = (m: { layer?: number | null; measures: readonly { kind: string; topicLineageId?: string | null }[] }): number =>
+    m.measures.reduce((mn, x) => (x.kind === "CARDS_AT_LEVEL" && x.topicLineageId && layerOf.get(x.topicLineageId) === m.layer ? Math.min(mn, at.get(x.topicLineageId) ?? Infinity) : mn), Infinity);
+  const keyOf = (m: { chainRole?: string | null; layer?: number | null; stage?: string | null; ord: number; measures: readonly { kind: string; topicLineageId?: string | null }[] }): number[] =>
+    m.chainRole === "LAYER" && m.layer != null ? [0, m.layer, firstOf(m), m.ord] : m.chainRole === "DEPTH" ? [1, (STAGE_KEYS as readonly string[]).indexOf(m.stage ?? ""), 0, m.ord] : [2, 0, 0, m.ord];
+  const cmp = (a: readonly number[], b: readonly number[]): number => {
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
+  };
+  const seq = [
+    ...carried.filter((m) => m.chainRole != null).map((m) => ({ carried: true, ord: m.ord, layer: m.chainRole === "LAYER" ? (m.layer ?? null) : null, key: keyOf(m), i: -1 })),
+    ...drafts.map((d, i) => ({ carried: false, ord: d.ord, layer: d.chainRole === "LAYER" ? (d.layer ?? null) : null, key: keyOf(d), i })),
+  ].sort((a, b) => cmp(a.key, b.key) || (a.carried === b.carried ? 0 : a.carried ? -1 : 1) || a.i - b.i);
+  const used = new Set(taken);
+  const out = drafts.map((d) => d.ord);
+  let next = 1;
+  let top = Math.max(0, ...taken);
+  seq.forEach((x, k) => {
+    if (x.carried) {
+      next = Math.max(next, x.ord + 1);
+      return;
+    }
+    const later = seq.slice(k + 1).filter((y) => y.carried);
+    const below = (ys: readonly { ord: number }[]): number => ys.reduce((mn, y) => Math.min(mn, y.ord), Infinity);
+    let o = next;
+    while (used.has(o)) o++;
+    if (!(o < below(later)) && !(x.layer != null && o < below(later.filter((y) => y.layer === x.layer)))) o = Math.max(top, next - 1) + 1;
+    while (used.has(o)) o++;
+    out[x.i] = o;
+    used.add(o);
+    next = o + 1;
+    top = Math.max(top, o);
+  });
+  return out;
+}
+
+/**
+ * A rebuild's layer rows' code titles (ruling 22: "{domains} · layer {k} of {n}" over the layer's Domains; ruling N34: a
+ * split layer's part with " · part {i} of {p}" over its own Domains), written once the ords stand: the part's place is
+ * read from them (layerPartOf over the carried rows and these), as the view, the hub and realism read it. `codeTitled`:
+ * the lineages whose title is code's (a title you wrote stays); `K`: the plan's layers.
+ */
+function layerTitlesOf(drafts: readonly MilestoneDraft[], carried: readonly MilestoneBundle[], map: TopicMap, ctx: Pick<PlanContext, "domains">, K: number, codeTitled: ReadonlySet<string>): MilestoneDraft[] {
+  if (codeTitled.size === 0) return [...drafts];
+  const plan = [...carried, ...drafts];
+  return drafts.map((m) => {
+    if (!codeTitled.has(m.lineageId) || m.chainRole !== "LAYER" || m.layer == null) return m;
+    const part = layerPartOf(plan, m);
+    const own = part ? ownTopicLineagesOf(m, map) : null;
+    const layerIds = Array.from(new Set(map.topics.filter((t) => topicLive(t) && t.chosen && t.layer === m.layer && t.domainId && (!own || own.has(t.lineageId))).map((t) => t.domainId as string)));
+    const names = layerIds.map((id) => ctx.domains.get(id)).filter((d): d is DomainFacts => !!d).map((d) => domainName(d));
+    return { ...m, title: String(topicLayerTitleOf(names, m.layer, K, part)) };
+  });
+}
+
 
 /** The Domain names a ladder may write (the map's Domains: titles and labels name only these; an unbound topic has none). */
 function topicDomainNamesOf(ctx: Pick<PlanContext, "domains">, map: TopicMap): Record<string, DomainName> {
   return namesOfDomains(ctx, map.topics.filter((t) => topicLive(t) && t.domainId).map((t) => t.domainId as string));
 }
 
-/** The layer milestones and depth tail for a map (realism layeredLadderOf, the plan's gate held), as version `v`'s DRAFT rows. */
-function layeredPlanOf(e: Env, ctx: PlanContext, map: TopicMap, depth: TopicDepth, v: number): { ok: true; plan: MilestoneDraft[] } | { ok: false; error: string } {
+/** The layer milestones and depth tail for a map (realism layeredLadderOf, the plan's gate held), as version `v`'s DRAFT rows; `pins`: the topics a rebuild keeps in their parts (carriedPinsOf). */
+function layeredPlanOf(e: Env, ctx: PlanContext, map: TopicMap, depth: TopicDepth, v: number, pins: ReadonlyMap<string, number> = new Map()): { ok: true; plan: MilestoneDraft[] } | { ok: false; error: string } {
   const gate = gateOf(e, ctx);
-  const chain = layeredChainOf(map, depth, ctx.tree, ctx.intake.examLabel ? (ctx.intake.examDay ?? null) : null);
+  const chain = layeredChainOf(map, depth, ctx.tree, ctx.intake.examLabel ? (ctx.intake.examDay ?? null) : null, pins);
   if (chain.layers.length === 0) return { ok: true, plan: [] };
   const domainIds = topicMapDomainsOf(map);
   const input: RealismInput = { ...realismInputOf(ctx, [], domainIds.length ? [domainIds] : []), planKind: "TOPICS" };
@@ -14580,6 +14822,67 @@ function layeredPlanOf(e: Env, ctx: PlanContext, map: TopicMap, depth: TopicDept
     if (err instanceof PlanRefused) return { ok: false, error: err.message };
     console.error("roadmap: the topic map's milestones weren't built:", err instanceof Error ? err.message : err);
     return { ok: false, error: "Couldn't build the milestones from your map. Try again." };
+  }
+}
+
+/** What a TOPICS draft's milestone rebuild reads, and realism's word on it (topicLadderProbeOf). */
+export interface TopicLadderProbe {
+  /** Each filled layer's chosen live topics as the chain reads them: how many, paying, held when you began, known, DEEP, and their floors. */
+  layers: { layer: number; topics: number; paying: number; held: number; known: number; deep: number; floors: number[] }[];
+  depth: TopicDepth;
+  hoursPerWeek: number;
+  newCardsPerWeek: number | null;
+  dateMode: DateMode;
+  targetDay: DayKey;
+  /** The source rate over the map's Domains (realismInputOf's `sourceRate`; the chain writes its pace share of it), the reach model's parameters, and the priors standing in. */
+  sourceRate: number | null;
+  reach: RealismInput["reach"] | null;
+  calibrating: string[];
+  /** layeredLadderOf's result: the rows it built (version + 1, as a rebuild writes them), or its refusal. */
+  result: { ok: true; rows: number; layerRows: number } | { ok: false; error: string };
+}
+
+/**
+ * The rehearsal's read (scripts/roadmap-rehearse.ts --topics prints it when a rebuild is refused; it writes nothing):
+ * what a TOPICS draft's milestone rebuild (rebuildTopicsDraftOps) hands realism's layeredLadderOf, read as that rebuild
+ * reads it (the draft's map at version + 1, settled; its depth; the planning context), and the ladder's result. null
+ * with no TOPICS draft, or when the context can't be read.
+ */
+export async function topicLadderProbeOf(userId: string, roadmapId: string, now: Date, deps: RoadmapDeps = {}): Promise<TopicLadderProbe | null> {
+  try {
+    const e = envOf(deps);
+    const read = await topicDraftRead(e, userId, roadmapId);
+    if (!read.ok) return null;
+    const { b, map, depth } = read.value;
+    const ctx = await topicsContextOf(e, userId, b, depth, now);
+    const settled = settledTopicMapOf(map);
+    const chain = layeredChainOf(settled, depth, ctx.tree, ctx.intake.examLabel ? (ctx.intake.examDay ?? null) : null);
+    const domainIds = topicMapDomainsOf(settled);
+    const input: RealismInput = { ...realismInputOf(ctx, [], domainIds.length ? [domainIds] : []), planKind: "TOPICS" };
+    const built = layeredPlanOf(e, ctx, settled, depth, b.roadmap.version + 1);
+    return {
+      layers: chain.layers.map((l) => ({
+        layer: l.layer,
+        topics: l.topics.length,
+        paying: l.topics.filter((t) => !t.held && !t.skipped).length,
+        held: l.topics.filter((t) => t.held).length,
+        known: l.topics.filter((t) => t.skipped).length,
+        deep: l.topics.filter((t) => t.role === "DEEP").length,
+        floors: l.topics.map((t) => t.nd),
+      })),
+      depth,
+      hoursPerWeek: ctx.intake.hoursPerWeek,
+      newCardsPerWeek: ctx.intake.newCardsPerWeek,
+      dateMode: input.dateMode ?? ctx.intake.dateMode ?? "CHOSEN",
+      targetDay: ctx.intake.targetDay,
+      sourceRate: input.sourceRate ?? null,
+      reach: input.reach ?? null,
+      calibrating: [...(input.calibrating ?? [])],
+      result: built.ok ? { ok: true, rows: built.plan.length, layerRows: built.plan.filter((m) => m.chainRole === "LAYER").length } : { ok: false, error: built.error },
+    };
+  } catch (err) {
+    console.error("roadmap: the ladder probe couldn't read the draft:", err instanceof Error ? err.message : err);
+    return null;
   }
 }
 
@@ -14922,8 +15225,9 @@ export async function keepLayerCore(userId: string, roadmapId: string, layer: nu
 
 /**
  * [Write one] (§22.14 addTopicCore): a topic you name in a band, chosen, yours (USER, grounding OWN, placed by you). A
- * name equal to one of the Area's free Domains in layer 1 is that seed, bound to it (LIBRARY); the exact words of one
- * of your aim's clauses in the last band are that clause (AIM). Its key is the next T key.
+ * name equal to one of the Area's free Domains is that Domain, bound to it (LIBRARY), in any band (ruling N35: the
+ * map's tray adds your Domain to the layer you pick; layer 1 alone before it); the exact words of one of your aim's
+ * clauses in the last band are that clause (AIM). Its key is the next T key.
  */
 export async function addTopicCore(userId: string, roadmapId: string, layer: number, name: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ key: string }>> {
   if (!Number.isInteger(layer) || layer < LAYERS_MIN || layer > LAYERS_MAX) return fail(LAYER_GONE);
@@ -14938,7 +15242,7 @@ export async function addTopicCore(userId: string, roadmapId: string, layer: num
     if (!topicsLib.TOPIC_KEY_PATTERN.test(key)) return fail("This map holds as many topics as it can.");
     const tree = await e.io.fieldTree();
     const field = tree.find((f) => f.id === b.roadmap.fieldId) ?? null;
-    const seed = layer === 1 ? (field?.domains.find((d) => topicFormKey(d.name) === fk && !map.topics.some((t) => topicLive(t) && t.domainId === d.id)) ?? null) : null;
+    const seed = field?.domains.find((d) => topicFormKey(d.name) === fk && !map.topics.some((t) => topicLive(t) && t.domainId === d.id)) ?? null;
     if (seed) {
       const taken = await topicTakenDomainOf(e, userId, roadmapId, [seed.id]);
       if (taken) return fail(DOMAIN_TAKEN(taken.slot));
@@ -15631,24 +15935,24 @@ async function acceptTopicsStep(
   const ctx = await topicsContextOf(e, userId, b, depth, now);
   const otherKind = facts.inDraftPlan || kindOfRow(b.roadmap) !== "TOPICS";
   const sameKind = cur >= 1 && !otherKind;
-  // A stage under way (a carried TOPICS row) stays as it is: the rebuilt chain leaves its place out.
+  // A stage under way (a carried TOPICS row) stays as it is: the rebuilt chain leaves its place out (a layer's part by
+  // its topics, ruling N34 and the review round: ladderMatchOf, its topics kept in it).
   const keptCarried = planRows.filter((m) => isCarried(m) && m.chainRole != null && !superseded(b, m));
-  const underWay = new Set(keptCarried.map((m) => `${m.chainRole ?? ""}:${m.layer ?? m.stage ?? ""}`));
+  const partRows = partRowsOf(b);
   let rows0: MilestoneDraft[];
   if (sameKind) {
     rows0 = draftRowsOf(b).map(draftOf);
   } else {
-    const ladder = layeredPlanOf(e, ctx, map, depth, v);
+    const pp = carriedPinsOf(partRows, keptCarried, mapOfVersion(b, cur));
+    const ladder = layeredPlanOf(e, ctx, map, depth, v, pp.pins);
     if (!ladder.ok) return fail(ladder.error);
-    rows0 = ladder.plan.filter((m) => !underWay.has(`${m.chainRole ?? ""}:${m.layer ?? m.stage ?? ""}`));
+    const match = ladderMatchOf(ladder.plan, map, pp, keptCarried, []);
+    rows0 = ladder.plan.filter((_, i) => !match.underWay.has(i));
   }
   const layersK = Math.max(LAYERS_MIN, ...rows0.map((m) => m.layer ?? 0), ...keptCarried.map((m) => m.layer ?? 0));
   const drafts0: MilestoneDraft[] = rows0.map((m) => {
-    const layerIds = m.chainRole === "LAYER" ? Array.from(new Set(map.topics.filter((t) => topicLive(t) && t.chosen && t.layer === m.layer && t.domainId).map((t) => t.domainId as string))) : [];
-    const names = layerIds.map((id) => ctx.domains.get(id)).filter((d): d is DomainFacts => !!d).map((d) => domainName(d));
     return {
       ...m,
-      ...(!sameKind && m.chainRole === "LAYER" && m.layer != null ? { title: String(topicLayerTitleOf(names, m.layer, layersK)) } : {}),
       items: m.items.map((i) => (i.kind === "DOMAIN" && i.domainId && state.created.includes(i.domainId) && !i.notes.includes("TOPIC_MAP") ? { ...i, notes: [...i.notes, "TOPIC_MAP" as ItemNote] } : i)),
       measures: m.measures.map((x) => {
         // A PART or BETWEEN checkpoint stays keyless (lane 7's handoff): its key would collide with its topic's own.
@@ -15662,10 +15966,22 @@ async function acceptTopicsStep(
       }),
     };
   });
+  // Ords in chain order beside the carried rows (ruling N34, the review round: chainOrdsOf; before it every row followed
+  // the carried ones), read by the feasibility below as by the plan, and a rebuilt chain's layer titles from them (its
+  // part's place).
+  const ords = chainOrdsOf(drafts0, keptCarried, map, planRows.filter(isCarried).map((m) => m.ord));
+  const drafts = layerTitlesOf(
+    drafts0.map((d, i) => ({ ...d, ord: ords[i] })),
+    keptCarried,
+    map,
+    ctx,
+    layersK,
+    new Set(sameKind ? [] : drafts0.filter((m) => m.chainRole === "LAYER" && m.layer != null).map((m) => m.lineageId))
+  );
   // Positions: the plan's own, under the TOPICS cap (ruling 50; a closed LEVELS milestone is history beside it, never one of them).
   const cap = milestoneCapOf("TOPICS");
-  if (new Set([...keptCarried.map((m) => m.lineageId), ...drafts0.filter(scheduled).map((d) => d.lineageId)]).size > cap) return fail(`A roadmap holds at most ${cap} milestones; move some to Later.`);
-  const feasibility = topicsFeasibilityOf(e, ctx, drafts0, keptCarried.map(draftOf));
+  if (new Set([...keptCarried.map((m) => m.lineageId), ...drafts.filter(scheduled).map((d) => d.lineageId)]).size > cap) return fail(`A roadmap holds at most ${cap} milestones; move some to Later.`);
+  const feasibility = topicsFeasibilityOf(e, ctx, drafts, keptCarried.map(draftOf));
   if (feasibility.impossible) return fail(pointedAt(gateOf(e, ctx), "A milestone can't be done by its date as planned — use a remedy or change it."));
   const needsOver = !!feasibility.over || feasibility.dateCheck?.verdict === "OVER";
   if (needsOver && !overAccepted) return fail(pointedAt(gateOf(e, ctx), "This plan is over your hours or pace: switch on “Keep it over my hours/pace” to accept it."));
@@ -15705,9 +16021,7 @@ async function acceptTopicsStep(
     return "stale";
   }
 
-  // Ords after the carried rows; ranks by planKind (ruling 51): R1 spreads the gates by topicRankIndexOf.
-  const baseOrd = Math.max(0, ...planRows.filter(isCarried).map((m) => m.ord));
-  const drafts = drafts0.map((d, i) => ({ ...d, ord: baseOrd + i + 1 }));
+  // Ranks by planKind (ruling 51): R1 spreads the gates by topicRankIndexOf.
   const known = new Set(map.topics.filter((t) => t.heldDay != null || t.skippedDay != null).map((t) => t.lineageId));
   const allKnown = (d: MilestoneDraft): boolean => {
     const own = Array.from(new Set(d.measures.map((x) => x.topicLineageId).filter((l): l is string => !!l)));
@@ -15943,9 +16257,32 @@ function topicUndoOf(b: RoadmapBundle, acc: AcceptanceRec, version: number): { r
 // ── Gating (F-R5-10; the PREREQS_MET guard) ──
 
 /**
+ * Ruling N34: the statuses of a layer row that is one of its layer's parts as the plan stands (a draft's, a superseded
+ * version's and a discarded row are none): the PREREQS_MET SQL and layerBeforeReachedOf read the same list.
+ */
+const PART_LIVE_STATUSES: readonly MilestoneStatus[] = ["PLANNED", "STARTING", "STARTED", "LATER"];
+
+/**
+ * The first branch of the gate (F-R5-10, ruling N34): the layer before `row` is reached (or held, or reached on cards:
+ * ruling N26) when a row of it is, and every one of its parts is: each live layer row of that layer (PART_LIVE_STATUSES)
+ * has a reached row of its lineage (a "Start again" copy or a carried day counts for its position). An unsplit layer
+ * has one lineage, so this reads as the one reached row did. The PREREQS_MET SQL's own first branch, row for row.
+ */
+function layerBeforeReachedOf(b: RoadmapBundle, row: MilestoneRec): boolean {
+  if (row.layer == null) return false;
+  const k = row.layer - 1;
+  const ofLayer = b.milestones.filter((m) => m.roadmapId === row.roadmapId && m.chainRole === "LAYER" && m.layer === k);
+  const reached = (m: MilestoneRec): boolean => m.reachedDay != null && m.status !== "DISCARDED";
+  if (!ofLayer.some(reached)) return false;
+  return ofLayer.every((q) => !PART_LIVE_STATUSES.includes(q.status as MilestoneStatus) || b.milestones.some((x) => x.roadmapId === q.roadmapId && x.lineageId === q.lineageId && reached(x)));
+}
+
+/**
  * Ruling N27 (contracts §22.20): the parents a TOPICS layer milestone waits on, as the PREREQS_MET guard reads them
- * (§22.14): null when the row is never held back (layer 1, a depth milestone, every LEVELS row) or milestone k is
- * reached (or held, or reached on cards: ruling N26); else each parent once, the ones not met first. A parent is a
+ * (§22.14): null when the row is never held back (layer 1, a depth milestone, every LEVELS row) or layer k is
+ * reached (or held, or reached on cards: ruling N26; every part of a split layer k: ruling N34); else each parent
+ * once, the ones not met first. Every part of layer k + 1 reads the same parents (they share the layer), so a part is
+ * never held back by the part before it: only the one-live-milestone rule orders them. A parent is a
  * chosen topic parent of a chosen layer-(k + 1) topic (met at TOPIC_FLOOR_CARDS live cards at OPEN_LEVEL, cardsAtOpenOf,
  * or HELD_AT_START, or skipped) or a cross-goal parent Domain (met at its floor); the parents are the counting links
  * (yours, cross-goal, or Gemini's drawn one, none removed), else the whole layer before (`wholeLayer`).
@@ -15953,7 +16290,8 @@ function topicUndoOf(b: RoadmapBundle, acc: AcceptanceRec, version: number): { r
 function lockParentsOf(b: RoadmapBundle, row: MilestoneRec, tree: readonly TreeField[]): { afterLayer: number; wholeLayer: boolean; parents: MilestoneLockParentView[] } | null {
   if (kindOfRow(b.roadmap) !== "TOPICS" || row.chainRole !== "LAYER" || row.layer == null || row.layer <= 1) return null;
   const k = row.layer - 1;
-  if (b.milestones.some((m) => m.roadmapId === row.roadmapId && m.chainRole === "LAYER" && m.layer === k && m.reachedDay != null && m.status !== "DISCARDED")) return null;
+  // Ruling N34: the layer before is reached when every one of its parts is (an unsplit layer's one row, as before).
+  if (layerBeforeReachedOf(b, row)) return null;
   const map = mapOfVersion(b, row.version);
   const children = map.topics.filter((t) => topicLive(t) && t.chosen && t.layer === row.layer);
   const parents = new Map<string, MilestoneLockParentView>();
@@ -16068,8 +16406,10 @@ function studyViewOf(b: RoadmapBundle, planRows: readonly MilestoneBundle[], cur
     if (parent) return { key: parent.key, name: parent.name, domainId: parent.domainId as string, fieldId, cards: parent.cards, floor: parent.floor, due: parent.due ?? 0, layer: lock.afterLayer, geminiNamed: parent.geminiNamed, locked: true };
   }
   const later = planRows.filter((m) => m.chainRole === "LAYER" && m.layer != null && m.status === "PLANNED" && m.reachedDay == null && m.ord > cur.ord && !superseded(b, m)).sort((x, y) => x.ord - y.ord);
+  // Ruling N34: a split layer's part studies its own topics first (the next part's after it, as the next layer's).
+  const parts = partRowsOf(b);
   for (const row of [cur, ...later]) {
-    const t = layerTopicsOf(map, row.layer as number, tree, today, topicFloorsOfRow(row)).find((x) => !x.done && x.domainId);
+    const t = layerTopicsOf(map, row.layer as number, tree, today, topicFloorsOfRow(row), partTopicsOf(parts, row, map)).find((x) => !x.done && x.domainId);
     if (t) return { key: t.key, name: t.name, domainId: t.domainId as string, fieldId, cards: t.cards, floor: t.floor, due: t.due, layer: row.layer as number, geminiNamed: t.geminiNamed };
   }
   return null;
@@ -16094,10 +16434,14 @@ function topicFloorsOfRow(m: { measures: readonly { kind: string; role: string; 
   return out;
 }
 
-/** Ruling N25: a layer's chosen topics with "n of 8" (cardsAtOpenOf, the gate's count; `floors`: the row's paying targets, topicFloorsOfRow), their due cards and the Gemini mark, in the map's order. */
-function layerTopicsOf(map: TopicMap, layer: number, tree: readonly TreeField[], today: DayKey, floors: ReadonlyMap<string, number> = new Map()): MilestoneTopicView[] {
+/**
+ * Ruling N25: a layer's chosen topics with "n of 8" (cardsAtOpenOf, the gate's count; `floors`: the row's paying targets,
+ * topicFloorsOfRow), their due cards and the Gemini mark, in the map's order. `only` (ruling N34): a split layer's part
+ * reads its own topics (partTopicsOf); null reads the whole layer, as an unsplit layer row does.
+ */
+function layerTopicsOf(map: TopicMap, layer: number, tree: readonly TreeField[], today: DayKey, floors: ReadonlyMap<string, number> = new Map(), only: ReadonlySet<string> | null = null): MilestoneTopicView[] {
   return map.topics
-    .filter((t) => topicLive(t) && t.chosen && t.layer === layer)
+    .filter((t) => topicLive(t) && t.chosen && t.layer === layer && (!only || only.has(t.lineageId)))
     .map((t) => {
       const d = domainMarkOf(tree, t.domainId);
       const cards = cardsAtOpenOf(tree, t.domainId);
@@ -16144,11 +16488,15 @@ async function replanTopicsOf(e: Env, userId: string, b: RoadmapBundle, kind: Re
   if (kind !== "REFIT") return { ops, plan: null };
   const depth = topicDepthOfRow(b.roadmap) ?? AIM_DEPTHS[DEPTH_DEFAULT];
   const ctx = await topicsContextOf(e, userId, b, depth, now);
-  const ladder = layeredPlanOf(e, ctx, copy, depth, v);
+  // Ruling N34: a split layer's started part keeps its topics, and the row holding them is left out of the fresh rows.
+  const partRows = partRowsOf(b);
+  const started = partRows.filter((m) => isCarried(m) && m.chainRole != null && carried.some((c) => c.id === m.id));
+  const pp = carriedPinsOf(partRows, started, live);
+  const ladder = layeredPlanOf(e, ctx, copy, depth, v, pp.pins);
   if (!ladder.ok) return ladder.error;
-  // A stage under way stays as it is: its place in the chain is left out of the fresh rows.
-  const underWay = new Set(carried.map((m) => `${m.chainRole ?? ""}:${m.layer ?? m.stage ?? ""}`));
-  return { ops, plan: ladder.plan.filter((m) => !underWay.has(`${m.chainRole ?? ""}:${m.layer ?? m.stage ?? ""}`)) };
+  // A stage under way stays as it is: its place in the chain (the review round: the row of its topics, ladderMatchOf) is left out of the fresh rows.
+  const match = ladderMatchOf(ladder.plan, copy, pp, started, []);
+  return { ops, plan: ladder.plan.filter((_, i) => !match.underWay.has(i)) };
 }
 
 // ── Depth (ruling 50: lowerDepth on TOPICS takes a TopicDepth) ──
@@ -16455,11 +16803,28 @@ function topicMapViewOf(
   for (const m of rows) if (!superseded(b, m)) for (const [l, n] of topicFloorsOfRow(m)) rowFloors.set(l, n);
   const stateOf = (layer: number): TopicLayerView["state"] => {
     if (opts.draft) return layer === 1 ? "OPEN" : "AFTER";
-    const m = rows.find((r) => r.layer === layer && !superseded(b, r));
+    // Ruling N34: a split layer reads its parts together: HELD when every part is, DONE when every part is reached or
+    // held, else as its first part still to reach (the parts share the layer's gate). One row reads as before.
+    const parts = rows.filter((r) => r.layer === layer && !superseded(b, r));
+    const m = parts.length > 1 ? (parts.find((r) => !heldRow(r) && !r.reachedDay) ?? null) : (parts[0] ?? null);
+    if (parts.length > 1 && parts.every(heldRow)) return "HELD";
+    if (parts.length > 1 && !m) return "DONE";
     if (!m) return "AFTER";
     if (heldRow(m)) return "HELD";
     if (m.reachedDay) return "DONE";
     return isCarried(m) || !prereqsOpenOf(b, m, tree) ? "OPEN" : "AFTER";
+  };
+  // Ruling N34: each layer's milestones as the plan (or the draft) holds them, and the most paying topics one holds.
+  const layerRowsOfView = (opts.draft ? draftRowsOf(b) : rows).filter((r) => r.chainRole === "LAYER" && !superseded(b, r) && r.status !== "LATER");
+  const payingOwnOf = (m: MilestoneBundle): number => m.measures.filter((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS" && x.topicLineageId && map.topics.find((t) => t.lineageId === x.topicLineageId)?.layer === m.layer).length;
+  // The review round: "large" says the cap is why, so it shows only on a plan (or draft) at milestoneCapOf("TOPICS"),
+  // where no rebuild could split the layer further; a plan accepted before the ruling, under the cap, shows none.
+  const capRows = (opts.draft ? [...planRowsOf(b).filter(isCarried), ...draftRowsOf(b)] : planRowsOf(b)).filter((m) => scheduled(m) && !superseded(b, m));
+  const atCap = positionCountOf(capRows) >= milestoneCapOf("TOPICS");
+  const partsViewOf = (layer: number): { parts?: number; large?: number } => {
+    const own = layerRowsOfView.filter((r) => r.layer === layer);
+    const most = own.reduce((mx, r) => Math.max(mx, payingOwnOf(r)), 0);
+    return { ...(own.length > 1 ? { parts: own.length } : {}), ...(atCap && most > TOPICS_PER_MILESTONE ? { large: most } : {}) };
   };
   const slotOf = (roadmapId: string): GoalSlot | null => {
     const r = opts.others.find((x) => x.id === roadmapId);
@@ -16518,7 +16883,39 @@ function topicMapViewOf(
       domain,
       // Rulings N30 and N31: why a name sits behind the fold, inline (a NEAR_DUPLICATE names what it duplicates).
       ...hideViewOf(map, t),
+      // Ruling N35: the free Domain offered on this row ("Use your Domain «X» · n cards"; a tap binds it).
+      ...domainOfferOf(t.key),
     };
+  };
+  // Ruling N35 (a draft): your free Domains (in none of the map's topics, held by no other goal) are no longer layer-1
+  // rows. One whose name equals or holds a shown, unbound topic's (roadmap-topics domainOffersOf: N31's normalisation)
+  // is offered on that topic's row (one a hidden topic wears, on that row behind the fold); the rest sit in the map's
+  // folded tray (topic-map-model libraryTrayOf). A plan offers none.
+  const heldElsewhere = new Set(opts.others.filter(holdsGoal).flatMap((r) => [...goalDomainsOf(r)]));
+  const inMap = new Set(map.topics.filter(topicLive).map((t) => t.domainId).filter((d): d is string => !!d));
+  const freeDomains = opts.draft ? (field?.domains ?? []).filter((d) => !inMap.has(d.id) && !heldElsewhere.has(d.id)) : [];
+  const offerRows: TopicDraft[] = [];
+  if (freeDomains.length > 0) for (let layer = 1; layer <= map.layers; layer++) offerRows.push(...map.topics.filter((t) => topicLive(t) && t.layer === layer && !topicHidden(t) && !t.domainId));
+  let offers = new Map<string, string>();
+  try {
+    offers = offerRows.length > 0 ? topicsLib.domainOffersOf(offerRows.map((t) => ({ key: t.key, name: t.name })), freeDomains.map((d) => ({ id: d.id, name: d.name }))) : new Map();
+  } catch {
+    offers = new Map();
+  }
+  // The review round: a free Domain whose name a topic behind the fold already wears (addTopic would refuse it as on the
+  // map: TOPIC_TWICE) is offered on that topic's row, in the fold beside it, never in the tray where its [Add] can't land.
+  const offeredIds = new Set(offers.values());
+  for (const d of freeDomains) {
+    if (offeredIds.has(d.id)) continue;
+    const fk = topicFormKey(d.name);
+    const t = map.topics.find((x) => topicLive(x) && topicHidden(x) && !x.domainId && !offers.has(x.key) && topicFormKey(x.name) === fk);
+    if (!t) continue;
+    offers.set(t.key, d.id);
+    offeredIds.add(d.id);
+  }
+  const domainOfferOf = (key: string): { domainOffer?: TopicDomainOffer } => {
+    const d = offers.has(key) ? freeDomains.find((x) => x.id === offers.get(key)) : undefined;
+    return d ? { domainOffer: { id: d.id, name: d.name, geminiNamed: geminiNamedOf(d), cards: d.cards.length } } : {};
   };
   const layers: TopicLayerView[] = [];
   let hiddenAll = 0;
@@ -16551,6 +16948,7 @@ function topicMapViewOf(
       emptyOffers,
       needsParent: shown.filter((t) => t.notes.includes("NEEDS_PARENT")).length,
       milestone: milestones.find((m) => m.layer === layer) ?? null,
+      ...partsViewOf(layer),
     });
   }
   let acceptRefusal: string | null = null;
@@ -16564,11 +16962,7 @@ function topicMapViewOf(
       acceptRefusal = null;
     }
   }
-  const heldElsewhere = new Set(opts.others.filter(holdsGoal).flatMap((r) => [...goalDomainsOf(r)]));
-  const inMap = new Set(map.topics.filter(topicLive).map((t) => t.domainId).filter((d): d is string => !!d));
-  const layerOneSeeds = opts.draft
-    ? (field?.domains ?? []).filter((d) => !inMap.has(d.id) && !heldElsewhere.has(d.id)).map((d) => ({ id: d.id, name: d.name, geminiNamed: geminiNamedOf(d) }))
-    : [];
+  const layerOneSeeds = freeDomains.map((d) => ({ id: d.id, name: d.name, geminiNamed: geminiNamedOf(d) }));
   let lastLayerSeeds: AimClause[] = [];
   if (opts.draft) {
     try {
@@ -16618,6 +17012,7 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
     const marks = tree.flatMap((f) => f.domains.map((d) => ({ name: d.name, geminiNamed: geminiNamedOf(d) })));
     const liveMap = mapOfVersion(b, b.roadmap.version);
     const rowById = new Map(b.milestones.map((m) => [m.id, m]));
+    const parts = partRowsOf(b);
     const milestones = out.milestones.map((r) => {
       const m = rowById.get(r.id);
       if (!m) return r;
@@ -16626,10 +17021,13 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
       // Rulings N25 and N27: a layer row's topics with "n of 8", and its lock (the parents prereqsOpenOf reads) while it is locked.
       const lock = m.chainRole === "LAYER" && m.status === "PLANNED" && m.reachedDay == null && m.layer != null ? lockViewOf(b, m, tree, today) : null;
       const locked = lock != null;
-      const topics = m.chainRole === "LAYER" && m.layer != null ? layerTopicsOf(liveMap, m.layer, tree, today, topicFloorsOfRow(m)) : null;
+      // Ruling N34: a split layer's part lists its own topics, and its place ("part 1 of 2").
+      const part = layerPartOf(parts, m);
+      const topics = m.chainRole === "LAYER" && m.layer != null ? layerTopicsOf(liveMap, m.layer, tree, today, topicFloorsOfRow(m), part ? ownTopicLineagesOf(m, liveMap) : null) : null;
       return {
         ...r,
         layer: m.layer ?? null,
+        ...(part ? { part } : {}),
         chainRole: (m.chainRole === "LAYER" || m.chainRole === "DEPTH" ? m.chainRole : null) as t5.ChainRole | null,
         opensAfter: locked ? (m.layer as number) - 1 : null,
         titleParts: namedPartsOf(r.title, marks),
@@ -16665,7 +17063,11 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
           }),
           // Rulings N25 and N27: the current layer's topics with "n of 8", and its lock while its prerequisites are open.
           ...(curRow?.chainRole === "LAYER" && curRow.layer != null
-            ? { topics: layerTopicsOf(liveMap, curRow.layer, tree, today, topicFloorsOfRow(curRow)), lock: curRow.status === "PLANNED" && curRow.reachedDay == null ? lockViewOf(b, curRow, tree, today) : null }
+            ? {
+                topics: layerTopicsOf(liveMap, curRow.layer, tree, today, topicFloorsOfRow(curRow), partTopicsOf(parts, curRow, liveMap)),
+                lock: curRow.status === "PLANNED" && curRow.reachedDay == null ? lockViewOf(b, curRow, tree, today) : null,
+                ...(layerPartOf(parts, curRow) ? { part: layerPartOf(parts, curRow) as LayerPart } : {}),
+              }
             : {}),
         }
       : out.current;
@@ -16702,10 +17104,26 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
     }
     // [Accept all] asks for the keep-over switch when the draft is over your hours or pace (the footer's own rule).
     const topicMap = { ...topicMap0, needsOver: !!out.draft.feasibility.over || out.draft.dateCheck?.verdict === "OVER" };
+    // Ruling N35: a draft topic bound to one of your Gemini-named Domains (its row's offer, a tray Domain added, Use my
+    // Domain…) names it in the draft's milestones (code's title over the layer's Domains, the Domain's item): in parts,
+    // as the plan's current milestone is (ruling N29), so the name is never bare on the payload. A draft naming no
+    // Gemini-named Domain reads as it was.
+    const draftMarks = tree.flatMap((f) => f.domains.map((d) => ({ name: d.name, geminiNamed: geminiNamedOf(d) }))).filter((d) => d.geminiNamed);
+    const partedDraftRow = (m: MilestoneDraft): MilestoneDraft => {
+      if (draftMarks.length === 0) return m;
+      const titleParts = namedPartsOf(m.title, draftMarks);
+      const items = m.items.map((i) => {
+        const parts = namedPartsOf(i.label, draftMarks);
+        return parts.some((p) => p.geminiNamed) ? { ...i, labelParts: parts } : i;
+      });
+      const titled = titleParts.some((p) => p.geminiNamed);
+      return titled || items.some((x, k) => x !== m.items[k]) ? { ...m, ...(titled ? { titleParts } : {}), items } : m;
+    };
     out = {
       ...out,
       draft: {
         ...out.draft,
+        milestones: out.draft.milestones.map(partedDraftRow),
         topicMap,
         // A TOPICS draft is accepted on its map: refused while the map is (the confirm then names what accept creates).
         acceptable: topicMap.acceptRefusal == null && out.draft.feasibility.impossible !== true,

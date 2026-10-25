@@ -3365,8 +3365,8 @@ asyncChecks.push(
   {
     const focusSrc = code(read("src/components/workspace/RoadmapFocus.tsx"));
     check(
-      "roadmap focus (ruling N29): the h2 marks Gemini's title with LayerBand's visible mark (pv.suggest) and the spoken «Gemini's milestone · not checked», only when the title is Gemini's (code's \"Layer k\" stays bare); review.css selects .rv-focus-title[data-gemini]",
-      /<h2 id="rv-focus-h" className="rv-focus-title" data-gemini=\{focus\.geminiTitle \? "" : undefined\}>\s*\{focus\.geminiTitle \? \(\s*<>\s*<span data-wc="name">\{focus\.title\}<\/span>\s*<Mark glyph="pv\.suggest" size=\{12\} \/>\s*<span className="sr-only">\{GEMINI_MILESTONE_LABEL\}<\/span>\s*<\/>\s*\) : \(\s*focus\.title\s*\)\}\s*<\/h2>/.test(focusSrc) &&
+      "roadmap focus (ruling N29): the h2 marks Gemini's title with LayerBand's visible mark (pv.suggest) and the spoken «Gemini's milestone · not checked», only when the title is Gemini's (code's \"Layer k\" stays bare), a split layer's part after it as a meta (ruling N34, the review round); review.css selects .rv-focus-title[data-gemini]",
+      /<h2 id="rv-focus-h" className="rv-focus-title" data-gemini=\{focus\.geminiTitle \? "" : undefined\}>\s*\{focus\.geminiTitle \? \(\s*<>\s*<span data-wc="name">\{focus\.title\}<\/span>\s*<Mark glyph="pv\.suggest" size=\{12\} \/>\s*<span className="sr-only">\{GEMINI_MILESTONE_LABEL\}<\/span>\s*<\/>\s*\) : \(\s*focus\.title\s*\)\}\s*\{part && <span className="t-meta rv-focus-part"> · \{part\}<\/span>\}\s*<\/h2>/.test(focusSrc) &&
         /import \{ GEMINI_MILESTONE_LABEL \} from "@\/components\/roadmap\/roadmap-copy";/.test(focusSrc) &&
         GEMINI_MILESTONE_LABEL === "Gemini's milestone · not checked" &&
         /\.rv-focus-title\[data-gemini\] \{ display: flex; align-items: center; flex-wrap: wrap; gap: 6px; \}/.test(read("src/components/workspace/review.css")),

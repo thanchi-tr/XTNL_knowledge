@@ -10,6 +10,7 @@
  *   rowStartsUnchosen(row)           a layer-1 row that carries the checkbox (ruling 62)
  *   estimateChipOf(rating)           which estimate chip, its label, and the "yours" figure
  *   acceptTopicChoicesOf(map, all)   what an accept's confirm names (AcceptTopicChoices)
+ *   libraryTrayOf(map)               ruling N35: your free Domains not offered on a row (the folded tray)
  *   railNodeTopicFieldsOf(row)       a milestone row's TOPICS fields for RouteRail
  *   topicPlansOn(gates), topicNamesOn(gates)   the switches as a surface reads them
  */
@@ -268,6 +269,18 @@ export function acceptAllBareLayersOf(map: Pick<TopicMapView, "layers">, list: r
     .filter((x) => x.names.length === 0 && (x.unchecked?.length ?? 0) > 0)
     .filter((x) => !(map.layers.find((l) => l.layer === x.layer)?.topics ?? []).some((r) => r.cls !== "NOT_CHECKED" || r.chosen))
     .map((x) => x.layer);
+}
+
+// ─── Your Domains (ruling N35) ───
+
+/**
+ * Ruling N35: the map's one folded tray, "Your Domains · n": your free Domains (TopicMapView.layerOneSeeds) less every
+ * one offered on a topic's row (TopicRowView.domainOffer: it is offered there), in the library's order. Each is added to
+ * the layer you pick (default layer 1) through addTopic, which binds a free Domain of that name in any layer.
+ */
+export function libraryTrayOf(map: Pick<TopicMapView, "layers" | "layerOneSeeds">): TopicMapView["layerOneSeeds"] {
+  const offered = new Set(map.layers.flatMap((l) => l.topics.map((r) => r.domainOffer?.id).filter((id): id is string => typeof id === "string")));
+  return (map.layerOneSeeds ?? []).filter((d) => !offered.has(d.id));
 }
 
 // ─── The chain (§15.6) ───

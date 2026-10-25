@@ -17,8 +17,12 @@
  * layer not reached with a topic to do is that one, and the hub lands on its first topic to do: the parent the hero
  * names ("Add n cards to <parent>") whenever the lock is the whole layer before (the live maps' case: EDGE_DRAW is
  * rarely met); with a drawn or picked link the hero names the first unmet parent, which may sit later in this order.
+ *
+ * A split layer (ruling N34, roadmap rework 2): a layer of more than six paying topics is milestones of its own, one
+ * per part; each part is read as a layer row is, over its own topics (StudyMilestoneIn.topics), in order, so the
+ * focus studies part 1's topics, then part 2's, and the card names the part ("Layer 1 / 5 · part 1 of 2").
  */
-import { TOPIC_FLOOR_CARDS, topicDoneOf, type LayerMilestone } from "./roadmap-types";
+import { TOPIC_FLOOR_CARDS, topicDoneOf, type LayerMilestone, type LayerPart } from "./roadmap-types";
 
 export interface StudyTopicIn {
   key: string;
@@ -37,6 +41,9 @@ export interface StudyMilestoneIn {
   title: string;
   status: string;
   reached: boolean;
+  /** Ruling N34: a split layer's part, and the keys of its own topics (absent on an unsplit layer: every topic of it). */
+  part?: LayerPart;
+  topics?: readonly string[];
 }
 export interface StudyDomainIn {
   id: string;
@@ -93,6 +100,8 @@ export interface StudyFocus {
   total: number;
   /** Cards due today across the layer's topics. */
   layerDue: number;
+  /** Ruling N34: the split layer's part the focus is on (its topics are the part's own); absent on an unsplit layer. */
+  part?: LayerPart;
 }
 
 const OPEN_STATUSES = new Set(["PLANNED", "STARTING", "STARTED"]);
@@ -105,17 +114,17 @@ export function studyFocusOf(input: StudyFocusInput): StudyFocus | null {
     const notReached = input.milestones.filter((m) => !m.reached && OPEN_STATUSES.has(m.status)).sort((a, b) => a.layer - b.layer);
     if (notReached.length === 0) return null;
     const byDomain = new Map(input.domains.map((d) => [d.id, d]));
-    const topicsOf = (layer: number): StudyTopic[] =>
+    const topicsOf = (m: StudyMilestoneIn): StudyTopic[] =>
       input.topics
-        .filter((t) => live(t) && t.layer === layer && t.domainId && byDomain.has(t.domainId))
+        .filter((t) => live(t) && t.layer === m.layer && (!m.topics || m.topics.includes(t.key)) && t.domainId && byDomain.has(t.domainId))
         .map((t) => {
           const d = byDomain.get(t.domainId as string) as StudyDomainIn;
           const floor = t.floor ?? TOPIC_FLOOR_CARDS;
           return { key: t.key, name: d.name || t.name, domainId: d.id, cards: d.atOpen, floor, due: d.due, live: d.cards, done: t.skipped || t.held || topicDoneOf(d.atOpen, floor) };
         });
     // The lowest layer not reached with a topic still to do (P15); else the lowest not reached, waiting for its reach.
-    const open = notReached.find((m) => topicsOf(m.layer).some((t) => !t.done)) ?? notReached[0];
-    const topics = topicsOf(open.layer);
+    const open = notReached.find((m) => topicsOf(m).some((t) => !t.done)) ?? notReached[0];
+    const topics = topicsOf(open);
     const todo = topics.filter((t) => !t.done);
     const finished = topics.filter((t) => t.done);
     const gm = input.geminiMilestones.find((m) => m.layer === open.layer) ?? null;
@@ -133,6 +142,7 @@ export function studyFocusOf(input: StudyFocusInput): StudyFocus | null {
       done: finished.length,
       total: topics.length,
       layerDue: topics.reduce((n, t) => n + t.due, 0),
+      ...(open.part && open.part.p > 1 ? { part: { i: open.part.i, p: open.part.p } } : {}),
     };
   } catch {
     return null;

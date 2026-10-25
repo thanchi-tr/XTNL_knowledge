@@ -16,8 +16,12 @@
  *                         the map asks you to confirm, listing what it replaces)
  *   header row 2          the one who-word chip (D37; a 24 px visual in a 40 px box: 84 px in all), and
  *                         "[i-flag] 2 need a parent" while any does (it blocks the keep)
- *   rows                  TopicMapRow, chosen first
- *   folds                 "+3" (unchosen, never struck; sr "3 more topics, not in the plan") and
+ *   large                 ruling N34: "Large: 9 topics in one milestone" when the milestone cap left a milestone of
+ *                         this layer over six paying topics (TopicLayerView.large): under the header in a word block of
+ *                         its own (topic-large; the review round: the layer block keeps its 6), folded with the body
+ *   rows                  TopicMapRow, chosen first; under a draft row that has one, ruling N35's DomainOfferRow
+ *                         ("Use your Domain «X» · n cards": one tap binds your matching Domain)
+ *   folds                "+3" (unchosen, never struck; sr "3 more topics, not in the plan") and
  *                         [pv.suggest] "2" «Gemini · not checked» (sr "2 not checked"); a tap reveals
  *   empty                 the state word "empty" and a ▸ to the empty-layer sheet
  *   fold (a plan)         ruling N32: only the open layer is expanded. A layer behind it folds to "[layer.k] Layer 1 · 3 done"
@@ -55,6 +59,7 @@ import {
   layerChosenSr,
   layerDoneWord,
   layerTopicsAria,
+  largeLayerLine,
   foldHiddenSr,
   foldMoreSr,
   keepLayerAria,
@@ -67,7 +72,7 @@ import {
   writeTopicAria,
 } from "./roadmap-copy";
 import { layerChipOf, parentNamesOf } from "./topic-map-model";
-import { TopicMapRow, type TraceRole } from "./TopicMapRow";
+import { DomainOfferRow, TopicMapRow, type TraceRole } from "./TopicMapRow";
 
 export interface LayerBandProps {
   map: Pick<TopicMapView, "layers">;
@@ -77,6 +82,8 @@ export interface LayerBandProps {
   trace: { self: string | null; related: Set<string> };
   onTrace: (key: string) => void;
   onChoose?: ((key: string, chosen: boolean) => void) | null;
+  /** Ruling N35 (a draft): binds the topic to the Domain its row offers (useMyDomain); null draws no offer. */
+  onUse?: ((key: string, domainId: string) => void) | null;
   onMore: (key: string) => void;
   onKeep?: ((layer: number) => void) | null;
   onWrite?: ((layer: number) => void) | null;
@@ -129,7 +136,7 @@ function roleOf(trace: LayerBandProps["trace"], key: string): TraceRole {
   return trace.related.has(key) ? "rel" : "other";
 }
 
-export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore, onKeep, onWrite, onEmpty, onRebreak, seenKey, openedByReach, hiddenOpen, onHiddenToggle, milestoneOpen, children, pending, stepHidden = false, fold = null }: LayerBandProps) {
+export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onUse, onMore, onKeep, onWrite, onEmpty, onRebreak, seenKey, openedByReach, hiddenOpen, onHiddenToggle, milestoneOpen, children, pending, stepHidden = false, fold = null }: LayerBandProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [msLocal, setMsLocal] = useState(false);
   // Ruling N32: a folded layer's body (its milestone line, folds and rows) stays in the markup, hidden, until the header's ▸.
@@ -162,9 +169,11 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
     if (!wasKept.current && layer.kept) void playGlyph(keptRef.current?.querySelector("svg"), "pv-confirm", { licence: "ACT" });
     wasKept.current = layer.kept;
   }, [layer.kept]);
-  const row = (r: TopicRowView) => (
-    <TopicMapRow key={r.key} row={r} parents={parentNamesOf(map, r)} trace={roleOf(trace, r.key)} onTrace={onTrace} onChoose={draft ? onChoose : null} onMore={onMore} pending={pending} />
-  );
+  const row = (r: TopicRowView) => [
+    <TopicMapRow key={r.key} row={r} parents={parentNamesOf(map, r)} trace={roleOf(trace, r.key)} onTrace={onTrace} onChoose={draft ? onChoose : null} onMore={onMore} pending={pending} />,
+    // Ruling N35: your matching Domain, offered under its row in one tap (a draft's; never automatic).
+    ...(draft && onUse && r.domainOffer ? [<DomainOfferRow key={`${r.key}:use`} row={r} offer={r.domainOffer} onUse={onUse} pending={pending} />] : []),
+  ];
   return (
     <section
       className={cx("rm-tm-band", locked && "rm-tm-locked")}
@@ -282,6 +291,12 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
           </div>
         )}
       </div>
+      {/* Ruling N34: the cap left this layer large; its own word block under the header (never the layer's), folded with the body. */}
+      {layer.large != null && layer.large > 0 && (
+        <p className="rm-tm-large" data-wc-block="topic-large" hidden={folded || undefined}>
+          {largeLayerLine(layer.large)}
+        </p>
+      )}
       {chosen.length > 0 && (
         <ul className="rm-tm-rows" hidden={folded || undefined}>
           {chosen.map(row)}

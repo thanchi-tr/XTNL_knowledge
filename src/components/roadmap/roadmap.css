@@ -1098,6 +1098,24 @@
   .rm-tm-locked .rm-tm-mst { color: var(--ink-1); }
   .rm-tm-h2 { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; min-height: 40px; }
   .rm-tm-np { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; line-height: 18px; color: var(--ink-0); }
+  /* Ruling N34: "Large: 9 topics in one milestone" when the milestone cap left a milestone of the layer over six (its own block under the header). */
+  .rm-tm-large { margin: 4px 0 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  /* Ruling N35: your matching Domain offered under a draft topic's row (one 44 px tap), and the folded tray of the rest
+     under the map: each row its name, a 44 px layer picker (layer 1 first) and a 44 px [Add]. */
+  .rm-tm-offer { padding-left: 24px; }
+  .rm-tm-use { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px; padding: 0 8px; border: 1px dashed var(--line-1); border-radius: var(--r-ctl); background: none; color: var(--ink-1); font: 600 13px/18px var(--font-ui); text-align: left; cursor: pointer; }
+  .rm-tm-use:hover { color: var(--ink-0); border-color: var(--ink-1); }
+  .rm-tm-use:disabled { opacity: .5; cursor: default; }
+  .rm-tm-use > svg { flex: none; }
+  .rm-tm-use-t { min-width: 0; overflow-wrap: anywhere; }
+  .rm-tm-tray { margin-top: 12px; }
+  .rm-tm-tray > summary { font-weight: 600; font-size: 13px; }
+  .rm-tm-tray > summary > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+  .rm-tm-trow { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; column-gap: 8px; align-items: center; min-height: 44px; }
+  /* The picker keeps st-input's 16 px under 600 px (study.css: the phone never zooms into it); 13 px from 600 px. */
+  .rm-tm-trow .rm-tm-to { width: auto; min-height: 44px; padding: 0 8px; }
+  @media (min-width: 600px) { .rm-tm-trow .rm-tm-to { font-size: 13px; } }
+  .rm-tm-trow .rm-tm-add { min-height: 44px; min-width: 44px; justify-content: center; }
   .rm-tm-fold { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0; border: 0; background: none; color: var(--ink-1); font: 600 13px/18px var(--font-ui); cursor: pointer; text-align: left; }
   .rm-tm-fold-h { cursor: default; flex-wrap: wrap; column-gap: 8px; }
   .rm-tm-foldb { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 44px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }

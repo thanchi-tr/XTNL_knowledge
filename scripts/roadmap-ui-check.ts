@@ -6882,7 +6882,7 @@ async function main() {
       const rowsHidden32 = (b: string) => /<ul class="rm-tm-rows" hidden="">/.test(b) && !/<ul class="rm-tm-rows">/.test(b);
       const rowsShown32 = (b: string) => /<ul class="rm-tm-rows">/.test(b) && !/<ul class="rm-tm-rows" hidden="">/.test(b);
       const toggle32 = (b: string, k: number) => new RegExp(`<button type="button" class="rm-tm-foldl" aria-label="${copy.layerTopicsAria(k)}" aria-expanded="false">`).test(b);
-      const hd32 = (b: string) => /<div class="rm-tm-hd" data-wc-block="topic-layer">[\s\S]*?<\/div>(?=<ul class="rm-tm-rows|<\/section>)/.exec(b)?.[0] ?? "";
+      const hd32 = (b: string) => /<div class="rm-tm-hd" data-wc-block="topic-layer">[\s\S]*?<\/div>(?=<ul class="rm-tm-rows|<p class="rm-tm-large"|<\/section>)/.exec(b)?.[0] ?? "";
       const plan32 = page32("topic-map-plan");
       const b32 = [1, 2, 3, 4].map((k) => band32(plan32, k));
       check(
@@ -6959,6 +6959,237 @@ async function main() {
       const allRows32 = (html: string) => (html.match(/<li class="rm-tm-row/g) ?? []).length;
       console.log(`  · N32 note: the topic-map-plan page reads ${wc9.countAppWords(plan32, { width: 344 }).count} app words at 344 (74 before the fold), ${visibleRows32(plan32)} of its ${allRows32(plan32)} topic rows on screen (9 of 9 before); topic-chain ${wc9.countAppWords(page32("topic-chain"), { width: 344 }).count} (75 before)`);
       r0Gate("words", WORD_BUDGET_ROWS.filter((r) => r.id.startsWith("s32-")).map((r) => r.id), "N32");
+
+      // ── 6. Roadmap rework 2 (contracts §22.20 ruling N34): a large layer is split into parts; where the milestone cap held
+      //    a layer's parts back the band says so in a word block of its own, and the parts' own words name their place ──
+      const { RoadmapFocus } = await import("../src/components/workspace/RoadmapFocus");
+      const basePlan34 = roadmapFixture("topic-map-plan").view!;
+      const large34 = page32("topic-large");
+      const line34 = copy.largeLayerLine(9);
+      const lineHtml34 = `<p class="rm-tm-large" data-wc-block="topic-large">${line34}</p>`;
+      // The review round: the line sits under the header, outside its block (the layer block keeps its 6 words), folded with the body.
+      const folded34 = R(
+        createElement(RoadmapScreen, {
+          view: { ...basePlan34, topicMap: { ...basePlan34.topicMap!, layers: basePlan34.topicMap!.layers.map((l) => (l.layer === 1 ? { ...l, large: 9 } : l)) } },
+          startPreview: null,
+          gates: roadmapFixture("topic-map-plan").gates,
+        })
+      );
+      const hdWords34 = (html: string, k: number) => wc9.countAppWords(hd32(band32(html, k)), { width: 344 }).count;
+      check(
+        "ruling N34 (topic-large, the cap held the open layer 2 at 9; the review round): the band says «Large: 9 topics in one milestone» right under its header, in a word block of its own (topic-large), never in the header's block (which reads its words as on topic-map-plan); no other band says it; on a folded band (layer 1 «done») the line is hidden with the body; a plan below the cap (topic-map-plan) never says it; the class is the stylesheet's",
+        line34 === "Large: 9 topics in one milestone" &&
+          band32(large34, 2).includes(`</div>${lineHtml34}<ul class="rm-tm-rows">`) &&
+          !hd32(band32(large34, 2)).includes("rm-tm-large") &&
+          hdWords34(large34, 2) === hdWords34(plan32, 2) &&
+          [1, 3, 4].every((k) => !band32(large34, k).includes("rm-tm-large")) &&
+          foldOf32(folded34, 1) === "done" &&
+          band32(folded34, 1).includes(`<p class="rm-tm-large" data-wc-block="topic-large" hidden="">${line34}</p>`) &&
+          !plan32.includes("rm-tm-large") &&
+          /\.rm-tm-large \{ margin: 4px 0 0; font-size: 13px; line-height: 18px; color: var\(--ink-1\); \}/.test(read("src/components/roadmap/roadmap.css")),
+        band32(large34, 2).slice(0, 900)
+      );
+      const words34 = [wc9.countAppWords(plan32, { width: 344 }).count, wc9.countAppWords(large34, { width: 344 }).count];
+      check(
+        "ruling N34 (the review round): the large line is its own 5 app words at 344 (its numeral a figure; «Layer 1 is large: …», 7, before) and topic-large reads topic-map-plan's words and those 5 alone",
+        words34[1] - words34[0] === 5 && wc9.countAppWords(lineHtml34, { width: 344 }).count === 5,
+        JSON.stringify(words34)
+      );
+      r0Gate("words", WORD_BUDGET_ROWS.filter((r) => r.id.startsWith("s34-topic-large")).map((r) => r.id), "N34 large");
+      console.log(`  · N34 note: topic-map-plan reads ${words34[0]} app words at 344; topic-large (its layer 2 held large by the cap) ${words34[1]}: the line's 5 in its own block, the layer's header block ${hdWords34(large34, 2)} as before`);
+      // The rail's locked node names the layer it opens after, never a milestone number (a split layer's parts are milestones of their own).
+      check(
+        "ruling N34: a locked node's spoken line names the layer («opens when layer 1 is reached»), the copy and the rail alike",
+        copy.lockedLayerSr(1) === "builds on layer 1; opens when layer 1 is reached" && /return `builds on layer \$\{k\}; opens when layer \$\{k\} is reached`;/.test(read("src/components/glyph/RouteRail.tsx")) && !/opens when milestone/.test(read("src/components/glyph/RouteRail.tsx"))
+      );
+      // The Review hub's focus (the review round): a part rides the title as a meta («Layer 2 · part 1 of 2»), never the
+      // eyebrow, whose one nowrap row the goal shares (at 344 px the goal kept 53 px there and read «Have …»); its words say
+      // "part" where an unsplit layer's say "layer"; an unsplit layer reads byte for byte as before.
+      const longGoal34 = "Have skill to Pick stock, read financial report, diversify and balance portfolio of 100k size.";
+      const focus34 = {
+        roadmapId: "rm",
+        goal: longGoal34,
+        fieldId: "f",
+        fieldName: "Finance",
+        layer: 2,
+        layers: 3,
+        title: "Layer 2",
+        geminiTitle: false,
+        current: { key: "T2", name: "Sharpe Ratio", domainId: "b", cards: 3, floor: 8, due: 2, live: 5, done: false },
+        rest: [
+          { key: "T3", name: "Beta", domainId: "c", cards: 1, floor: 8, due: 0, live: 1, done: false },
+          { key: "T1", name: "Alpha", domainId: "a", cards: 8, floor: 8, due: 0, live: 9, done: true },
+        ],
+        done: 1,
+        total: 3,
+        layerDue: 2,
+      };
+      const top34 = (html: string) => /<div class="rv-focus-top">[\s\S]*?<\/div>/.exec(html)?.[0] ?? "";
+      const eyebrow34 = (html: string) => /<span class="t-eyebrow">([\s\S]*?)<\/span>/.exec(html)?.[1]?.replace(/<!-- -->/g, "") ?? "";
+      const h234 = (html: string) => /<h2 id="rv-focus-h"[^>]*>([\s\S]*?)<\/h2>/.exec(html)?.[1]?.replace(/<!-- -->/g, "") ?? "";
+      const withPart34 = R(createElement(RoadmapFocus, { focus: { ...focus34, part: { i: 1, p: 2 } }, onReview: () => undefined }));
+      const noPart34 = R(createElement(RoadmapFocus, { focus: focus34, onReview: () => undefined }));
+      const waitPart34 = R(createElement(RoadmapFocus, { focus: { ...focus34, current: null, rest: [], done: 3, part: { i: 1, p: 2 } }, onReview: () => undefined }));
+      const waitNo34 = R(createElement(RoadmapFocus, { focus: { ...focus34, current: null, rest: [], done: 3 }, onReview: () => undefined }));
+      const flat34 = (html: string) => textOf(html).replace(/<!-- -->/g, "").replace(/\s+/g, " ").trim();
+      check(
+        "ruling N34 (the review round): the Review hub's focus keeps its eyebrow to the layer («Layer 2 / 3») with a part or without, so the long goal keeps the top row; the part rides the h2 as a meta («Layer 2 · part 1 of 2», the title wraps)",
+        eyebrow34(withPart34) === "Layer 2 / 3" &&
+          eyebrow34(noPart34) === "Layer 2 / 3" &&
+          !top34(withPart34).includes("part") &&
+          flat34(top34(withPart34)) === flat34(top34(noPart34)) &&
+          h234(withPart34) === 'Layer 2<span class="t-meta rv-focus-part"> · part 1 of 2</span>' &&
+          h234(noPart34) === "Layer 2",
+        JSON.stringify([eyebrow34(withPart34), h234(withPart34), flat34(top34(withPart34))])
+      );
+      check(
+        "ruling N34 (the review round): on a part the focus's words say part (the strip «1 of 3 topics done in part 1 of 2», «Next topic in this part», «2 more in this part», the wait line «Part 1 of 2 done · it counts once reached.»); an unsplit layer's read as before («… done in layer 2», «Next topic in this layer», «2 more in this layer», «Layer 2 done · it opens the next once reached.»)",
+        withPart34.includes('aria-label="1 of 3 topics done in part 1 of 2"') &&
+          withPart34.includes('aria-label="Next topic in this part"') &&
+          flat34(withPart34).includes("2 more in this part") &&
+          flat34(waitPart34).includes("Part 1 of 2 done · it counts once reached.") &&
+          noPart34.includes('aria-label="1 of 3 topics done in layer 2"') &&
+          noPart34.includes('aria-label="Next topic in this layer"') &&
+          flat34(noPart34).includes("2 more in this layer") &&
+          flat34(waitNo34).includes("Layer 2 done · it opens the next once reached."),
+        JSON.stringify([flat34(withPart34).slice(0, 200), flat34(waitPart34).slice(-80)])
+      );
+      const reviewFx34 = read("src/app/dev/style/review/ReviewFixtures.tsx");
+      check(
+        "ruling N34 (the review round): /dev/style/review holds a part state («hub-part»: the user's long aim, layer 1, part 1 of 2) beside the hub, so 344 px shows the goal's room",
+        /"hub", "hub-part", "empty"/.test(read("src/app/dev/style/review/states.ts")) && /const FOCUS_PART: StudyFocus = \{/.test(reviewFx34) && /part: \{ i: 1, p: 2 \}/.test(reviewFx34) && reviewFx34.includes(longGoal34) && /"hub", "hub-part", "empty"/.test(read("scripts/ui-audit.mjs"))
+      );
+
+      // ── 7. Roadmap rework 2, P2 (contracts §22.20 rulings N34 and N35): no library flood in layer 1 (your Domains offered on
+      //    the topic they name, the rest in one folded tray), and a split layer's parts on the rail and the hero ──
+      const tm35 = await import("../src/components/roadmap/topic-map-model");
+      const { nextActionOf: naOf35 } = await import("../src/components/roadmap/next-action");
+      const { topicLayerTitleOf: titleOf35 } = await import("../src/lib/roadmap-catalog");
+      const tray35 = (html: string) => /<details class="rm-adv rm-tm-tray" data-library-tray="">[\s\S]*?<\/details>/.exec(html)?.[0] ?? "";
+      const bands35 = (html: string) => (html.match(/<section class="rm-tm-band[\s\S]*?<\/section>/g) ?? []).join("\n");
+      const flat35 = (html: string) => textOf(html.replace(/<span class="sr-only">[^<]*<\/span>/g, "")).replace(/\s+/g, " ").trim();
+      const fail35: string[] = [];
+      for (const s of ["topic-library-tray", "topic-map-write"] as const) {
+        const html = page32(s);
+        const map = mapOf9(roadmapFixture(s).view!)!;
+        const tray = tm35.libraryTrayOf(map);
+        const t = tray35(html);
+        const sum = /<summary data-wc-block="topic-tray">[\s\S]*?<\/summary>/.exec(t)?.[0] ?? "";
+        if (t === "" || tray.length === 0) fail35.push(`${s}: no tray for ${tray.length} Domains`);
+        if (/<details class="rm-adv rm-tm-tray"[^>]*\sopen/.test(html)) fail35.push(`${s}: the tray renders open`);
+        if (flat35(sum) !== `${copy.LIBRARY_TRAY_WORD} · ${tray.length} · ${copy.LIBRARY_TRAY_LEAD}`) fail35.push(`${s}: the summary reads «${flat35(sum)}»`);
+        const lastBand = html.lastIndexOf('<section class="rm-tm-band');
+        const foot = html.indexOf('data-wc-block="topic-map-foot"');
+        if (!(html.indexOf(t) > lastBand && (foot < 0 || html.indexOf(t) < foot))) fail35.push(`${s}: the tray is not under the map, before its foot`);
+        for (const d of tray) {
+          if ((t.match(new RegExp(`data-domain="${d.id}"`, "g")) ?? []).length !== 1) fail35.push(`${s}: ${d.name} not once in the tray`);
+          if (bands35(html).includes(`>${d.name}<`) || bands35(html).includes(`data-domain="${d.id}"`)) fail35.push(`${s}: ${d.name} as a row of a band`);
+        }
+      }
+      if (page32("topic-map-plan").includes("rm-tm-tray") || page32("topic-map-plan").includes("rm-tm-offer")) fail35.push("a plan draws the tray or an offer");
+      if (/l\.layer === 1 && map\.layerOneSeeds/.test(code(read("src/components/roadmap/TopicMap.tsx")))) fail35.push("TopicMap still draws the seeds as layer-1 rows");
+      check(
+        "ruling N35 (topic-library-tray, topic-map-write): your free Domains are no longer layer-1 rows: none renders in any band, each renders once in one closed tray under the map (after the last band, before the foot) whose summary reads «Your Domains · n · add one to a layer» (n the tray's count, its own block); a plan draws no tray and no offer",
+        fail35.length === 0,
+        fail35.join(" | ")
+      );
+      const failT35: string[] = [];
+      const libMap35 = mapOf9(roadmapFixture("topic-library-tray").view!)!;
+      const libTray35 = tray35(page32("topic-library-tray"));
+      const layers35 = libMap35.layers.map((l) => l.layer);
+      for (const d of tm35.libraryTrayOf(libMap35)) {
+        const li = new RegExp(`<li class="rm-tm-trow" data-cls="LIBRARY" data-domain="${d.id}">[\\s\\S]*?</li>`).exec(libTray35)?.[0] ?? "";
+        const sel = /<select class="st-input rm-tm-to" aria-label="([^"]+)">([\s\S]*?)<\/select>/.exec(li);
+        const opts = [...(sel?.[2] ?? "").matchAll(/<option value="(\d+)"( selected="")?>([^<]*)<\/option>/g)];
+        const name = d.geminiNamed ? `<span data-wc="name" class="rm-tm-name" data-named="">${d.name}<span class="mg-nm"` : `<span data-wc="name" class="rm-tm-name">${d.name}</span>`;
+        if (
+          !sel ||
+          sel[1] !== copy.libraryLayerAria(d.name) ||
+          JSON.stringify(opts.map((o) => [Number(o[1]), o[3], !!o[2]])) !== JSON.stringify(layers35.map((k, i) => [k, copy.layerWord(k), i === 0])) ||
+          !li.includes(`<button type="button" class="chip btn-chip rm-tm-add" aria-label="${copy.libraryAddAria(d.name, 1)}">${copy.LIBRARY_ADD_WORD}</button>`) ||
+          !li.includes(name)
+        )
+          failT35.push(`${d.name}: ${li.slice(0, 300)}`);
+      }
+      const css35 = read("src/components/roadmap/roadmap.css");
+      const tmSrc35 = code(read("src/components/roadmap/TopicMap.tsx"));
+      check(
+        "ruling N35 (topic-library-tray): each tray row is its Domain's name through DomainName (pv.named after a Gemini-named one), a 44 px layer picker (one option a layer, «Layer 1» selected first, labelled «Layer for X»; st-input's 16 px under 600 px, the review round: 13 px only from 600) and a 44 px [Add] labelled «Add X to layer 1»; the tap is addTopic in the picked layer (which binds a free Domain of that name in any layer), stepping a draft open to that layer when it isn't shown yet (the review round: its row then shows)",
+        failT35.length === 0 &&
+          tm35.libraryTrayOf(libMap35).length === 4 &&
+          /\.rm-tm-trow \.rm-tm-to \{ width: auto; min-height: 44px;/.test(css35) &&
+          /\.rm-tm-trow \.rm-tm-add \{ min-height: 44px; min-width: 44px;/.test(css35) &&
+          /onClick=\{\(\) => onAdd\(layer, domain\.name\)\}/.test(tmSrc35) &&
+          /const addFromTray = \(layer: number, name: string\) => \{\s+const at = map\.layers\.findIndex\(\(l\) => l\.layer === layer\);\s+if \(stepFocus >= 0 && at > stepThrough\) setStepExtra\(at - stepFocus\);\s+run\(\(a\) => a\.addTopic\(map\.roadmapId, layer, name\)\);\s+\};/.test(tmSrc35) &&
+          /\.rm-tm-trow \.rm-tm-to \{ width: auto; min-height: 44px; padding: 0 8px; \}/.test(css35) &&
+          /@media \(min-width: 600px\) \{ \.rm-tm-trow \.rm-tm-to \{ font-size: 13px; \} \}/.test(css35) &&
+          /useState\(layers\[0\] \?\? 1\)/.test(tmSrc35),
+        failT35.join(" | ")
+      );
+      const lib35 = page32("topic-library-tray");
+      const offers35 = lib35.match(/<li class="rm-tm-offer"[\s\S]*?<\/li>/g) ?? [];
+      const offered35 = libMap35.layers.flatMap((l) => l.topics.filter((r) => r.domainOffer));
+      const failO35: string[] = [];
+      for (const r of offered35) {
+        const o = r.domainOffer!;
+        const pair = new RegExp(`<li class="rm-tm-row[^"]*"[^>]*data-key="${r.key}">[\\s\\S]*?</li>(<li class="rm-tm-offer" data-offer="${r.key}" data-wc-block="topic-offer"><button type="button" class="rm-tm-use" aria-label="([^"]*)">[\\s\\S]*?</li>)`).exec(lib35);
+        if (flat35(pair?.[1] ?? "") !== `${copy.USE_DOMAIN_WORD} ${o.name} ${copy.domainCardsWord(o.cards)}`) failO35.push(`${r.key}: «${flat35(pair?.[1] ?? "")}»`);
+        // The review round: its spoken name says the topic it binds (useDomainAria), never only the Domain's.
+        if (pair?.[2] !== copy.useDomainAria(o.name, r.name, o.cards)) failO35.push(`${r.key}: aria «${pair?.[2] ?? ""}»`);
+        if (o.geminiNamed !== (pair?.[1] ?? "").includes(`data-named="">${o.name}<span class="mg-nm"`)) failO35.push(`${r.key}: the mark`);
+      }
+      const rowWords35 = (lib35.match(/<li class="rm-tm-row[^"]*"[\s\S]*?<\/li>/g) ?? []).filter((li) => wc9.countAppWords(li, { width: 344 }).count > 0);
+      const l1Bare35 = R(createElement(LayerBand, { map: libMap35, layer: libMap35.layers[0], draft: true, trace: { self: null, related: new Set<string>() }, onTrace: () => {}, onMore: () => {} }));
+      check(
+        "ruling N35 (topic-library-tray): a matching Domain is offered once, under its topic's row in the same list: «Use your Domain Alpha one · 12 cards» (pv.named after the Gemini-named Domain) under Alpha one, «Use your Domain Alpha two basics · 5 cards» under Alpha two; a 44 px button (its words their own block, topic-offer) whose spoken name names the topic it binds («Use your Domain Alpha two basics for Alpha two: 5 cards», the review round), the tap useMyDomain; a topic row still holds no app word; a band without onUse draws none",
+        offers35.length === 2 &&
+          offered35.length === 2 &&
+          failO35.length === 0 &&
+          rowWords35.length === 0 &&
+          !l1Bare35.includes("rm-tm-offer") &&
+          copy.domainCardsWord(1) === "· 1 card" &&
+          copy.useDomainAria("Alpha two basics", "Alpha two", 5) === "Use your Domain Alpha two basics for Alpha two: 5 cards" &&
+          /\.rm-tm-use \{ display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px;/.test(css35) &&
+          /const bindDomain = \(key: string, domainId: string\) => run\(\(a\) => a\.useMyDomain\(map\.roadmapId, key, domainId\)\);/.test(tmSrc35) &&
+          /onUse=\{draft \? bindDomain : null\}/.test(tmSrc35),
+        JSON.stringify({ offers: offers35.length, fail: failO35, rowWords: rowWords35.length })
+      );
+      r0Gate("words", WORD_BUDGET_ROWS.filter((r) => r.id.startsWith("s35-") || r.id.startsWith("s34-") || r.id === "s16-next-split").map((r) => r.id), "N35");
+      const offerWords35 = offers35.map((o) => wc9.countAppWords(o, { width: 344 }).count);
+      const trayWords35 = wc9.countAppWords(/<summary data-wc-block="topic-tray">[\s\S]*?<\/summary>/.exec(libTray35)?.[0] ?? "", { width: 344 }).count;
+      console.log(
+        `  · N35 note: topic-library-tray reads ${wc9.countAppWords(lib35, { width: 344 }).count} app words at 344 (topic-map-draft, its map without your Domains, ${wc9.countAppWords(page32("topic-map-draft"), { width: 344 }).count}): each offer ${offerWords35.join(" and ")}, the tray's summary ${trayWords35} (its rows behind the fold); topic-map-write ${wc9.countAppWords(page32("topic-map-write"), { width: 344 }).count} (157 before: its two Domains were unticked layer-1 rows of no app word, now the tray's summary)`
+      );
+      // Ruling N34 on a page: topic-split's layer 1 is two milestones on the rail, and the hero studies part 1.
+      const split35 = page32("topic-split");
+      const sv35 = roadmapFixture("topic-split").view!;
+      const rail35 = split35.match(/<li class="mg-rr-row"[\s\S]*?<\/details><\/li>/g) ?? [];
+      const l1Rail35 = rail35.filter((r) => /data-g="layer\.1"/.test(r));
+      const l2Rail35 = rail35.find((r) => /data-g="layer\.2"/.test(r)) ?? "";
+      const sr35 = (r: string) => /<span class="sr-only">([^<]*)<\/span>/.exec(r)?.[1] ?? "";
+      const dn35 = (names: readonly string[]) => names.map((n) => t9.domainName({ id: n, name: n }));
+      const t1n35 = String(titleOf35(dn35(["Alpha one", "Alpha two", "Alpha three", "Alpha four"]), 1, 4, { i: 1, p: 2 }));
+      const t2n35 = String(titleOf35(dn35(["Alpha five", "Alpha six", "Alpha seven", "Alpha eight"]), 1, 4, { i: 2, p: 2 }));
+      const hero35 = /<[^>]*data-wc-block="next-action"[\s\S]*?rm-next-go[^>]*>[\s\S]*?<\/a>/.exec(split35)?.[0] ?? "";
+      check(
+        "ruling N34 (topic-split): layer 1's eight topics are two milestones on the rail, in order (two layer.1 nodes, «… · layer 1 of 4 · part 1 of 2» then «… part 2 of 2», catalog topicLayerTitleOf's words over each part's own Domains); part 2's node is never locked (no m.builds) while layer 2's waits on both parts; the hero is the Study action on part 1's first topic not done («Study Alpha one · 3 of 8 · 2 due», that Domain's review run) under part 1's title; the map's layer 1 lists all eight",
+        l1Rail35.length === 2 &&
+          /data-n="1"/.test(l1Rail35[0]) &&
+          /data-n="2"/.test(l1Rail35[1]) &&
+          sr35(l1Rail35[0]).includes(t1n35) &&
+          sr35(l1Rail35[1]).includes(t2n35) &&
+          t1n35 === "Alpha one, Alpha two and two more · layer 1 of 4 · part 1 of 2" &&
+          !/data-g="m\.builds"/.test(l1Rail35[1]) &&
+          /data-g="m\.builds"/.test(l2Rail35) &&
+          JSON.stringify(sv35.milestones.filter((m) => m.layer === 1).map((m) => m.part)) === JSON.stringify([{ i: 1, p: 2 }, { i: 2, p: 2 }]) &&
+          (sv35.milestones.find((m) => m.layer === 2)?.lock?.parents.length ?? 0) === 8 &&
+          naOf35(sv35).primary.kind === "STUDY" &&
+          /data-next="STUDY"[^>]*href="\/review\?view=run&amp;domain=d-T1"/.test(hero35) &&
+          wc9.visibleText(hero35, { width: 344 }).replace(/\s+/g, " ").trim().endsWith("Study Alpha one · 3 of 8 · 2 due") &&
+          split35.includes(`<p class="rm-next-t" data-wc="name">${t1n35}</p>`) &&
+          (band32(split35, 1).match(/<li class="rm-tm-row/g) ?? []).length === 8,
+        JSON.stringify({ rail: l1Rail35.map(sr35), hero: wc9.visibleText(hero35, { width: 344 }).slice(-60) })
+      );
 
       // Ruling N33: the intake's primary on a Field aim.
       const intake33 = (s: FixtureState) => renders.get(s)?.intake ?? "";

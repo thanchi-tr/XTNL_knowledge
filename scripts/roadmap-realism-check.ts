@@ -49,6 +49,7 @@
  *   npx tsx scripts/roadmap-realism-check.ts
  */
 import "./_no-model";
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { addDays, daysBetween, weekStartKeyOf, weekdayOf, type DayKey } from "../src/lib/life-day";
@@ -77,6 +78,7 @@ import {
   availableFor,
   blockedKindsOf,
   cardReach,
+  chainFitOf,
   coverageOf,
   dateCheckOf,
   dateEffectOf,
@@ -84,6 +86,9 @@ import {
   feasibilityOf,
   fitPlan,
   floorDayOf,
+  layerPartCountsOf,
+  layerSplitOf,
+  layeredLadderOf,
   lineDomainDefaultOf,
   lowerDepthPlanOf,
   manualLadder,
@@ -104,9 +109,12 @@ import {
   trackStagePlacesOf,
   trackStarterKindsOf,
   writingPlanOf,
+  type ChainTopicInput,
   type StageLadderResult,
 } from "../src/lib/roadmap-realism";
 import { sharesOf } from "../src/lib/roadmap-goals";
+import { assignRankIndices } from "../src/lib/roadmap-proficiency";
+import { LIFE_MP } from "../src/lib/life-economy";
 
 let passed = 0;
 let failed = 0;
@@ -2989,6 +2997,361 @@ console.log("— revision 5: one person's week, the shares (contracts §23.3; la
   check(
     "… a typed source rate (YOURS) on a depth plan is never split",
     json(stageDaysOf(ladder4("typed, fieldShare 0.5", stageLadderOf(packIk, { ...yoursPack, ...half }, names4, mk4)))) === json(stageDaysOf(ladder4("typed", stageLadderOf(packIk, yoursPack, names4, mk4))))
+  );
+}
+
+// ═══ Roadmap rework 2: balanced milestones (contracts §22.20 ruling N34) ═══════════
+
+console.log("— rework 2: a large layer splits into parts (ruling N34) —");
+{
+  // The split itself: consecutive parts in map order, at most six topics each, the largest part's card need as small as
+  // it can be, a tie leaving the earlier part the larger; each topic's weight its card need (a DEEP topic's n_d's).
+  eq(
+    "N34 layerSplitOf: ten equal topics in two parts read 5 and 5; seven read 4 and 3; thirteen in three read 5, 4 and 4; twelve read 6 and 6",
+    [layerSplitOf(Array(10).fill(11), 2), layerSplitOf(Array(7).fill(11), 2), layerSplitOf(Array(13).fill(11), 3), layerSplitOf(Array(12).fill(11), 2)],
+    [[5, 5], [4, 3], [5, 4, 4], [6, 6]]
+  );
+  eq(
+    "N34 layerSplitOf: one part is the whole layer, none is nothing, and a part never passes six while the cap leaves room",
+    [layerSplitOf(Array(6).fill(11), 1), layerSplitOf([], 1), layerSplitOf(Array(7).fill(0), 2).every((n) => n <= 6)],
+    [[6], [], true]
+  );
+  eq(
+    "N34 layerSplitOf by card need: a DEEP topic needing 52 cards beside six needing 13 cuts after the second (65 and 65), never after the first (52, 78); topics already holding their cards weigh none, so four new ones sit beside five held",
+    [layerSplitOf([52, 13, 13, 13, 13, 13, 13], 2), layerSplitOf([0, 0, 0, 11, 11, 11, 11], 2), layerSplitOf(Array(10).fill(0), 2)],
+    [[2, 5], [5, 2], [5, 5]]
+  );
+  eq(
+    "N34 layerPartCountsOf: the archived plan's 10/6/4/2/6 with one depth row gives layer 1 two parts (7 rows); 13/13 with three more layers and a tail of 1 raises layer 1, then layer 2 (the cap of 8 holds there: 7 a part); six layers and a tail of 2 leave no room; a layer whose two parts are under way takes one more for its rest",
+    [
+      layerPartCountsOf([10, 6, 4, 2, 6], [0, 0, 0, 0, 0], 1),
+      layerPartCountsOf([13, 13, 1, 1, 1], [0, 0, 0, 0, 0], 1),
+      layerPartCountsOf([9, 1, 1, 1, 1, 1], [0, 0, 0, 0, 0, 0], 2),
+      layerPartCountsOf([3, 4], [2, 0], 1),
+      layerPartCountsOf([0, 4], [2, 0], 1),
+    ],
+    [[2, 1, 1, 1, 1], [2, 2, 1, 1, 1], [1, 1, 1, 1, 1, 1], [1, 1], [0, 1]]
+  );
+
+  // The archived plan's shape (2026-10-26, the user's "milestone 1 is too heavy"): chosen topics 10/6/4/2/6, L* 10.
+  const T = (k: number) => addDays(T4, k);
+  const cal = { kind: "calibrating" as const, have: 1, need: 4 };
+  const tpN: RT.Throughput = {
+    finalDay: T(-2),
+    trackedMinutes: cal,
+    geminiShare: null,
+    playMinutes: cal,
+    trackedByTrack: {},
+    trackedByCategory: {},
+    completions: cal,
+    activeDays: cal,
+    adherence: { kind: "measured", value: 1, n: 20 },
+    reviewsPerDay: cal,
+    passShare: { kind: "measured", value: 0.85, n: 120 },
+    clearance: { kind: "measured", value: 1, n: 14 },
+    newCards: { total: cal, byField: {}, byDomain: {} },
+  };
+  const inN = (ids: string[], cards: RT.CardState[], hours: number): RT.RealismInput => ({
+    today: T4,
+    targetDay: T(365),
+    scopes: [{ key: [...ids].sort().join(","), domainIds: [...ids].sort(), fieldId: "f1", cards, rateSource: "FIELD", rate: 20 }],
+    throughput: tpN,
+    hoursPerWeek: hours,
+    intensity: "STEADY",
+    startPoint: "NEW",
+    typicalHours: null,
+    typicalHoursSource: null,
+    m: 1,
+    heldDays: [],
+    areaInMaintenance: false,
+    practicesAllowed: true,
+    trackArea: false,
+    dateMode: "REALISTIC",
+    reach: { p: 0.85, pLong: 0.85, c: 1, rho: 0, m: 1, strikeLimit: 2, graceExtra: 0 },
+    calibrating: [],
+    sourceRate: 20,
+    planKind: "TOPICS",
+  });
+  const ikN = (ids: string[], hours: number): RT.Intake => ({
+    aim: "Run a household's money well",
+    fieldId: "f1",
+    track: "CRAFT",
+    domainIds: ids,
+    targetDay: T(365),
+    hoursPerWeek: hours,
+    newCardsPerWeek: null,
+    typicalHours: null,
+    typicalHoursSource: null,
+    syllabus: null,
+    startPoint: "NEW",
+    intensity: "STEADY",
+    practicesAllowed: true,
+    constraints: null,
+    examLabel: null,
+    depth: null,
+    topicDepth: 10,
+    planKind: "TOPICS",
+    dateMode: "REALISTIC",
+  });
+  interface ChainN {
+    chain: { layers: { layer: number; topics: ChainTopicInput[] }[]; depth: RT.TopicDepth; examDay: null };
+    ids: string[];
+    names: Record<string, RT.DomainName>;
+  }
+  const chainN = (counts: number[], o: { bound?: boolean; depth?: RT.TopicDepth; nd?: (k: number, j: number) => number; skipped?: (k: number, j: number) => boolean } = {}): ChainN => {
+    const last = counts.length;
+    const layers = counts.map((n, k) => ({
+      layer: k + 1,
+      topics: Array.from(
+        { length: n },
+        (_, j): ChainTopicInput => ({
+          lineageId: `lin-${k + 1}-${j + 1}`,
+          domainId: o.bound ? `u${k + 1}${j + 1}` : null,
+          role: k + 1 === last ? "DEEP" : "BASE",
+          held: false,
+          skipped: o.skipped?.(k, j) ?? false,
+          nd: o.nd ? o.nd(k, j) : k + 1 === last ? 25 : 8,
+        })
+      ),
+    }));
+    const ids = o.bound ? counts.flatMap((n, k) => Array.from({ length: n }, (_, j) => `u${k + 1}${j + 1}`)) : [];
+    return { chain: { layers, depth: o.depth ?? 10, examDay: null }, ids, names: Object.fromEntries(ids.map((id) => [id, `Topic ${id}`])) as Record<string, RT.DomainName> };
+  };
+  let nN = 0;
+  const mkN = () => `n34-${++nN}`;
+  const ownPays = (m: RT.MilestoneDraft): string[] => m.measures.filter((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS" && x.topicLineageId && !x.gate).map((x) => String(x.topicLineageId));
+  const layerOwn = (m: RT.MilestoneDraft): string[] =>
+    m.measures.filter((x) => x.kind === "CARDS_AT_LEVEL" && x.topicLineageId && !x.gate && x.minLevel === RT.OPEN_LEVEL && String(x.topicLineageId).startsWith(`lin-${m.layer}-`)).map((x) => String(x.topicLineageId));
+
+  const archived = chainN([10, 6, 4, 2, 6]);
+  nN = 0;
+  const arch = ladder4("N34 archived shape", layeredLadderOf(ikN([], 5), inN([], [], 5), archived.chain, {}, mkN));
+  eq(
+    "N34 the archived plan's shape (10/6/4/2/6, L* 10): 7 milestones (6 before): layer 1 as two parts of 5 topics each, then 6, 4, 2 and 6, then the depth row; each part pays only its own topics",
+    arch.plan.map((m) => [m.chainRole, m.layer, ownPays(m).length]),
+    [
+      ["LAYER", 1, 5],
+      ["LAYER", 1, 5],
+      ["LAYER", 2, 6],
+      ["LAYER", 3, 4],
+      ["LAYER", 4, 2],
+      ["LAYER", 5, 6],
+      ["DEPTH", null, 28],
+    ]
+  );
+  eq(
+    "N34 the parts keep the map's order (part 1 the first five, part 2 the next five), and part 2 names none of part 1's topics",
+    [layerOwn(arch.plan[0]), layerOwn(arch.plan[1])],
+    [[1, 2, 3, 4, 5].map((j) => `lin-1-${j}`), [6, 7, 8, 9, 10].map((j) => `lin-1-${j}`)]
+  );
+  eq(
+    "N34 each part is code's title with its place (a draft's names stay quarantined): 'Layer 1 of 5 · part 1 of 2', '… part 2 of 2'; an unsplit layer as before",
+    arch.plan.slice(0, 3).map((m) => [m.title, m.titleOrigin]),
+    [
+      ["Layer 1 of 5 · part 1 of 2", "CODE"],
+      ["Layer 1 of 5 · part 2 of 2", "CODE"],
+      ["Layer 2 of 5", "CODE"],
+    ]
+  );
+  eq(
+    "N34 the parts are dated as rows of their own, each from the day after the one before (the writing split by each part's need): 56 + 56 days for layer 1 (83 as one row), the plan ending 5 Mar 2028 (6 Feb 2028 as one row on HEAD b72e929: 28 days later)",
+    [arch.plan.map((m) => [dd4(m.windowStart), dd4(m.dueDay)]), arch.plan[arch.plan.length - 1].dueDay, arch.dateCheck?.D_real ?? null],
+    [
+      [
+        [0, 55],
+        [56, 111],
+        [112, 174],
+        [175, 223],
+        [224, 265],
+        [266, 391],
+        [392, 517],
+      ],
+      "2028-03-05",
+      "2028-03-05",
+    ]
+  );
+  const contextAt8 = (m: RT.MilestoneDraft) => m.measures.filter((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "CONTEXT" && x.minLevel === RT.BASE_LEVEL).length;
+  eq("N34 layer 2 shows every layer-1 topic of both parts climbing to 8 (CONTEXT)", contextAt8(arch.plan[2]), 10);
+
+  // Accepted names: a part's title names its own Domains.
+  const named = chainN([10, 3], { bound: true });
+  nN = 0;
+  const namedR = ladder4("N34 named", layeredLadderOf(ikN(named.ids, 6), inN(named.ids, [], 6), named.chain, named.names, mkN));
+  eq(
+    "N34 a part's code title names its own Domains: 'Topic u11, Topic u12 and three more · layer 1 of 2 · part 1 of 2', then u16 onward",
+    namedR.plan.slice(0, 2).map((m) => [m.title, m.items.filter((i) => i.kind === "DOMAIN").map((i) => i.domainId)]),
+    [
+      ["Topic u11, Topic u12 and three more · layer 1 of 2 · part 1 of 2", ["u11", "u12", "u13", "u14", "u15"]],
+      ["Topic u16, Topic u17 and three more · layer 1 of 2 · part 2 of 2", ["u16", "u17", "u18", "u19", "u110"]],
+    ]
+  );
+  const checkOf = (m: RT.MilestoneDraft) => m.items.find((i) => i.kind === "CHECKPOINT")?.checkpointKind ?? null;
+  eq(
+    "N34 the practices and checkpoints follow the parts (§22.13): each part of layer 1 has its self-test over its own Domains; layer 2's carry is both parts' ten Domains, and it holds the performance check",
+    [
+      namedR.plan.map(checkOf),
+      namedR.plan.slice(0, 2).map((m) => m.items.find((i) => i.kind === "CHECKPOINT")?.label ?? null),
+      namedR.plan[2].items.filter((i) => i.kind === "PRACTICE").map((i) => i.label),
+    ],
+    [
+      ["SELF_TEST", "SELF_TEST", "PERFORMANCE_CHECK", "PERFORMANCE_CHECK"],
+      ["Self-test: Topic u11, Topic u12 and three more", "Self-test: Topic u16, Topic u17 and three more"],
+      ["Recall drills: Topic u21, Topic u22, Topic u23", "Problem sets: Topic u11, Topic u12 and eight more"],
+    ]
+  );
+
+  // A layer of six or fewer is one milestone exactly as before: the whole result's digest equals HEAD's (b72e929).
+  const small = chainN([6, 5, 4, 2], { bound: true, skipped: (k, j) => k === 1 && j === 4 });
+  const smallCards = small.ids.slice(0, 3).flatMap((id, j) => Array.from({ length: 4 + 3 * j }, (_, i): RT.CardState => ({ level: 2 + (i % 5), dueDay: T(i % 9), graceEndsDay: null, domainId: id })));
+  nN = 0;
+  const smallR = layeredLadderOf(ikN(small.ids, 6), inN(small.ids, smallCards, 6), small.chain, small.names, mkN);
+  const digest = createHash("sha256").update(json(smallR)).digest("hex");
+  check("N34 layers of 6, 5, 4 and 2 read byte for byte as before the ruling (layeredLadderOf's whole result, its sha256 pinned on HEAD b72e929)", digest === "62aff7b324fd2ed62a468ad232faed90306d0b349f1cadb54947509f8ce6a02d", digest);
+
+  // Need-weighted inside the ladder: the last layer's DEEP topics weigh their n_d.
+  const deep = chainN([2, 7], { nd: (k, j) => (k === 1 ? (j === 0 ? 40 : 10) : 8) });
+  nN = 0;
+  const deepR = ladder4("N34 deep", layeredLadderOf(ikN([], 8), inN([], [], 8), deep.chain, {}, mkN));
+  eq(
+    "N34 the last layer's seven DEEP topics split by need: the one at n_d 40 rides with one other (2 topics), the five at 10 make the second part",
+    deepR.plan.filter((m) => m.chainRole === "LAYER" && m.layer === 2).map((m) => ownPays(m)),
+    [
+      ["lin-2-1", "lin-2-2"],
+      ["lin-2-3", "lin-2-4", "lin-2-5", "lin-2-6", "lin-2-7"],
+    ]
+  );
+
+  // The cap: six layers and L* 12 (two depth rows) fill the 8; a layer of 9 stays one milestone.
+  const capped = chainN([9, 1, 1, 1, 1, 1], { depth: 12 });
+  nN = 0;
+  const cappedR = ladder4("N34 capped", layeredLadderOf(ikN([], 10), inN([], [], 10), capped.chain, {}, mkN));
+  eq(
+    "N34 the milestone cap holds: six layers and L* 12 are the 8 milestones already, so layer 1's nine topics stay in one milestone ('Layer 1 of 6', no part)",
+    [cappedR.plan.length, ownPays(cappedR.plan[0]).length, cappedR.plan[0].title],
+    [8, 9, "Layer 1 of 6"]
+  );
+
+  // A held or known topic rides with the paying topic before it; the split counts paying topics only.
+  const known = chainN([9, 2], { skipped: (k, j) => k === 0 && (j === 0 || j === 5) });
+  nN = 0;
+  const knownR = ladder4("N34 known", layeredLadderOf(ikN([], 6), inN([], [], 6), known.chain, {}, mkN));
+  eq(
+    "N34 seven paying topics and two you know (the first and the sixth) split 4 and 3 by the paying ones; a known topic rides as CONTEXT with the paying topic before it (the first, with none before it, on part 1)",
+    knownR.plan.filter((m) => m.layer === 1).map((m) => [ownPays(m).length, layerOwn(m)]),
+    [
+      [4, ["lin-1-1", "lin-1-2", "lin-1-3", "lin-1-4", "lin-1-5", "lin-1-6"]],
+      [3, ["lin-1-7", "lin-1-8", "lin-1-9"]],
+    ]
+  );
+
+  // The plan reads its parts back (a part is derived: a layer's rows in ord order): judged and re-dated as split.
+  const judged = feasibilityOf(arch.plan, { ...inN([], [], 5), targetDay: arch.plan[arch.plan.length - 1].dueDay! });
+  const redated = refit(arch.plan, inN([], [], 5));
+  eq(
+    "N34 a split plan reads back as split: its feasibility judges 7 milestones, and a re-fit keeps layer 1's two parts with their own topics and titles",
+    [judged.milestones.length, redated.filter((m) => m.layer === 1).map((m) => layerOwn(m).length), redated.slice(0, 2).map((m) => m.title)],
+    [7, [5, 5], ["Layer 1 of 5 · part 1 of 2", "Layer 1 of 5 · part 2 of 2"]]
+  );
+
+  // The pre-check (chainFitOf) dates a layer over six as its parts too; six or fewer reads as before.
+  const fitIn = inN([], [], 5);
+  const fitOf = (perLayer: number[]) => chainFitOf({ layers: perLayer.length, perLayer, breadth: "MEDIUM", depth: 10, input: fitIn, origin: "GEMINI" });
+  const f10 = fitOf([10, 6, 4, 2, 6]);
+  const f6 = fitOf([6, 6, 4, 2, 6]);
+  eq("N34 chainFitOf: 10/6/4/2/6 reads six layer windows (layer 1's two parts), 6/6/4/2/6 five, and the split's minimum is the longer", [f10.layerMin.length, f6.layerMin.length, f10.minDays > f6.minDays], [6, 5, true]);
+
+  // The review round: a pin is a mark, never a place. Pinned topics stay together (a part under way, or reached on cards),
+  // every part reads in the map's order of its first topic, and pinned parts never push the plan past the cap unread.
+  const pinned = (counts: number[], pin: (k: number, j: number) => number | null, depth: RT.TopicDepth = 10): ChainN => {
+    const c = chainN(counts, { depth });
+    return { ...c, chain: { ...c.chain, layers: c.chain.layers.map((l, k) => ({ ...l, topics: l.topics.map((t, j) => (pin(k, j) != null ? { ...t, part: pin(k, j) as number } : t)) })) } };
+  };
+  const ladderOf = (c: ChainN, hours = 6) => {
+    nN = 0;
+    return layeredLadderOf(ikN([], hours), inN([], [], hours), c.chain, {}, mkN);
+  };
+  const layer1Of = (r: ReturnType<typeof layeredLadderOf>) => (r.ok ? r.plan.filter((m) => m.layer === 1).map((m) => [m.title, layerOwn(m)]) : r.reason);
+  eq(
+    "N34 (the review round): six topics pinned to a part with nothing else left in layer 1 are its one row (unsplit), whatever the pin's number; the server finds that row by its topics (ladderMatchOf), never by a place",
+    layer1Of(ladderOf(pinned([6, 2], (k) => (k === 0 ? 2 : null)))),
+    [["Layer 1 of 2", [1, 2, 3, 4, 5, 6].map((j) => `lin-1-${j}`)]]
+  );
+  eq(
+    "N34 (the review round): five free topics before five pinned ones (pin 3, the part under way) read as part 1 and part 2 of 2 by their first topics' places on the map; the pinned topics stay together",
+    layer1Of(ladderOf(pinned([10, 2], (k, j) => (k === 0 && j >= 5 ? 3 : null)))),
+    [
+      ["Layer 1 of 2 · part 1 of 2", [1, 2, 3, 4, 5].map((j) => `lin-1-${j}`)],
+      ["Layer 1 of 2 · part 2 of 2", [6, 7, 8, 9, 10].map((j) => `lin-1-${j}`)],
+    ]
+  );
+  eq(
+    "N34 (the review round): a started part 1 keeps its place and topics while the rest (and a new topic, last on the map) take part 2",
+    layer1Of(ladderOf(pinned([11, 2], (k, j) => (k === 0 && j < 5 ? 1 : null)))),
+    [
+      ["Layer 1 of 2 · part 1 of 2", [1, 2, 3, 4, 5].map((j) => `lin-1-${j}`)],
+      ["Layer 1 of 2 · part 2 of 2", [6, 7, 8, 9, 10, 11].map((j) => `lin-1-${j}`)],
+    ]
+  );
+  const capA = ladderOf(pinned([11, 1, 1, 1, 1, 1], (k, j) => (k === 0 && j < 6 ? 1 : null), 12), 10);
+  const capB = ladderOf(pinned([13, 1, 1, 1, 1, 1], (k, j) => (k === 0 && j < 6 ? 1 : k === 0 && j < 12 ? 2 : null), 10), 10);
+  eq(
+    "N34 (the review round): pinned parts that leave no room are refused in words (CAP), never cut: part 1 under way and a sixth layer at L* 12 would need 9 milestones; parts 1 and 2 kept and a sixth layer at L* 10 would need 9 too (no depth row is ever dropped)",
+    [capA.ok ? null : [capA.reason, capA.error], capB.ok ? null : [capB.reason, capB.error]],
+    [
+      ["CAP", "A roadmap holds at most 8 milestones, and the ones you've started or reached keep their topics: this map would need 9. Add the topic to a layer already in the plan, or remove a topic first."],
+      ["CAP", "A roadmap holds at most 8 milestones, and the ones you've started or reached keep their topics: this map would need 9. Add the topic to a layer already in the plan, or remove a topic first."],
+    ]
+  );
+  const capOk = ladderOf(pinned([11, 1, 1, 1, 1], (k, j) => (k === 0 && j < 6 ? 1 : null), 12), 10);
+  eq(
+    "N34 (the review round): the same part under way on five layers fits the 8 (two parts, four layers, both depth rows), every depth row kept",
+    capOk.ok ? capOk.plan.map((m) => [m.chainRole, m.layer]) : capOk.reason,
+    [
+      ["LAYER", 1],
+      ["LAYER", 1],
+      ["LAYER", 2],
+      ["LAYER", 3],
+      ["LAYER", 4],
+      ["LAYER", 5],
+      ["DEPTH", null],
+      ["DEPTH", null],
+    ]
+  );
+
+  // The review round (decided and pinned): a part is a milestone for pay. No pay rule or constant changed; a split layer
+  // pays its extra part as any milestone (one MILESTONE row, one LIFE_MILESTONE mint, one checkpoint, one Mid goal),
+  // the windows as they were. On the archived shape, bound, at 5 h a week, against HEAD b72e929: 7 milestones (6), a
+  // self-test on each of layer 1's parts (SELF_TEST ×5 against ×4; PERFORMANCE_CHECK ×2 both), every one of the 7 over
+  // the ⬡6 bar (6), the ranks spread 1, 1, 2, 2, 3, 3, 4 (1, 2, 2, 3, 3, 4: layer 1's PART gate is gone, its part 56 days
+  // ≤ FIRST_RANK_MAX_DAYS), the first rank on day 55 (41) within 75, rank days 55, 174, 265, 517 (41, 146, 237, 489).
+  const paid = chainN([10, 6, 4, 2, 6], { bound: true });
+  nN = 0;
+  const paidR = ladder4("N34 paid", layeredLadderOf(ikN(paid.ids, 5), inN(paid.ids, [], 5), paid.chain, paid.names, mkN));
+  const paidIn = inN(paid.ids, [], 5);
+  const paidFe = feasibilityOf(paidR.plan, paidIn);
+  const paidWeeks = new Map(paidFe.milestones.map((m) => [m.lineageId, m.weeks] as const));
+  const overBar = paidR.plan.map((m) => {
+    const pm = m.items.filter((i) => i.kind === "PRACTICE").reduce((s, p) => s + RT.practiceMinutesPerWeekOf(p), 0);
+    const other = RT.otherTrackedMinutesOf(paidWeeks.get(m.lineageId) ?? []);
+    return pm >= RT.PRACTICE_PAY_FLOOR_MIN && (other == null || pm >= RT.PRACTICE_PAY_SHARE * (pm + other));
+  });
+  const paidRanks = assignRankIndices(
+    paidR.plan.map((m) => ({ id: m.lineageId, lineageId: m.lineageId, ord: m.ord, carried: false, later: false, rankIndex: null, stage: m.stage ?? null, gateLevel: RT.OPEN_LEVEL, held: false, skipped: false, part: m.measures.some((x) => x.gate === "PART") })),
+    {},
+    10,
+    "TOPICS"
+  );
+  const paidTime = motivationTimelineOf(paidR.plan, paidIn);
+  eq(
+    "N34 (the review round): a part is a milestone for pay, every rule and constant as it was: the archived shape pays 7 milestones (6 on HEAD), SELF_TEST on each of layer 1's two parts (5 against 4), every row over the ⬡6 bar (42 MP stated, 36), ranks 1, 1, 2, 2, 3, 3, 4, the first rank on day 55 (41 by layer 1's PART on HEAD), within FIRST_RANK_MAX_DAYS",
+    [
+      paidR.plan.length,
+      paidR.plan.map((m) => m.items.filter((i) => i.kind === "CHECKPOINT").map((i) => i.checkpointKind).join("+")),
+      overBar.filter(Boolean).length * LIFE_MP.GOAL_MID,
+      paidR.plan.map((m) => paidRanks[m.lineageId]),
+      [paidTime.firstRankDay, paidTime.rankDays, (paidTime.firstRankDay ?? Infinity) <= RT.FIRST_RANK_MAX_DAYS],
+    ],
+    [7, ["SELF_TEST", "SELF_TEST", "SELF_TEST", "SELF_TEST", "SELF_TEST", "PERFORMANCE_CHECK", "PERFORMANCE_CHECK"], 42, [1, 1, 2, 2, 3, 3, 4], [55, [55, 174, 265, 517], true]]
   );
 }
 

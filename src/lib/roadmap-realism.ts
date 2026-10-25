@@ -317,6 +317,7 @@ import {
   LAYERS_MAX,
   LAYERS_MIN,
   LAYER_TOPICS_MAX,
+  MAX_MILESTONES_TOPICS,
   OPEN_LEVEL,
   STAGE_RANK,
   TOPIC_FLOOR_CARDS,
@@ -5076,7 +5077,7 @@ export type StageLadderResult =
       /** The depth's end state (depthTermsOf; empty on a track plan). */
       endState?: EndStateTerm[];
     }
-  | { ok: false; reason: "HELD" | "TOO_SOON" | "TOO_FAR" | "NO_PACE" | "NO_DOMAINS"; error: string };
+  | { ok: false; reason: "HELD" | "TOO_SOON" | "TOO_FAR" | "NO_PACE" | "NO_DOMAINS" | "CAP"; error: string };
 
 /** The aim as YoursText, and the exam's name when the user said there is one. */
 function aimFillsOf(intake: Intake): { aim: YoursText; exam: YoursText | null } {
@@ -5847,6 +5848,13 @@ export interface ChainTopicInput {
   held: boolean;
   skipped: boolean;
   nd: number;
+  /**
+   * Ruling N34: the pinned part this topic stays with (a mark, 1-based: every topic of one pin is one part), when that
+   * part is under way or reached on cards (its row keeps its topics: a rebuild never moves a topic into or out of such a
+   * part). A mark, never a place (the review round): every part reads in the map's order of its first topic. Absent: the
+   * split places it.
+   */
+  part?: number;
 }
 
 /** The chain layeredLadderOf lays out: each layer's chosen topics (layer order; empty layers are skipped), L*, and a dated exam (absent: the intake's). */
@@ -5926,6 +5934,8 @@ interface ChainTopic {
   live: number;
   /** writeNeedOf(nd, live) for a paying topic; 0 when held or skipped. */
   need: number;
+  /** Ruling N34: the pinned part it stays with (ChainTopicInput.part, a mark: under way or reached on cards); null: the split places it. */
+  pin: number | null;
 }
 
 /** A topic that pays (neither held when you began nor marked "I know this"). */
@@ -5946,7 +5956,8 @@ function chainTopicOf(input: RealismInput, t: ChainTopicInput, layer: number, us
   const nd = typeof t.nd === "number" && Number.isFinite(t.nd) && t.nd >= 1 ? Math.floor(t.nd) : role === "DEEP" ? COVER_FLOOR_CARDS : TOPIC_FLOOR_CARDS;
   const held = t.held === true;
   const skipped = !held && t.skipped === true;
-  return { lineageId: t.lineageId, id, domainId, layer, role, held, skipped, nd, all, eff: reachCardsOf(all, input.today), live, need: held || skipped ? 0 : writeNeedOf(nd, live) };
+  const pin = typeof t.part === "number" && Number.isInteger(t.part) && t.part >= 1 && t.part <= MAX_MILESTONES_TOPICS ? t.part : null;
+  return { lineageId: t.lineageId, id, domainId, layer, role, held, skipped, nd, all, eff: reachCardsOf(all, input.today), live, need: held || skipped ? 0 : writeNeedOf(nd, live), pin };
 }
 
 /**
@@ -5987,19 +5998,182 @@ interface ChainRowSpec {
   stage: GateStage;
   deep: number;
   base: number;
+  /**
+   * Ruling N34: one part of a split layer (its place, its layer's count of parts, and its topics' lineages: the paying
+   * ones the split placed, a held or known one beside the paying topic before it). Absent on an unsplit layer, which
+   * reads every topic of its layer as before.
+   */
+  split?: { i: number; p: number; ids: ReadonlySet<string> };
 }
 
-/** K layer rows, then the depth tail; at most milestoneCapOf("TOPICS") (K ≤ LAYERS_MAX and T ≤ DEPTH_MILESTONES_MAX keep it there). */
-function chainSpecsOf(K: number, L: TopicDepth): ChainRowSpec[] {
+/** A topic of a layer row: of its layer, and of its part when the layer is split (ruling N34). */
+const inRowOf = (r: ChainRowSpec, t: ChainTopic): boolean => t.layer === r.layer && (!r.split || r.split.ids.has(t.lineageId));
+
+/** One topic's weight in the split: its card need first, then the topic itself (TOPICS_MAX topics never outweigh one card). */
+const SPLIT_TOPIC_UNIT = 64;
+
+/**
+ * Ruling N34 (contracts §22.20): a layer's paying topics, in map order, as consecutive parts: `parts` of them (at most
+ * the topics), each at most `cap` topics (TOPICS_PER_MILESTONE; more only when the milestone cap held the parts back),
+ * near-equal by card need (each topic's writeNeedOf, so a DEEP topic weighs its n_d's). Deterministic: each part in
+ * turn is a greedy fill in map order under the least bound that still splits what is left into the parts left, so the
+ * largest part is as small as it can be, a tie leaves the earlier part the larger, and the parts after it share the
+ * rest as evenly (13 equal topics in 3: 5, 4, 4). Each weight is need × 64 + 1, so parts of equal need come out
+ * near-equal in topics. Returns each part's size in order; [n] for one part, [] for none.
+ */
+export function layerSplitOf(needs: readonly number[], parts: number, cap: number = TOPICS_PER_MILESTONE): number[] {
+  const n = needs.length;
+  if (n === 0) return [];
+  const p = clamp(Number.isFinite(parts) ? Math.floor(parts) : 1, 1, n);
+  if (p === 1) return [n];
+  const w = needs.map((x) => Math.max(0, Math.round(Number.isFinite(x) ? x : 0)) * SPLIT_TOPIC_UNIT + 1);
+  const per = Math.max(Math.max(1, Math.floor(cap)), Math.ceil(n / p));
+  // The greedy fill of `ws` under `bound` (at most `per` a part): each part's size.
+  const fill = (ws: readonly number[], bound: number): number[] => {
+    const out: number[] = [];
+    let sum = 0;
+    let count = 0;
+    for (const x of ws) {
+      if (count > 0 && (sum + x > bound || count >= per)) {
+        out.push(count);
+        sum = 0;
+        count = 0;
+      }
+      sum += x;
+      count += 1;
+    }
+    if (count > 0) out.push(count);
+    return out;
+  };
+  // The least bound under which `ws` fills `k` parts or fewer.
+  const boundOf = (ws: readonly number[], k: number): number => {
+    let lo = Math.max(...ws);
+    let hi = ws.reduce((s, x) => s + x, 0);
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (fill(ws, mid).length <= k) hi = mid;
+      else lo = mid + 1;
+    }
+    return lo;
+  };
+  const out: number[] = [];
+  let at = 0;
+  for (let left = p; left > 0 && at < n; left--) {
+    const rest = w.slice(at);
+    // The part takes its greedy fill under the bound that splits the rest into the parts left, leaving each later part one.
+    const take = left === 1 ? rest.length : Math.min(fill(rest, boundOf(rest, left))[0], rest.length - (left - 1));
+    out.push(take);
+    at += take;
+  }
+  return out;
+}
+
+/**
+ * Ruling N34: how many parts each layer's unplaced paying topics take within the milestone cap: ⌈n ÷ 6⌉ each, raised
+ * one part at a time from one (the layer with the most topics a part first, the earlier layer on a tie) while the
+ * plan's rows stay within `cap`. `fixed[k]`: the layer's parts under way (they count; their topics are placed);
+ * `rest[k]`: its paying topics still to place. A layer with nothing to place takes no new part, unless it has no part
+ * at all (its one row, held when you began, as before).
+ */
+export function layerPartCountsOf(rest: readonly number[], fixed: readonly number[], tail: number, cap: number = milestoneCapOf("TOPICS")): number[] {
+  const want = rest.map((n) => (n > 0 ? Math.ceil(n / TOPICS_PER_MILESTONE) : 0));
+  const q: number[] = rest.map((n, k) => (n > 0 || (fixed[k] ?? 0) === 0 ? 1 : 0));
+  let budget = cap - tail - q.reduce((s, x, k) => s + x + (fixed[k] ?? 0), 0);
+  while (budget > 0) {
+    let best = -1;
+    rest.forEach((n, k) => {
+      if (q[k] >= want[k]) return;
+      if (best < 0 || Math.ceil(n / q[k]) > Math.ceil(rest[best] / q[best])) best = k;
+    });
+    if (best < 0) break;
+    q[best] += 1;
+    budget -= 1;
+  }
+  return q;
+}
+
+/**
+ * Ruling N34: each layer's parts as the chain reads them, in part order, for a layer split into more than one (an
+ * unsplit layer is absent and reads as before), and the plan's milestone count (`rows`: every layer's rows and the
+ * depth tail). A pinned topic stays with its part (ChainTopic.pin, the part's mark: under way or reached on cards);
+ * the rest of the layer's paying topics split by layerSplitOf into the parts layerPartCountsOf gives it; a held or
+ * known topic rides with the paying topic before it in map order (the first part with none before it). The parts,
+ * pinned and placed alike, read in the map's order of their first topic (the review round: the place every reader
+ * keeps, as the server's ords and roadmap-types layerPartOf read it), so a pinned part keeps its place among its
+ * layer's parts while the topics before it do. Where the cap holds a layer's parts back, a part may hold more than
+ * six (the page says so); where the pinned parts alone, one row for each other layer's rest and the tail pass it,
+ * `rows` is over milestoneCapOf("TOPICS") and layeredLadderOf refuses (CAP), never cutting a row.
+ */
+function chainSplitsOf(topics: readonly ChainTopic[], K: number, tail: number): { parts: Map<number, string[][]>; rows: number } {
+  const byLayer = Array.from({ length: K }, (_, k) => topics.filter((t) => t.layer === k + 1));
+  const pinsOf = (ts: readonly ChainTopic[]): number[] => [...new Set(ts.map((t) => t.pin).filter((x): x is number => x != null))].sort((a, b) => a - b);
+  const rest = byLayer.map((ts) => ts.filter((t) => t.pin == null && paysOf(t)).length);
+  const fixed = byLayer.map((ts) => pinsOf(ts).length);
+  const counts = layerPartCountsOf(rest, fixed, tail);
+  const parts = new Map<number, string[][]>();
+  let rows = tail;
+  byLayer.forEach((ts, k) => {
+    const pins = pinsOf(ts);
+    const free = ts.filter((t) => t.pin == null);
+    const paying = free.filter(paysOf);
+    const sizes = layerSplitOf(
+      paying.map((t) => t.need),
+      counts[k]
+    );
+    rows += Math.max(1, pins.length + sizes.length);
+    if (pins.length + sizes.length <= 1) return;
+    // Each pinned part keeps its topics; the free parts are consecutive in map order (a held or known topic beside the
+    // paying topic before it; with no free part, beside the last pinned part).
+    const groups: string[][] = [...pins.map(() => [] as string[]), ...sizes.map(() => [] as string[])];
+    for (const t of ts) if (t.pin != null) groups[pins.indexOf(t.pin)].push(t.lineageId);
+    let part = 0;
+    let filled = 0;
+    let seenPaying = false;
+    for (const t of free) {
+      if (paysOf(t)) {
+        if (seenPaying && filled >= sizes[part]) {
+          part += 1;
+          filled = 0;
+        }
+        seenPaying = true;
+        filled += 1;
+      }
+      groups[sizes.length > 0 ? pins.length + Math.min(part, sizes.length - 1) : pins.length - 1].push(t.lineageId);
+    }
+    // The parts in the map's order of their first topic.
+    const at = new Map(ts.map((t, j) => [t.lineageId, j] as const));
+    const firstOf = (ids: readonly string[]): number => ids.reduce((mn, id) => Math.min(mn, at.get(id) ?? Infinity), Infinity);
+    parts.set(
+      k + 1,
+      groups
+        .filter((ids) => ids.length > 0)
+        .map((ids, j) => ({ ids, first: firstOf(ids), j }))
+        .sort((a, b) => a.first - b.first || a.j - b.j)
+        .map((g) => g.ids)
+    );
+  });
+  return { parts, rows };
+}
+
+/**
+ * K layer rows (a split layer's parts in order, ruling N34), then the depth tail. K ≤ LAYERS_MAX and T ≤
+ * DEPTH_MILESTONES_MAX keep the unsplit rows within milestoneCapOf("TOPICS") and the split raises parts within it;
+ * pinned parts past it are refused before this (chainSplitsOf's `rows`), so no row is ever cut here.
+ */
+function chainSpecsOf(K: number, L: TopicDepth, splits: ReadonlyMap<number, readonly (readonly string[])[]> = new Map()): ChainRowSpec[] {
   const out: ChainRowSpec[] = [];
-  for (let k = 1; k <= K; k++) out.push({ role: "LAYER", layer: k, stage: "FAMILIAR", deep: OPEN_LEVEL, base: OPEN_LEVEL });
+  for (let k = 1; k <= K; k++) {
+    const parts = splits.get(k);
+    if (parts && parts.length > 1) parts.forEach((ids, j) => out.push({ role: "LAYER", layer: k, stage: "FAMILIAR", deep: OPEN_LEVEL, base: OPEN_LEVEL, split: { i: j + 1, p: parts.length, ids: new Set(ids) } }));
+    else out.push({ role: "LAYER", layer: k, stage: "FAMILIAR", deep: OPEN_LEVEL, base: OPEN_LEVEL });
+  }
   for (const t of depthTailOf(L)) out.push({ role: "DEPTH", layer: null, stage: t.stage, deep: t.pays.deep, base: t.pays.base });
-  return out.slice(0, milestoneCapOf("TOPICS"));
+  return out;
 }
 
-/** A row's paying topics, grouped by the level they pay at: a layer's own at OPEN_LEVEL; a depth row's specialisation at `deep`, its base topics at `base`. */
+/** A row's paying topics, grouped by the level they pay at: a layer's own (its part's, ruling N34) at OPEN_LEVEL; a depth row's specialisation at `deep`, its base topics at `base`. */
 function rowPayersOf(topics: readonly ChainTopic[], r: ChainRowSpec): { ts: ChainTopic[]; level: number }[] {
-  if (r.role === "LAYER") return [{ ts: topics.filter((t) => t.layer === r.layer && paysOf(t)), level: OPEN_LEVEL }];
+  if (r.role === "LAYER") return [{ ts: topics.filter((t) => inRowOf(r, t) && paysOf(t)), level: OPEN_LEVEL }];
   const out = [{ ts: topics.filter((t) => paysOf(t) && t.role === "DEEP"), level: r.deep }];
   if (r.base > 0) out.push({ ts: topics.filter((t) => paysOf(t) && t.role === "BASE"), level: r.base });
   return out;
@@ -6237,9 +6411,11 @@ interface ChainFloor {
  *   the first tail milestone ends no earlier than max(layer K's end + 35, the specialisation's last writing day +
  *   floorBase(its level), the last base topic's writing day + floorBase(8)); the second (L* = 12) no earlier than
  *   max(that + 35, the specialisation's last writing day + floorBase(12)).
- * A held layer (`held[k]`) takes no time. The specialisation is layer K; the base topics, the layers before.
+ * A held layer (`held[k]`) takes no time. The specialisation is layer K; the base topics, the layers before. Ruling
+ * N34: an entry is a layer row (a split layer's parts in order), `layerOf[k]` its layer (default: entry k is layer
+ * k + 1), so the specialisation's last writing day is layer K's parts' and the base topics' the layers' before.
  */
-function chainFloorOf(cards: readonly number[], held: readonly boolean[], L: TopicDepth, rate: number | null, hoursDays: (cards: number) => number, m: number): ChainFloor {
+function chainFloorOf(cards: readonly number[], held: readonly boolean[], L: TopicDepth, rate: number | null, hoursDays: (cards: number) => number, m: number, layerOf: readonly number[] = cards.map((_, k) => k + 1)): ChainFloor {
   const layerMin: number[] = [];
   const lastWrite: (number | null)[] = [];
   let start = 0;
@@ -6257,9 +6433,10 @@ function chainFloorOf(cards: readonly number[], held: readonly boolean[], L: Top
     start += min;
   });
   const lastLayerEnd = start;
-  const K = cards.length;
-  const specW = K > 0 ? lastWrite[K - 1] : null;
-  const baseW = lastWrite.slice(0, Math.max(0, K - 1)).reduce<number | null>((mx, w) => (w == null ? mx : mx == null ? w : Math.max(mx, w)), null);
+  const K = layerOf.reduce((mx, l) => Math.max(mx, l), 0);
+  const maxW = (pick: (l: number) => boolean): number | null => lastWrite.reduce<number | null>((mx, w, k) => (w == null || !pick(layerOf[k]) ? mx : mx == null ? w : Math.max(mx, w)), null);
+  const specW = K > 0 ? maxW((l) => l === K) : null;
+  const baseW = maxW((l) => l < K);
   const tailMin: number[] = [];
   let end = lastLayerEnd;
   for (const t of depthTailOf(L)) {
@@ -6321,7 +6498,11 @@ export function chainFitOf(fit: ChainFitInput): ChainFit {
     const v = fit.perLayer?.[k];
     return typeof v === "number" && Number.isFinite(v) && v >= 1 ? Math.min(LAYER_TOPICS_MAX, Math.floor(v)) : room.min;
   });
-  const cards = perLayer.map((n, k) => n * writeNeedOf(k === K - 1 ? COVER_FLOOR_CARDS : TOPIC_FLOOR_CARDS, 0));
+  // Ruling N34: a layer over TOPICS_PER_MILESTONE is dated as its parts (each its own row), within the milestone cap.
+  const partCounts = layerPartCountsOf(perLayer, perLayer.map(() => 0), depthTailOf(L).length);
+  const rowsOf = perLayer.flatMap((n, k) => layerSplitOf(Array.from({ length: n }, () => 1), partCounts[k]).map((size) => ({ layer: k + 1, n: size })));
+  const cards = rowsOf.map((r) => r.n * writeNeedOf(r.layer === K ? COVER_FLOOR_CARDS : TOPIC_FLOOR_CARDS, 0));
+  const layerOf = rowsOf.map((r) => r.layer);
   const held = cards.map(() => false);
   const ctx = contextOf(input);
   const m = ctx.m;
@@ -6330,9 +6511,9 @@ export function chainFitOf(fit: ChainFitInput): ChainFit {
   const src = sourceRateOf(input, scopeIdsOf(input)).rate;
   const rSrc = src != null && src > 0 ? src : null;
   const rPlan = rSrc != null ? Math.round(PACE_SHARE[input.intensity] * rSrc * 1e9) / 1e9 : null;
-  const atOnce = chainFloorOf(cards, held, L, Infinity, () => 0, m);
-  const min = chainFloorOf(cards, held, L, rSrc ?? Infinity, hours, m);
-  const plan = rPlan != null ? chainFloorOf(cards, held, L, rPlan, hours, m) : null;
+  const atOnce = chainFloorOf(cards, held, L, Infinity, () => 0, m, layerOf);
+  const min = chainFloorOf(cards, held, L, rSrc ?? Infinity, hours, m, layerOf);
+  const plan = rPlan != null ? chainFloorOf(cards, held, L, rPlan, hours, m, layerOf) : null;
   const today = input.today;
   const endDay = plan ? addDays(today, plan.total) : null;
   const pastSpan = min.total > SPAN_MAX_DAYS;
@@ -6406,7 +6587,7 @@ function chainRowMeasuresOf(r: ChainRowSpec, topics: readonly ChainTopic[], L: T
   const out: MeasureSpec[] = [];
   const climb = Math.min(BASE_LEVEL, L);
   if (r.role === "LAYER") {
-    for (const t of topics) if (t.layer === r.layer) out.push(topicMeasureOf(t, OPEN_LEVEL, paysOf(t) ? "PAYS" : "CONTEXT", L, rateSource, today, intake));
+    for (const t of topics) if (inRowOf(r, t)) out.push(topicMeasureOf(t, OPEN_LEVEL, paysOf(t) ? "PAYS" : "CONTEXT", L, rateSource, today, intake));
     for (const t of topics) if (r.layer != null && t.layer < r.layer) out.push(topicMeasureOf(t, climb, "CONTEXT", L, rateSource, today, intake));
     return out;
   }
@@ -6480,30 +6661,33 @@ function chainCheckpointsInPlace(
     ms.measures = ms.measures.filter((x) => !x.gate);
     setNote(ms, "LONG_WINDOW", len > MILESTONE_MAX_DAYS);
     if (firstLayer && len > FIRST_RANK_MAX_DAYS) {
-      const part = partMeasureOf(
-        topics.filter((t) => t.layer === r.layer && paysOf(t)),
-        rateSource,
-        today
-      );
+      const part = partMeasureOf(rowPayersOf(topics, r)[0].ts, rateSource, today);
       if (part) ms.measures.push(part);
     }
     if (r.role === "DEPTH" && len > MILESTONE_MAX_DAYS) ms.measures.push(...betweenMeasuresOf(r, topics, L, rateSource, today, intake));
   });
 }
 
-/** The layer titles (contracts §22.1 ruling 22; in CODE_TEMPLATES since lane 8). */
+/** The layer titles (contracts §22.1 ruling 22; in CODE_TEMPLATES since lane 8), and a split layer's part's (ruling N34). */
 const LAYER_TITLE: CodeTemplate = "{domains} · layer {k} of {n}";
 const LAYER_DRAFT_TITLE: CodeTemplate = "Layer {k} of {n}";
+const LAYER_PART_TITLE: CodeTemplate = "{domains} · layer {k} of {n} · part {i} of {p}";
+const LAYER_PART_DRAFT_TITLE: CodeTemplate = "Layer {k} of {n} · part {i} of {p}";
 
 /**
  * A chain row's code title (F-R5-9 Titles): a layer "{domains} · layer {k} of {n}" when every topic of it is a named
- * Domain, else "Layer {k} of {n}" (a draft's Gemini names stay quarantined); a depth row "{stage}: {domains} to level
- * {L}+" over the specialisation's names; "" when it can't be written (the view's paying line names it).
+ * Domain, else "Layer {k} of {n}" (a draft's Gemini names stay quarantined); a split layer's part (ruling N34) the
+ * same with " · part {i} of {p}" over its own topics; a depth row "{stage}: {domains} to level {L}+" over the
+ * specialisation's names; "" when it can't be written (the view's paying line names it).
  */
 function chainTitleOf(r: ChainRowSpec, K: number, own: readonly (DomainName | null)[]): string {
   const all = own.length > 0 && own.every((n) => n != null);
   const domains = own.filter((n): n is DomainName => n != null);
   try {
+    if (r.role === "LAYER" && r.split) {
+      const fill = { k: r.layer ?? 1, n: K, i: r.split.i, p: r.split.p };
+      return all ? codeText(LAYER_PART_TITLE, { domains, ...fill }) : codeText(LAYER_PART_DRAFT_TITLE, fill);
+    }
     if (r.role === "LAYER") return all ? codeText(LAYER_TITLE, { domains, k: r.layer ?? 1, n: K }) : codeText(LAYER_DRAFT_TITLE, { k: r.layer ?? 1, n: K });
     if (all) return codeText("{stage}: {domains} to level {L}+", { stage: STAGE_NAMES[r.stage], domains, level: r.deep });
   } catch {
@@ -6519,8 +6703,8 @@ function chainTitleOf(r: ChainRowSpec, K: number, own: readonly (DomainName | nu
   return "";
 }
 
-/** The topics a chain row names (its DOMAIN items, its title): a layer's own; a depth row's specialisation. */
-const rowTopicsOf = (r: ChainRowSpec, topics: readonly ChainTopic[]): ChainTopic[] => (r.role === "LAYER" ? topics.filter((t) => t.layer === r.layer) : topics.filter((t) => t.role === "DEEP"));
+/** The topics a chain row names (its DOMAIN items, its title): a layer's own (its part's, ruling N34); a depth row's specialisation. */
+const rowTopicsOf = (r: ChainRowSpec, topics: readonly ChainTopic[]): ChainTopic[] => (r.role === "LAYER" ? topics.filter((t) => inRowOf(r, t)) : topics.filter((t) => t.role === "DEEP"));
 
 function chainDomainItemOf(lineageId: string, ord: number, domainId: string, name: DomainName): ItemDraft {
   return {
@@ -6581,6 +6765,15 @@ function chainCoverageOf(topics: readonly ChainTopic[], names: Readonly<Record<s
 const CHAIN_TRACK_ERROR = "A topic map needs an Area with a Field.";
 const CHAIN_EMPTY_ERROR = "Choose at least one topic for this map.";
 const CHAIN_HELD_ERROR = "You already hold every topic on this map, or marked it as known. Add a topic or set a different aim.";
+/**
+ * Ruling N34 (the review round): the parts under way (started, or reached on cards) keep their topics, so a rebuild
+ * whose other layers and depth milestones then pass milestoneCapOf("TOPICS") is refused, never cut (a depth row
+ * included): it says the cap, what the map would need, and the way out.
+ */
+export function chainCapError(need: number): string {
+  const cap = milestoneCapOf("TOPICS");
+  return `A roadmap holds at most ${cap} milestones, and the ones you've started or reached keep their topics: this map would need ${need}. Add the topic to a layer already in the plan, or remove a topic first.`;
+}
 
 /** What every chain reader shares: the model (its writing staged once a schedule sets it), the topics, the rows' specs and the windows kept. */
 interface ChainBase {
@@ -6613,9 +6806,15 @@ function chainDateCheckOf(base: ChainBase, mode: DateMode, userDate: DayKey | nu
   const within = (s: ChainSchedule): DayKey | null => (!s.notDated && !s.tooFar && daysBetween(today, s.end) <= SPAN_MAX_DAYS ? s.end : null);
   const D_real = within(real);
   const D_full = need && rSrc != null && rSrc !== base.rate ? within(chainScheduleOf(model, topics, specs, rSrc, ctx, { fixed: base.carried })) : D_real;
-  const cards = Array.from({ length: K }, (_, k) => topics.filter((t) => t.layer === k + 1).reduce((s, t) => s + t.need, 0));
-  const held = Array.from({ length: K }, (_, k) => !topics.some((t) => t.layer === k + 1 && paysOf(t)));
-  const floorAt = (rate: number | null): DayKey => addDays(today, chainFloorOf(cards, held, L, rate, () => 0, model.m).total);
+  // Ruling N34: one entry per layer row (a split layer's parts each), in order; an unsplit chain reads one per layer as before.
+  const layerSpecs = Array.from({ length: K }, (_, k) => {
+    const own = specs.filter((r) => r.role === "LAYER" && r.layer === k + 1);
+    return own.length > 0 ? own : [{ role: "LAYER" as const, layer: k + 1, stage: "FAMILIAR" as const, deep: OPEN_LEVEL, base: OPEN_LEVEL }];
+  }).flat();
+  const cards = layerSpecs.map((r) => rowPayersOf(topics, r)[0].ts.reduce((s, t) => s + t.need, 0));
+  const held = layerSpecs.map((r) => rowPayersOf(topics, r)[0].ts.length === 0);
+  const layerOf = layerSpecs.map((r) => r.layer as number);
+  const floorAt = (rate: number | null): DayKey => addDays(today, chainFloorOf(cards, held, L, rate, () => 0, model.m, layerOf).total);
   const D_floor = floorAt(Infinity);
   const D_best_pace = notDated ? null : floorAt(base.rate ?? Infinity);
   const D_best_2x = notDated ? null : floorAt(rSrc != null ? OVER_PACE_FACTOR * rSrc : Infinity);
@@ -6679,7 +6878,8 @@ function chainDateCheckOf(base: ChainBase, mode: DateMode, userDate: DayKey | nu
 
 /**
  * The topic chain as milestones (contracts §22.12; beside stageLadderOf, which is unchanged): K layer milestones
- * (one per filled layer, renumbered 1..K), then the depth tail for L* (depthTailOf), dated through the reach model
+ * (one per filled layer, renumbered 1..K; a layer over TOPICS_PER_MILESTONE paying topics as its consecutive parts,
+ * each its own dated row, ruling N34), then the depth tail for L* (depthTailOf), dated through the reach model
  * with staged writing (see the section's head), then fitted (fitPlan's chain branch: the practice progression on
  * every DRAFT row with items STARTER, in each row's room; a skeleton with NONE).
  *
@@ -6714,7 +6914,11 @@ export function layeredLadderOf(
   const { topics, K } = chainTopicsOfInput(tinput, chain);
   if (K === 0) return { ok: false, reason: "NO_DOMAINS", error: CHAIN_EMPTY_ERROR };
   if (!topics.some(paysOf)) return { ok: false, reason: "HELD", error: CHAIN_HELD_ERROR };
-  const specs = chainSpecsOf(K, L);
+  // Ruling N34: a layer over TOPICS_PER_MILESTONE paying topics is dated and paid as its parts, within the milestone cap;
+  // parts under way that leave no room for the rest are refused in words (the review round), never cut.
+  const split = chainSplitsOf(topics, K, depthTailOf(L).length);
+  if (split.rows > milestoneCapOf("TOPICS")) return { ok: false, reason: "CAP", error: chainCapError(split.rows) };
+  const specs = chainSpecsOf(K, L, split.parts);
   const model = chainModelOf(tinput, L, topics);
   const ctx = contextOf(tinput);
   const rate = chainRateOf(model);
@@ -6806,7 +7010,8 @@ interface ChainCore extends ChainBase {
  * A TOPICS plan's chain: its rows (scheduled, with a chainRole), each topic in its own layer (the first layer row, by
  * layer, whose measures name it: PAYS there pays, CONTEXT is held or known), the specialisation being layer K's, L*
  * (the highest level a specialisation topic's measure reaches, which a base topic's "climbing to 8" never sets; the
- * input's TopicDepth without one), and each row's spec (a depth row's from depthTailOf by its stage).
+ * input's TopicDepth without one), and each row's spec (a depth row's from depthTailOf by its stage). Ruling N34: a
+ * layer with more than one row is split, each row a part in ord order holding the topics it names first.
  */
 function chainOfPlan(plan: readonly MilestoneDraft[], input: RealismInput): { rows: number[]; specs: ChainRowSpec[]; topics: ChainTopic[]; K: number; L: TopicDepth } | null {
   const rows = planOrder(plan).filter((i) => SCHEDULED.has(plan[i].status) && plan[i].chainRole != null);
@@ -6816,13 +7021,17 @@ function chainOfPlan(plan: readonly MilestoneDraft[], input: RealismInput): { ro
   const used = new Set<string>();
   const seen = new Set<string>();
   const topics: ChainTopic[] = [];
+  const ownOf = new Map<number, Set<string>>();
   for (const i of layerRows) {
     const ms = plan[i];
     const layer = ms.layer ?? 1;
     const heldRow = ms.notes.includes("HELD_AT_START");
+    const own = new Set<string>();
+    ownOf.set(i, own);
     for (const x of ms.measures) {
       if (x.kind !== "CARDS_AT_LEVEL" || !x.topicLineageId || x.gate || seen.has(x.topicLineageId)) continue;
       seen.add(x.topicLineageId);
+      own.add(x.topicLineageId);
       const pays = x.role === "PAYS";
       topics.push(
         chainTopicOf(input, { lineageId: x.topicLineageId, domainId: x.scope.domainIds?.[0] ?? null, role: layer === K ? "DEEP" : "BASE", held: !pays && heldRow, skipped: !pays && !heldRow, nd: x.target }, layer, used)
@@ -6834,9 +7043,14 @@ function chainOfPlan(plan: readonly MilestoneDraft[], input: RealismInput): { ro
   for (const i of rows)
     for (const x of plan[i].measures) if (x.kind === "CARDS_AT_LEVEL" && x.topicLineageId && deep.has(x.topicLineageId) && !x.gate && x.minLevel != null) top = Math.max(top, x.minLevel);
   const L: TopicDepth = isTopicDepth(top) ? top : isTopicDepth(input.depth) ? input.depth : AIM_DEPTHS[DEPTH_DEFAULT];
+  const partsOf = (layer: number): number[] => layerRows.filter((j) => (plan[j].layer ?? 1) === layer);
   const specs: ChainRowSpec[] = rows.map((i) => {
     const ms = plan[i];
-    if (ms.chainRole === "LAYER") return { role: "LAYER", layer: ms.layer ?? 1, stage: "FAMILIAR", deep: OPEN_LEVEL, base: OPEN_LEVEL };
+    if (ms.chainRole === "LAYER") {
+      const parts = partsOf(ms.layer ?? 1);
+      const spec: ChainRowSpec = { role: "LAYER", layer: ms.layer ?? 1, stage: "FAMILIAR", deep: OPEN_LEVEL, base: OPEN_LEVEL };
+      return parts.length > 1 ? { ...spec, split: { i: parts.indexOf(i) + 1, p: parts.length, ids: ownOf.get(i) ?? new Set<string>() } } : spec;
+    }
     const stage: GateStage = ms.stage && (STAGE_KEYS as readonly string[]).includes(ms.stage) ? (ms.stage as GateStage) : "FLUENT";
     const tail = depthTailOf(L).find((t) => t.stage === stage);
     return { role: "DEPTH", layer: null, stage, deep: tail?.pays.deep ?? rowLevelOf(ms) ?? L, base: tail?.pays.base ?? 0 };
@@ -7210,8 +7424,18 @@ function topicPartNamesOf(rows: readonly MilestoneDraft[], k: number, names?: Re
     }
     return { own, carry };
   }
-  const before = ms.layer != null ? rows.find((r) => r.chainRole === "LAYER" && r.layer === (ms.layer as number) - 1) : undefined;
-  return { own, carry: before ? stageNamesOf(before, names) : [] };
+  // Ruling N34: the layer before is every one of its parts (one row on an unsplit layer, as before).
+  const before = ms.layer != null ? rows.filter((r) => r.chainRole === "LAYER" && r.layer === (ms.layer as number) - 1) : [];
+  if (before.length <= 1) return { own, carry: before.length ? stageNamesOf(before[0], names) : [] };
+  const carry: DomainName[] = [];
+  const seen = new Set<string>();
+  for (const r of before)
+    for (const d of rowDomainsOf(r)) {
+      if (seen.has(d.id)) continue;
+      seen.add(d.id);
+      carry.push(nameOf(d));
+    }
+  return { own, carry };
 }
 
 /** An item's part (lane 8's ProgressionItem.part, read as unknown so this file compiles before it lands): NEW, CARRY or none. */
