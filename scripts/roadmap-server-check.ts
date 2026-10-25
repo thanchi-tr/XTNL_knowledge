@@ -9480,6 +9480,104 @@ async function main() {
     );
   });
 
+  // Roadmap rework 2, the rehearsal's find: the view's acceptRefusal reads the draft as it stands, but [Accept all] ticks
+  // the shown Gemini names first (keptAllOf), and accept then refused a ticked one wearing your Domain's name, with the
+  // sheet saying nothing of it. TopicMapView.acceptAllTaken reads the map as [Accept all] sends it.
+  await topicBlock("roadmap rework 2 (the rehearsal's find): [Accept all] names the topics it would tick that wear your Domain's name (acceptAllTaken), as acceptCore refuses them", async () => {
+    const w = world();
+    (w.tree.find((f) => f.id === "f-stats") as TreeField).domains.push({ id: "d-bayes", name: "Bayes Rule", fieldId: "f-stats", cards: [card("d-bayes", 6)] });
+    const id = await writtenTopics(w, TOPICS_INTAKE, ["Sampling plans"]);
+    const deps = topicDepsFor(w);
+    // Shown and linked, PENDING, not ticked: [Accept all] ticks it (ruling N17); the draft as it stands holds no taken name.
+    geminiTopicRow(w, id, "T11", "Bayes rule", { decision: "PENDING", chosen: false });
+    geminiTopicRow(w, id, "T12", "Variance");
+    const TMM = await import("../src/components/roadmap/topic-map-model");
+    const mapOf = async () => (await S.loadRoadmapView(USER, NOW, deps, id)).draft?.topicMap ?? null;
+    const acceptAll = async (m: TopicMapView | null) => (m ? errOf(await S.acceptCore(USER, id, { overAccepted: true, topicMap: TMM.acceptTopicChoicesOf(m, { keepAll: true, aftercare: null }) }, NOW, deps)) : null);
+    const m0 = await mapOf();
+    const made0 = w.domainsCreated.length;
+    eq(
+      "the draft as it stands never says the name is taken (its acceptRefusal is the plain accept's «Keep every layer first»: Bayes rule not ticked), [Accept all]'s list ticks it, acceptAllTaken names it with the row's offer, and [Accept all] refuses it (TOPIC_NAME_TAKEN), creating nothing",
+      [m0?.acceptRefusal === TOPIC_NAME_TAKEN, m0 ? TMM.acceptAllListOf(m0).some((x) => x.names.includes("Bayes rule")) : null, m0?.acceptAllTaken ?? null, m0?.layers[0]?.topics.find((r) => r.key === "T11")?.domainOffer?.id ?? null, await acceptAll(m0), w.domainsCreated.length - made0],
+      [false, true, ["T11"], "d-bayes", TOPIC_NAME_TAKEN, 0]
+    );
+    must(await S.useMyDomainCore(USER, id, "T11", "d-bayes", NOW, deps), "use your Domain Bayes Rule");
+    const m1 = await mapOf();
+    eq("the row's offer tapped (useMyDomain): acceptAllTaken is gone and [Accept all] accepts", [m1?.acceptAllTaken ?? null, await acceptAll(m1)], [null, "ok"]);
+    // The review round: [Accept all] sends its keep-over switch itself (on by default); on a plan that is not over the
+    // acceptance and its rows store no Over (acceptCore's overAccepted && needsOver).
+    eq("the switch sent on a plan that is not over stores no Over: the acceptance and every row read overAccepted false", [w.t.roadmapAcceptance.at(-1)?.overAccepted, rowsOf(w, id, 1).some((m) => m.overAccepted)], [false, false]);
+
+    // The review round: "Rename X" (a taken name with no offer to tap, or one you'd rather rename) ticks the row first, as
+    // [Accept all] would, then renames it in its sheet: the renamed topic stays in the plan (a rename keeps `chosen`;
+    // [Accept all] ticks only Gemini's PENDING names), at layer 2 and as the deepest layer's only topic.
+    for (const layer of [2, 3]) {
+      const w2 = world();
+      (w2.tree.find((f) => f.id === "f-stats") as TreeField).domains.push({ id: "d-bayes2", name: "Bayes Rule", fieldId: "f-stats", cards: [card("d-bayes2", 6)] });
+      const id2 = await writtenTopics(w2, TOPICS_INTAKE, ["Sampling plans"]);
+      const deps2 = topicDepsFor(w2);
+      geminiTopicRow(w2, id2, "T11", "Bayes rule", { decision: "PENDING", chosen: false, layer });
+      geminiTopicRow(w2, id2, "T12", "Variance");
+      const mapOf2 = async () => (await S.loadRoadmapView(USER, NOW, deps2, id2)).draft?.topicMap ?? null;
+      const before = await mapOf2();
+      must(await S.chooseTopicCore(USER, id2, "T11", true, NOW, deps2), `tick Bayes rule (layer ${layer})`);
+      must(await S.editTopicCore(USER, id2, "T11", { kind: "RENAME", name: "Bayes basics" }, NOW, deps2), `rename Bayes rule (layer ${layer})`);
+      const after = await mapOf2();
+      const res = after ? errOf(await S.acceptCore(USER, id2, { overAccepted: true, topicMap: TMM.acceptTopicChoicesOf(after, { keepAll: true, aftercare: null }) }, NOW, deps2)) : null;
+      const t11 = d2Topic(w2, id2, "T11");
+      eq(
+        `«Rename X» at layer ${layer}${layer === 3 ? " (the deepest layer's only topic)" : ""}: listed taken before, ticked then renamed it is no longer taken, [Accept all] accepts, and the renamed topic is in the plan (chosen, its Domain made)`,
+        [before?.acceptAllTaken ?? null, after?.acceptAllTaken ?? null, res, t11 && [t11.name, t11.chosen, !!t11.domainId], w2.domainsCreated.some((d) => d.name === "Bayes basics")],
+        [["T11"], null, "ok", ["Bayes basics", true, true], true]
+      );
+    }
+  });
+
+  // The rehearsal's next find: the checks' lines ("8 new cards to write in X", code's sentence) named a Gemini-named
+  // Domain bare, so the tripwire refused the draft and the plan (production read "this topic" in the "Worked out" list).
+  /** The newest version's topic row of a key (the accepted version's after accept). */
+  function d2Topic(w: FakeWorld, roadmapId: string, key: string) {
+    const rows = w.t.roadmapTopic.filter((t) => t.roadmapId === roadmapId && t.key === key);
+    return rows.sort((a, b) => b.version - a.version)[0] ?? null;
+  }
+  await topicBlock("roadmap rework 2 (the rehearsal's find): the checks' lines name a Gemini-named Domain in parts (partedFeasibilityOf), and the tripwire passes them", async () => {
+    const line = "8 new cards to write in Bayes Rule, at ≈ 5 a week; new cards written after Fri 6 Nov can't reach level 6 by Mon 30 Nov.";
+    const k = { measureKey: "k1", basis: [line, "Multiple-choice cards don't count: recognising an answer isn't recalling it."] };
+    const f = { milestones: [{ lineageId: "l1", knowledge: [k], basis: ["Bayes Rule: within your hours."] }] } as unknown as Parameters<typeof S.partedFeasibilityOf>[0];
+    const marks = [{ name: "Bayes Rule", geminiNamed: true }];
+    const parted = S.partedFeasibilityOf(f, marks);
+    const pk = parted.milestones[0].knowledge[0];
+    const geminiDomains = [{ id: "d-bayes", name: "Bayes Rule", nameOrigin: "GEMINI", originName: "Bayes Rule" }];
+    const throws = (v: unknown) => {
+      try {
+        S.assertTopicNames(v, { topics: [], domains: geminiDomains }, "THROW");
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    eq(
+      "a line naming your Gemini-named Bayes Rule carries basisParts (its name the marked part), a line naming none plain; the milestone's own lines too; marks naming no Gemini Domain return the feasibility as given; the tripwire throws on the bare lines and passes the parted ones",
+      [
+        pk.basisParts?.[0]?.filter((p) => p.geminiNamed).map((p) => p.text),
+        pk.basisParts?.[1]?.some((p) => p.geminiNamed),
+        parted.milestones[0].basisParts?.[0]?.filter((p) => p.geminiNamed).map((p) => p.text),
+        S.partedFeasibilityOf(f, [{ name: "Bayes Rule", geminiNamed: false }]) === f,
+        throws({ feasibility: f }),
+        throws({ feasibility: parted }),
+      ],
+      [["Bayes Rule"], false, ["Bayes Rule"], true, true, false]
+    );
+    // The review round: the Start snapshot (CurrentMilestoneView.startFeasibility) is parted as the plan's milestone is.
+    const snap = f.milestones[0];
+    const snapParted = S.partedMilestoneFeasibilityOf(snap, marks);
+    eq(
+      "the Start snapshot's checks are parted the same way (partedMilestoneFeasibilityOf), and the tripwire passes current.startFeasibility once parted",
+      [snapParted.knowledge[0].basisParts?.[0]?.filter((p) => p.geminiNamed).map((p) => p.text), throws({ current: { startFeasibility: snap } }), throws({ current: { startFeasibility: snapParted } }), /startFeasibility: partedMilestoneFeasibilityOf\(out\.current\.startFeasibility, marks\)/.test(SERVER_SRC)],
+      [["Bayes Rule"], true, false, true]
+    );
+  });
+
   if (failed > 0) {
     console.log(`\nroadmap-server-check: ${passed} passed, ${failed} FAILED${pendingCount ? `, ${pendingCount} pending other lanes` : ""}`);
     process.exit(1);

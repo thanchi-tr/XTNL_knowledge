@@ -2707,6 +2707,16 @@ export const ACCEPT_ALL_LEAD = "Accept all puts these Gemini names in your plan.
 export const ACCEPT_ALL_UNCHECKED = "not checked";
 /** Ruling N30: a layer in [Accept all]'s list holding only not-checked names, none tapped yet (the button waits for a tap). */
 export const ACCEPT_ALL_TAP_LINE = "Nothing checked here: tap a name to keep this layer.";
+/** TopicMapView.acceptAllTaken: names [Accept all] would put in the plan that are already your Domains (the button waits for each one's tap). */
+export function acceptAllTakenLine(n: number): string {
+  return n === 1 ? "Already your Domain: use it or rename it, so no copy is made." : "Already your Domains: use or rename each, so no copies are made.";
+}
+/** A taken name's way out on every row (beside its offer when it has one): its sheet, where Rename is; ticked first, so it stays in the plan. */
+export function renameTakenWord(name: string): string {
+  return `Rename ${name}`;
+}
+/** [Accept all]'s keep-over switch on a draft not over as it stands: [Accept all]'s ticks can put the plan over. */
+export const ACCEPT_ALL_OVER_IF_LINE = "Used only if the names it adds put the plan over your hours or pace.";
 export function acceptAllLinksLine(n: number): string {
   return `It also keeps ${plural(n, "not-checked link")}.`;
 }

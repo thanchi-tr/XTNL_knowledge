@@ -6821,7 +6821,11 @@ async function main() {
         /<input type="checkbox" className="rm-avd-box" checked=\{false\} disabled=\{pending\} aria-label=\{inPlanAria\(u\.name\)\} onChange=\{\(\) => choose\(u\.key, true\)\} \/>/.test(mapSrc30) &&
         /<HideReason hide=\{u\} lead=\{ACCEPT_ALL_UNCHECKED\} \/>/.test(mapSrc30) &&
         /\{bareLayers\.includes\(x\.layer\) && \(\s*<p className="t-meta" data-bare="">\s*\{ACCEPT_ALL_TAP_LINE\}/.test(mapSrc30) &&
-        /disabled=\{pending \|\| \(liveMilestone != null && aftercare == null\) \|\| \(needsOver && !overKept\) \|\| bareLayers\.length > 0\} onClick=\{acceptAll\}/.test(mapSrc30) &&
+        /disabled=\{pending \|\| \(liveMilestone != null && aftercare == null\) \|\| \(needsOver && !overKept\) \|\| bareLayers\.length > 0 \|\| takenRows\.length > 0\} onClick=\{acceptAll\}/.test(mapSrc30) &&
+        // [Accept all] sends the over switch itself (on by default), never needsOver && overKept: a draft not over can
+        // accept into a plan that is, and the hidden switch made that refusal a dead end.
+        /a\.acceptPlan\(map\.roadmapId, \{ overAccepted: overKept, topicMap: /.test(mapSrc30) &&
+        !/overAccepted: needsOver && overKept/.test(mapSrc30) &&
         /\.rm-tm-unck li \{ display: flex; align-items: center; gap: 4px; padding: 0; min-height: 44px; \}/.test(readFileSync(join(process.cwd(), "src/components/roadmap/roadmap.css"), "utf8")) &&
         /\{row\.hide && \(\s*<li>\s*<HideReason hide=\{row\.hide\} lead=\{ACCEPT_ALL_UNCHECKED\} \/>\s*<\/li>\s*\)\}/.test(sheetSrc30),
       "TopicMap.tsx / TopicSheet.tsx / roadmap.css"
@@ -7256,6 +7260,51 @@ async function main() {
           accept33.topicMap!.open?.sheet === "accept" &&
           /useState\(fixtureOpen\?\.sheet === "accept"\)/.test(read("src/components/roadmap/TopicMap.tsx")),
         JSON.stringify(list33)
+      );
+      // The rehearsal's find (TopicMapView.acceptAllTaken): the sheet lists the names [Accept all] would tick that are your
+      // Domains already, a free one with its row's offer (DomainOfferRow, useMyDomain), one another goal holds with its
+      // sheet («Rename …»), and the button waits on them as acceptCore refuses them.
+      const taken33 = roadmapFixture("topic-accept-taken").topicMap!.map;
+      const takenRows33 = tm9.acceptAllTakenRowsOf(taken33);
+      const copyT = await import("../src/components/roadmap/roadmap-copy");
+      check(
+        "the rehearsal's find (topic-accept-taken): [Accept all]'s sheet lists the names it would tick that are your Domains already (acceptAllTakenRowsOf over acceptAllTaken, the map's order): Beta four with its row's offer (DomainOfferRow, useMyDomain), and every taken row with «Rename X» (the review round: ticked first when unticked, then its sheet, so the renamed topic stays in the plan); the button waits on them; the fixture carries the server's list and Beta Four among your free Domains",
+        JSON.stringify(takenRows33.map((r) => [r.key, r.domainOffer?.id ?? null])) === JSON.stringify([["T15", "d-beta4"], ["T8", null]]) &&
+          tm9.acceptAllTakenRowsOf(roadmapFixture("topic-accept-all").topicMap!.map).length === 0 &&
+          JSON.stringify(tm9.acceptAllListOf(taken33).map((x) => [x.layer, x.names.length, x.links])) === JSON.stringify([[1, 2, 0], [2, 4, 5], [3, 3, 0], [4, 1, 1]]) &&
+          JSON.stringify(taken33.layerOneSeeds.map((d) => d.id)) === JSON.stringify(["d-beta4"]) &&
+          tm9.libraryTrayOf(taken33).length === 0 &&
+          copyT.acceptAllTakenLine(1) === "Already your Domain: use it or rename it, so no copy is made." &&
+          copyT.acceptAllTakenLine(2) === "Already your Domains: use or rename each, so no copies are made." &&
+          copyT.renameTakenWord("Gamma three") === "Rename Gamma three" &&
+          /const takenRows = acceptAllTakenRowsOf\(map\);/.test(mapSrc30) &&
+          /\{acceptAllTakenLine\(takenRows\.length\)\}/.test(mapSrc30) &&
+          /\{r\.domainOffer && <DomainOfferRow row=\{r\} offer=\{r\.domainOffer\} onUse=\{bindDomain\} pending=\{pending\} \/>\}\s*<li>\s*<button type="button" className="chip btn-chip" disabled=\{pending\} onClick=\{\(\) => renameTaken\(r\)\}>\s*\{renameTakenWord\(r\.name\)\}/.test(mapSrc30) &&
+          /if \(r\.chosen\) open\(\);\s*else run\(\(a\) => a\.chooseTopic\(map\.roadmapId, r\.key, true\), open\);/.test(mapSrc30) &&
+          /setAcceptOpen\(false\);\s*setSheetKey\(r\.key\);/.test(mapSrc30),
+        JSON.stringify(takenRows33.map((r) => [r.key, r.domainOffer ?? null]))
+      );
+      // The review round: the keep-over switch is always on the sheet (on by default): [Accept all]'s ticks can put the plan
+      // over when the draft is not, and a switch you turned off stays where you can turn it back on; one line says when it's used.
+      check(
+        "the review round: [Accept all]'s keep-over switch always shows (never gated on needsOver), with «Used only if the names it adds put the plan over your hours or pace.» while the draft as it stands is not over",
+        copyT.ACCEPT_ALL_OVER_IF_LINE === "Used only if the names it adds put the plan over your hours or pace." &&
+          !/\{needsOver && \(\s*<div className="rm-sw">/.test(mapSrc30) &&
+          /<div className="rm-sw">\s*<span className="rm-sw-t">Keep it over my hours\/pace<\/span>\s*<Switch checked=\{overKept\} onChange=\{setOverKept\} label="Keep it over my hours\/pace" \/>\s*<\/div>\s*\{!needsOver && \(\s*<p className="t-meta" style=\{\{ margin: 0 \}\}>\s*\{ACCEPT_ALL_OVER_IF_LINE\}/.test(mapSrc30),
+        "TopicMap.tsx"
+      );
+      // The rehearsal's next find: the "Worked out" lines draw a Gemini-named Domain's mark from basisParts (ruling N29).
+      const checksT = await import("../src/components/roadmap/ChecksPanel");
+      const named33 = [{ text: "8 new cards to write in ", geminiNamed: false }, { text: "Bayes Rule", geminiNamed: true }, { text: ".", geminiNamed: false }];
+      const worked33 = checksT.workedOutLinesOf({
+        knowledge: [{ basis: ["8 new cards to write in Bayes Rule.", "Multiple-choice cards don't count."], basisParts: [named33, [{ text: "Multiple-choice cards don't count.", geminiNamed: false }]] } as never],
+        basis: ["Plain line."],
+      });
+      check(
+        "the rehearsal's next find: the checks' «Worked out» lines are each knowledge check's, then the milestone's; a line with a marked part reads its parts (NamedText), the others their words",
+        JSON.stringify(worked33.map((x) => [x.text, x.parts ? x.parts.length : null])) === JSON.stringify([["8 new cards to write in Bayes Rule.", 3], ["Multiple-choice cards don't count.", null], ["Plain line.", null]]) &&
+          /\{workedOutLinesOf\(mf\)\.map\(\(b, i\) => \(\s*<li key=\{i\}>\{b\.parts \? <NamedText parts=\{b\.parts\} \/> : b\.text\}<\/li>/.test(read("src/components/roadmap/ChecksPanel.tsx")),
+        JSON.stringify(worked33)
       );
       const hero33 = (s: FixtureState) => /<[^>]*data-wc-block="next-action"[\s\S]*?rm-next-go[^>]*>[\s\S]*?<\/a>/.exec(page32(s))?.[0] ?? "";
       const vis33 = (h: string) => wc9.visibleText(h, { width: 344 }).replace(/\s+/g, " ").trim();

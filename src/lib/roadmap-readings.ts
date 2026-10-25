@@ -148,6 +148,7 @@ import {
   isRetryEntry,
   isStageKey,
   isSupersededRow,
+  isTopicDepth,
   milestoneDueDayOf,
   parseMeasureKey,
   plannedUnits,
@@ -398,6 +399,8 @@ export interface RoadmapContext {
   // ── Revision 4 (absent on a rev-3 fixture: every card counts, the rev-3 aim rule) ──
   /** Roadmap.depth (L*: 12, 10 or 8) on a depth plan; null on a track Area or a legacy plan. */
   depth?: number | null;
+  /** Ruling 50: a TOPICS plan's depth where it is no aim depth (6, TOPICS only, ruling 14); a depth plan as `depth` is. Absent otherwise. */
+  topicDepth?: number | null;
   /** isLegacyRoadmap: never measured (F-R4-16); the writers write nothing for it. */
   legacy?: boolean;
   /** The card counts every card figure reads (all, recall, retry entries at the `rc` levels). Absent: `histogram` stands for every count. */
@@ -666,7 +669,11 @@ async function contextOfRow(
     .filter((m) => m.status === "STARTING" || m.status === "STARTED" || m.version <= row.version);
   const acceptance = row.acceptances[0] ? { version: row.acceptances[0].version, endState: endStateOf(row.acceptances[0].endState) } : null;
   const depth = isAimDepth(row.depth) ? row.depth : null;
-  const legacy = isLegacyRoadmap({ fieldId: row.fieldId ?? null, depth }, milestones);
+  // Ruling 50 (roadmap-server legacyOf): a TOPICS plan always has its depth set (6 included), so it is never legacy, and
+  // it is a depth plan (its standard read, its aim gated as at 8). `depth` stays the aim depth (8, 10, 12), as the
+  // server's depthOf reads it; a TOPICS plan at 6 carries `topicDepth` beside it.
+  const planDepth = row.planKind === "TOPICS" && isTopicDepth(row.depth) ? row.depth : depth;
+  const legacy = isLegacyRoadmap({ fieldId: row.fieldId ?? null, depth: planDepth }, milestones);
   const intervalM = row.acceptances[0]?.intervalMultiplier;
   const m = typeof intervalM === "number" && Number.isFinite(intervalM) && intervalM > 0 ? intervalM : 1;
 
@@ -702,7 +709,7 @@ async function contextOfRow(
     if (p?.kind === "CARDS_AT_LEVEL") p.domainIds.forEach((d) => domainIds.add(d));
   }
   const clean = cleanLevelsOf([...milestones.flatMap((x) => x.measures.filter((meas) => meas.role === "PAYS").map((meas) => meas.measureKey)), ...(acceptance?.endState ?? []).map((t) => t.measureKey), ...(q.extraKeys ?? [])]);
-  const standard = !legacy && (depth != null || isTrackPlan(milestones)) ? standardOf(milestones) : null;
+  const standard = !legacy && (planDepth != null || isTrackPlan(milestones)) ? standardOf(milestones) : null;
   const windows = practiceWindows(milestones).filter((w) => w.until != null);
   // A past-due open milestone's g is read as of its due day: each PAYS key's last reading on or before that day.
   // The row's own due day here (the goal's is read below); a goal rescheduled to another day that is also past gets a third read.
@@ -829,6 +836,7 @@ async function contextOfRow(
     templates,
     heldDays: Array.from(held).sort(),
     depth,
+    ...(planDepth != null && planDepth !== depth ? { topicDepth: planDepth } : {}),
     legacy,
     counts,
     checkpointLogs: logs.map(toReading),
@@ -1239,8 +1247,15 @@ export function planRoadmapWrite(ctx: RoadmapContext, now: Date, opts: PlanOptio
     const p = parseMeasureKey(t.measureKey);
     if (p?.kind === "CARDS_AT_LEVEL" && !rows.has(t.measureKey)) rows.set(t.measureKey, cardRow(t.measureKey, p));
   }
-  // Ruling N26 (step 1b): a TOPICS plan's PLANNED layer rows are measured too, so a layer can reach on cards alone.
-  const cardsRows = ctx.planKind === "TOPICS" && ctx.roadmap.status === "ACTIVE" ? ctx.milestones.filter((m) => isCardsLayerRow(m, ctx.roadmap.version, superseded)) : [];
+  // The final scheduled lineage (a dropped row and its "Start again" copy share it): the aim is reached when any of its
+  // rows is. A stage a lowered depth dropped (DEPTH_LOWERED) is no longer scheduled: the new final stage decides.
+  const scheduled = ctx.milestones.filter((m) => m.status !== "LATER" && !m.notes.includes("DEPTH_LOWERED"));
+  const maxOrd = scheduled.reduce((best, m) => Math.max(best, m.ord), -Infinity);
+  const finalLineages = new Set(scheduled.filter((m) => m.ord === maxOrd).map((m) => m.lineageId));
+  // Ruling N26 (step 1b): a TOPICS plan's PLANNED layer rows are measured too, so a layer can reach on cards alone; never
+  // the final one (a LAYER row at depth 6, where DEPTH_TAIL is 0): a reach on cards is no aim's reach, so it waits for Start.
+  const cardsRows =
+    ctx.planKind === "TOPICS" && ctx.roadmap.status === "ACTIVE" ? ctx.milestones.filter((m) => isCardsLayerRow(m, ctx.roadmap.version, superseded) && !finalLineages.has(m.lineageId)) : [];
   for (const m of cardsRows) {
     for (const meas of payingKeyed(m)) {
       const p = parseMeasureKey(meas.measureKey!);
@@ -1276,17 +1291,12 @@ export function planRoadmapWrite(ctx: RoadmapContext, now: Date, opts: PlanOptio
 
   let aimReachedDay: DayKey | null = null;
   if (ctx.roadmap.status === "ACTIVE" && ctx.roadmap.reachedDay == null) {
-    // The final scheduled lineage (a dropped row and its "Start again" copy share it): reached when any of its rows is.
-    // A stage a lowered depth dropped (DEPTH_LOWERED) is no longer scheduled: the new final stage decides.
-    const scheduled = ctx.milestones.filter((m) => m.status !== "LATER" && !m.notes.includes("DEPTH_LOWERED"));
-    const maxOrd = scheduled.reduce((best, m) => Math.max(best, m.ord), -Infinity);
-    const finalLineages = new Set(scheduled.filter((m) => m.ord === maxOrd).map((m) => m.lineageId));
     const finalReached = scheduled.some((m) => finalLineages.has(m.lineageId) && reachedNow.get(m.id) != null);
     const valueOf = (key: string) => lastReadingOn(overlaid, key, today)?.value ?? null;
     const termsMet = endState.every((t) => (valueOf(t.measureKey) ?? -Infinity) >= t.target);
     let reached = finalReached && termsMet;
     // Revision 4: a depth plan's practice conditions, and the standard on any revision-4 plan that has one (F-R4-12).
-    const depthPlan = ctx.depth != null;
+    const depthPlan = ctx.depth != null || ctx.topicDepth != null;
     if (reached && !ctx.legacy && (depthPlan || isTrackPlan(ctx.milestones))) {
       const standard = standardOf(ctx.milestones);
       reached = aimReachedOf({

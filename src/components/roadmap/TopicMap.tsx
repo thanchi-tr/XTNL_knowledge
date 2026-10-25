@@ -33,7 +33,7 @@
  * Budgets (§15.10 row 13): ≤ 6 app words per layer (data-wc-block="topic-layer"), ≤ 2 for the card
  * (data-wc-block="topic-map-foot").
  */
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { cx } from "@/components/ui/cx";
 import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
@@ -65,6 +65,9 @@ import {
   TRACE_KEY,
   TRACK_CLAUSE_WORD,
   ACCEPT_ALL_TAP_LINE,
+  ACCEPT_ALL_OVER_IF_LINE,
+  acceptAllTakenLine,
+  renameTakenWord,
   acceptAllLinksLine,
   createsDomainsLine,
   emptyLayerTitle,
@@ -97,8 +100,8 @@ import { useRoadmapAction } from "./roadmap-runtime";
 import { EstimateChip } from "./EstimateChip";
 import { LayerBand } from "./LayerBand";
 import { CautionChips, TopicSheet } from "./TopicSheet";
-import { HideReason } from "./TopicMapRow";
-import { TOPIC_MARK, acceptAllBareLayersOf, acceptAllListOf, acceptTopicChoicesOf, libraryTrayOf, rowsByKey, topicNamesOn, traceOf, type TopicGates } from "./topic-map-model";
+import { DomainOfferRow, HideReason } from "./TopicMapRow";
+import { TOPIC_MARK, acceptAllBareLayersOf, acceptAllListOf, acceptAllTakenRowsOf, acceptTopicChoicesOf, libraryTrayOf, rowsByKey, topicNamesOn, traceOf, type TopicGates } from "./topic-map-model";
 
 export interface TopicMapProps {
   map: TopicMapView;
@@ -275,9 +278,25 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
   // until one of their not-checked names is tapped (the server refuses the same way).
   const acceptChoices = acceptTopicChoicesOf(map, { keepAll: true, aftercare: liveMilestone != null ? aftercare : null });
   const bareLayers = acceptAllBareLayersOf(map, acceptList);
+  // The names it would put in the plan that are already your Domains (TopicMapView.acceptAllTaken): each listed with its
+  // row's offer when it has one and its sheet (to rename it) always, and the button waits, as acceptCore refuses them.
+  const takenRows = acceptAllTakenRowsOf(map);
+  // Rename X: ticked first when [Accept all] would tick it (a rename keeps `chosen`, and [Accept all] ticks Gemini's
+  // PENDING names only), so the renamed topic stays in the plan; then its sheet, where Rename is.
+  const renameTaken = (r: { key: string; chosen: boolean }) => {
+    const open = () => {
+      setAcceptOpen(false);
+      setSheetKey(r.key);
+    };
+    if (r.chosen) open();
+    else run((a) => a.chooseTopic(map.roadmapId, r.key, true), open);
+  };
+  // The switch itself, never gated on needsOver: the view's needsOver reads the draft as it stands, and [Accept all]'s
+  // ticks can make a plan that is over when that draft is not (the switch then hidden, the refusal a dead end). On unless
+  // you turned it off; the server keeps "over" only on a plan that is over (acceptCore's overAccepted && needsOver).
   const acceptAll = () =>
     run(
-      (a) => a.acceptPlan(map.roadmapId, { overAccepted: needsOver && overKept, topicMap: acceptTopicChoicesOf(map, { keepAll: true, aftercare: liveMilestone != null ? aftercare : null }) }),
+      (a) => a.acceptPlan(map.roadmapId, { overAccepted: overKept, topicMap: acceptTopicChoicesOf(map, { keepAll: true, aftercare: liveMilestone != null ? aftercare : null }) }),
       (v) => {
         setAcceptOpen(false);
         pushToast({
@@ -467,7 +486,7 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
         onClose={() => setAcceptOpen(false)}
         title={ACCEPT_ALL_WORD}
         footer={
-          <Button variant="primary" block disabled={pending || (liveMilestone != null && aftercare == null) || (needsOver && !overKept) || bareLayers.length > 0} onClick={acceptAll}>
+          <Button variant="primary" block disabled={pending || (liveMilestone != null && aftercare == null) || (needsOver && !overKept) || bareLayers.length > 0 || takenRows.length > 0} onClick={acceptAll}>
             {ACCEPT_ALL_CONFIRM}
           </Button>
         }
@@ -529,11 +548,34 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
               {x.links > 0 && <p className="t-meta">{acceptAllLinksLine(x.links)}</p>}
             </div>
           ))}
-          {needsOver && (
-            <div className="rm-sw">
-              <span className="rm-sw-t">Keep it over my hours/pace</span>
-              <Switch checked={overKept} onChange={setOverKept} label="Keep it over my hours/pace" />
+          {takenRows.length > 0 && (
+            <div data-taken="">
+              <p className="t-meta" style={{ margin: 0 }}>
+                {acceptAllTakenLine(takenRows.length)}
+              </p>
+              <ul className="rm-basis">
+                {takenRows.map((r) => (
+                  <Fragment key={r.key}>
+                    {r.domainOffer && <DomainOfferRow row={r} offer={r.domainOffer} onUse={bindDomain} pending={pending} />}
+                    <li>
+                      <button type="button" className="chip btn-chip" disabled={pending} onClick={() => renameTaken(r)}>
+                        {renameTakenWord(r.name)}
+                      </button>
+                    </li>
+                  </Fragment>
+                ))}
+              </ul>
             </div>
+          )}
+          {/* Always shown (the review round): [Accept all]'s ticks can put the plan over when the draft as it stands is not, and a switch you turned off must stay where you can turn it back on. */}
+          <div className="rm-sw">
+            <span className="rm-sw-t">Keep it over my hours/pace</span>
+            <Switch checked={overKept} onChange={setOverKept} label="Keep it over my hours/pace" />
+          </div>
+          {!needsOver && (
+            <p className="t-meta" style={{ margin: 0 }}>
+              {ACCEPT_ALL_OVER_IF_LINE}
+            </p>
           )}
           {liveMilestone != null && (
             <div role="radiogroup" aria-label={aftercareGroupLabel(liveMilestone)} className="rm-tm-pick">

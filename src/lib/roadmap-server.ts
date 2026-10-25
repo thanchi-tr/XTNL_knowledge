@@ -15836,6 +15836,20 @@ function keptAllOf(map: TopicMap, keepAll: { names: string[]; links: number }): 
 }
 
 /**
+ * Ruling N35 in [Accept all] (TopicMapView.acceptAllTaken): the keys of the topics keptAllOf puts in the plan that wear
+ * the name of a Domain of the Field this map doesn't use (`fieldNames`), unbound: acceptRefusalOf's TOPIC_NAME_TAKEN
+ * test over [Accept all]'s map, not the draft as it stands (whose chosen set lacks the names it ticks). Pure.
+ */
+function acceptAllTakenOf(map: TopicMap, fieldNames: readonly string[]): string[] {
+  const settled = settledTopicMapOf(map);
+  const list = acceptAllListOfMap(settled);
+  const kept = keptAllOf(settled, { names: list.flatMap((x) => x.names), links: list.reduce((n, x) => n + x.links, 0) });
+  const taken = new Set(fieldNames.map(topicFormKey).filter(Boolean));
+  if (!kept || taken.size === 0) return [];
+  return kept.topics.filter((t) => topicLive(t) && t.chosen && !(t.bound && t.domainId) && taken.has(topicFormKey(t.name))).map((t) => t.key);
+}
+
+/**
  * acceptCore on a TOPICS draft (§22.14): one step of acceptCore's retry loop (a refusal, ok, or "stale").
  *   Refuses: acceptRefusalOf's code in words (ACCEPT_REFUSAL_LINE; the Field's Domains this map doesn't use are the
  *   taken names); a stale confirm (RACED: `create` and `geminiNamed` must name what accept does, `keepAll` what its list
@@ -16390,7 +16404,7 @@ function topicSuggestionsOf(map: TopicMap, t: TopicDraft, tree: readonly TreeFie
 /**
  * Ruling N28: the study while the current milestone is a planned TOPICS layer: the first topic of its layer not done,
  * else the first not done of the next planned layer rows in order (the Study card's rule, N14's P15 note: a layer whose
- * topics are all done waits for its reach on cards, N26). The same counts as the layer rows' topics (layerTopicsOf). On a
+ * topics are all done waits for its reach on cards, N26; the plan's final row for Start). The same counts as the layer rows' topics (layerTopicsOf). On a
  * locked layer (ruling N27, the review round) the study is the lock's first unmet parent instead, `locked: true`.
  */
 function studyViewOf(b: RoadmapBundle, planRows: readonly MilestoneBundle[], cur: MilestoneBundle, tree: readonly TreeField[], today: DayKey): AimStudyView | null {
@@ -16625,6 +16639,28 @@ function topicNamesInRowsOf(rows: readonly MilestoneDraft[], ctx: ModelTextConte
     }
   }
   return null;
+}
+
+/**
+ * Ruling N29 on the checks' lines (the rehearsal's find: the tripwire caught one bare in the "Worked out" list): each
+ * milestone's and each knowledge check's `basis` names the Domains it measures in code's sentences ("8 new cards to
+ * write in X"), so a line naming one of your Gemini-named Domains carries `basisParts`, line by line, its mark drawn
+ * (ChecksPanel workedOutLinesOf). A feasibility naming none returns as given. Pure; exported for the checks.
+ */
+export function partedFeasibilityOf<F extends { milestones: MilestoneFeasibility[] }>(f: F, marks: readonly { name: string; geminiNamed: boolean }[]): F {
+  if (!marks.some((d) => d.geminiNamed)) return f;
+  return { ...f, milestones: f.milestones.map((mf) => partedMilestoneFeasibilityOf(mf, marks)) };
+}
+
+/** partedFeasibilityOf for one milestone's checks (the plan's, and the Start snapshot's: CurrentMilestoneView.startFeasibility). Pure. */
+export function partedMilestoneFeasibilityOf(mf: MilestoneFeasibility, marks: readonly { name: string; geminiNamed: boolean }[]): MilestoneFeasibility {
+  const named = marks.filter((d) => d.geminiNamed);
+  if (named.length === 0) return mf;
+  const parted = <T extends { basis: string[] }>(x: T): T => {
+    const basisParts = x.basis.map((line) => namedPartsOf(line, named));
+    return basisParts.some((ps) => ps.some((p) => p.geminiNamed)) ? { ...x, basisParts } : x;
+  };
+  return parted({ ...mf, knowledge: mf.knowledge.map(parted) });
 }
 
 /** The view keys whose subtree is the map's own (TopicMapView and DraftView.topicMap carry Gemini names with their chips) or the library's data list. */
@@ -16952,14 +16988,21 @@ function topicMapViewOf(
     });
   }
   let acceptRefusal: string | null = null;
+  let acceptAllTaken: string[] = [];
   if (opts.draft) {
     const used = new Set(map.topics.map((t) => t.domainId).filter((d): d is string => !!d));
+    const fieldNames = (field?.domains ?? []).filter((d) => !used.has(d.id)).map((d) => d.name);
     try {
       const trimmed = { ...map, layers: Math.max(LAYERS_MIN, filledBandsOf(map) || map.layers) };
-      const code = topicsLib.acceptRefusalOf(trimmed, (field?.domains ?? []).filter((d) => !used.has(d.id)).map((d) => d.name));
+      const code = topicsLib.acceptRefusalOf(trimmed, fieldNames);
       acceptRefusal = code ? ACCEPT_REFUSAL_LINE[code] : chosenLiveTopicsOf(map).length === 0 ? ACCEPT_REFUSAL_LINE.LAST_LAYER_EMPTY : null;
     } catch {
       acceptRefusal = null;
+    }
+    try {
+      acceptAllTaken = acceptAllTakenOf(map, fieldNames);
+    } catch {
+      acceptAllTaken = [];
     }
   }
   const layerOneSeeds = freeDomains.map((d) => ({ id: d.id, name: d.name, geminiNamed: geminiNamedOf(d) }));
@@ -16985,6 +17028,7 @@ function topicMapViewOf(
     fieldId: b.roadmap.fieldId ?? null,
     // [Accept all]'s list from the rule acceptCore's keptAllOf compares (a draft only).
     ...(opts.draft ? { acceptAll: acceptAllListOfMap(map) } : {}),
+    ...(acceptAllTaken.length > 0 ? { acceptAllTaken } : {}),
   };
 }
 
@@ -17054,6 +17098,8 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
             titleParts: namedPartsOf(out.current.milestone.title, marks),
             items: out.current.milestone.items.map(partedItem),
           },
+          // The review round: the Start snapshot's checks name the milestone's Domains as the plan's do (in parts too).
+          ...(out.current.startFeasibility ? { startFeasibility: partedMilestoneFeasibilityOf(out.current.startFeasibility, marks) } : {}),
           measures: out.current.measures.map((x, i) => {
             const spec = specs[i];
             const lineage = spec?.topicLineageId ?? null;
@@ -17082,6 +17128,7 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
       milestones,
       current,
       toward,
+      feasibility: out.feasibility ? partedFeasibilityOf(out.feasibility, marks) : out.feasibility,
     };
   }
   if (draftTopics && out.draft) {
@@ -17123,6 +17170,7 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
       ...out,
       draft: {
         ...out.draft,
+        feasibility: partedFeasibilityOf(out.draft.feasibility, draftMarks),
         milestones: out.draft.milestones.map(partedDraftRow),
         topicMap,
         // A TOPICS draft is accepted on its map: refused while the map is (the confirm then names what accept creates).

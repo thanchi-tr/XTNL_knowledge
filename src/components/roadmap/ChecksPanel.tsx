@@ -28,6 +28,7 @@ import { CapacityGauge } from "@/components/glyph/CapacityGauge";
 import { Glyph } from "@/components/glyph/Glyph";
 import { Chips, HonestyChip, VerdictChip as GlyphVerdictChip } from "@/components/glyph/HonestyChip";
 import { InfoTip } from "@/components/glyph/InfoTip";
+import { NamedText, hasNamed } from "@/components/glyph/NamedMark";
 import {
   CARD_WRITE_MIN,
   INTENSITY,
@@ -41,6 +42,7 @@ import {
   type Intensity,
   type KnowledgeCheck,
   type MilestoneFeasibility,
+  type NamedPart,
   type Remedy,
   type Throughput,
   type TimeCheck,
@@ -85,6 +87,12 @@ export function VerdictChip({ verdict, unverified }: { verdict: KnowledgeCheck["
  */
 export function knowledgeNotesOf(k: Pick<KnowledgeCheck, "basis">): string[] {
   return k.basis.filter((b) => /^(Kept at|Worked out at)\b/.test(b));
+}
+
+/** The "Worked out" lines: each knowledge check's, then the milestone's, a line naming a Gemini-named Domain in its parts (ruling N29: the mark drawn). */
+export function workedOutLinesOf(mf: Pick<MilestoneFeasibility, "knowledge" | "basis" | "basisParts">): { text: string; parts: NamedPart[] | null }[] {
+  const lines = (x: { basis: string[]; basisParts?: NamedPart[][] }) => x.basis.map((text, i) => ({ text, parts: hasNamed(x.basisParts?.[i]) ? (x.basisParts as NamedPart[][])[i] : null }));
+  return [...mf.knowledge.flatMap(lines), ...lines(mf)];
 }
 
 /**
@@ -370,12 +378,12 @@ function WhySheet({
           <span className="rm-tp-s">yours</span>
         </div>
       </div>
-      {[...mf.knowledge.flatMap((k) => k.basis), ...mf.basis].length > 0 && (
+      {workedOutLinesOf(mf).length > 0 && (
         <>
           <span className="t-eyebrow rm-sheet-eyebrow">Worked out</span>
           <ul className="rm-basis">
-            {[...mf.knowledge.flatMap((k) => k.basis), ...mf.basis].map((b, i) => (
-              <li key={i}>{b}</li>
+            {workedOutLinesOf(mf).map((b, i) => (
+              <li key={i}>{b.parts ? <NamedText parts={b.parts} /> : b.text}</li>
             ))}
           </ul>
         </>

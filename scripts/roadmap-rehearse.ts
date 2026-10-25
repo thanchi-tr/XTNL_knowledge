@@ -63,14 +63,22 @@
  *      GROUND P5 verbatim or adapted to the batch). deps.callModel answers; the keys stay blank and ROADMAP_CHECK=1, so
  *      nothing could reach Gemini even if the injection were bypassed. A rerun may read RATE and MAP back from the run an
  *      earlier one stored (the chain's same-input reuse: no call), so those count 3 each or none.
- *      Why depth Familiar (rework 2, the lead's mirror run): the chain rebuilds the draft's milestones after each step with
- *      only layer 1 ticked (decision 64: from layer 2 on, you tick), so K = 1 and every layer-1 topic is the specialisation,
- *      dated to L* through the reach model on the user's own measured pass rate; at Retained (8) the mirror's history
- *      dated that past 3 years (layeredLadderOf TOO_FAR: "With these 1 layer, this map needs more than 3 years"), so no
- *      draft row was written and accept read "There's no draft to accept". Familiar dates every topic to level 6 only,
- *      the bar the gate, the layers' pay and the reach on cards read. When a rebuild is still refused, the run prints what
- *      the ladder read (topicLadderProbeOf: the chain per layer, L*, hours, new cards, the writing rate, the reach model's
- *      parameters) and the refusal's words.
+ *      Why the review queue stands down (the lead's mirror runs, 2026-10-25/26): every rebuild was refused TOO_FAR ("With
+ *      these 1 layer, this map needs more than 3 years"), at Mastered, Retained and Familiar, with 1, 3 or 4 layers, so no
+ *      draft row was written and accept found none. Not the depth, the layers, the hours or the pass rate (a prior there):
+ *      the clearance. The reach model reads c from the DAY_OPEN rows, and the mirror's open their days with the queue
+ *      standing and almost none of it reviewed (read as the rehearsal server's own renders while the user reviews on
+ *      production: inferred from the probe, the rows themselves were not read), so c measured 0.004 (the probe's "priors
+ *      standing in: p, rho, pace" leaves c out); reachParamsKey reads that as c 0.01 and ρ 0.99, no card reaches level 6
+ *      within REACH_T_MAX (stageDayOf null) and the chain is tooFar. A brand-new user has no such row and reads C_PRIOR,
+ *      which dates the same maps (roadmap-realism-check pins both). One DAY_OPEN day with cards open already reads as
+ *      measured (throughput clearanceOf), so a user whose first such day cleared under about 12% of the queue (14% at
+ *      Retained, on the prior pass rate) meets the same refusal, whose remedies can't help: a product follow-up. So every
+ *      TOPICS step reads the throughput through queueStandDownOf (clearance and ρ calibrating: the priors, labelled;
+ *      every other figure as loaded), and T1 prints what this database measured and whether the stand-down replaced
+ *      it. Depth Familiar (6) dates every topic to the level the gate, the layers' pay and the reach on cards read. When
+ *      a rebuild is still refused, the run prints what the ladder read (topicLadderProbeOf: the chain per layer, L*,
+ *      hours, new cards, the writing rate, the reach model's parameters) and the refusal's words.
  *   T2 [Accept all] under ruling N30: the sheet's own choices (topic-map-model acceptTopicChoicesOf with keepAll); a layer
  *      holding only not-checked names is first given one tap (chooseTopicCore on its first name, as the sheet's per-name
  *      tap does), since the server refuses it otherwise (ACCEPT_ALL_NOT_CHECKED); then acceptCore. The plan is ACTIVE and
@@ -105,7 +113,7 @@
  */
 import "./_no-model";
 import type { DayKey } from "../src/lib/life-day";
-import type { Intake, RoadmapView, StartChoices, TopicDepth, TopicRowView } from "../src/lib/roadmap-types";
+import type { Intake, RoadmapView, ShareFigure, StartChoices, Throughput, TopicDepth, TopicRowView } from "../src/lib/roadmap-types";
 import type { TopicLadderProbe } from "../src/lib/roadmap-server";
 
 const KEEP = process.argv.includes("--keep");
@@ -169,7 +177,7 @@ function guard(): void {
 }
 
 async function loadModules() {
-  const [prismaMod, cache, lifeDay, economy, types, server, quests, readings, tasks, board, momentumServer, momentum, nextAction, topicModel, xp, leveling, topics, realism] = await Promise.all([
+  const [prismaMod, cache, lifeDay, economy, types, server, quests, readings, tasks, board, momentumServer, momentum, nextAction, topicModel, xp, leveling, topics, realism, throughputServer] = await Promise.all([
     import("../src/lib/prisma"),
     import("../src/lib/cache"),
     import("../src/lib/life-day"),
@@ -188,8 +196,9 @@ async function loadModules() {
     import("../src/lib/leveling"),
     import("../src/lib/roadmap-topics"),
     import("../src/lib/roadmap-realism"),
+    import("../src/lib/throughput-server"),
   ]);
-  return { prisma: prismaMod.prisma, cache, lifeDay, economy, types, server, quests, readings, tasks, board, momentumServer, momentum, nextAction, topicModel, xp, leveling, topics, realism };
+  return { prisma: prismaMod.prisma, cache, lifeDay, economy, types, server, quests, readings, tasks, board, momentumServer, momentum, nextAction, topicModel, xp, leveling, topics, realism, throughputServer };
 }
 type Mods = Awaited<ReturnType<typeof loadModules>>;
 let M!: Mods;
@@ -700,6 +709,31 @@ const MILESTONE_OF = (l: string) => ({ title: `Stage ${STAGE_WORD[l] ?? l} of th
 /** The TOPICS intakes' depth (T1, T7): Familiar, every topic dated to level 6 (see T1's note in the header). */
 const TOPICS_DEPTH: TopicDepth = 6;
 
+/**
+ * The TOPICS steps' throughput (T1's note in the header): the figures as loaded, but the review queue's two, the
+ * clearance and ρ (both read from the DAY_OPEN rows, which on the mirror read as opens with the queue standing; whose
+ * renders they are is inferred, not read), stand down to calibrating, so the reach model reads C_PRIOR and RHO_PRIOR,
+ * labelled, as a brand-new user's first map does. ρ is left out (Throughput.absencePersistence is optional; absent
+ * reads its prior). Pure: the input is not changed.
+ */
+function queueStandDownOf(t: Throughput): Throughput {
+  const out: Throughput = { ...t, clearance: { kind: "calibrating", have: 0, need: 1 } };
+  delete out.absencePersistence;
+  return out;
+}
+
+/** A share figure in words: "measured 0.4% (n 10)", "calibrating (4 of 30)", "absent". Pure. */
+const shareWordsOf = (f: ShareFigure | undefined): string => (!f ? "absent" : f.kind === "measured" ? `measured ${Math.round(f.value * 1000) / 10}% (n ${f.n})` : `calibrating (${f.have} of ${f.need})`);
+
+/** T1's line: the review queue as loaded, and which measured figures queueStandDownOf replaced (or that it changed nothing). Pure. */
+function queueLineOf(t: Throughput): string {
+  const replaced = [t.clearance.kind === "measured" ? "clearance" : null, t.absencePersistence?.kind === "measured" ? "ρ" : null].filter((x) => x !== null);
+  const read = `the review queue as this database measures it: clearance ${shareWordsOf(t.clearance)}, ρ ${shareWordsOf(t.absencePersistence)}`;
+  return replaced.length > 0
+    ? `${read}; the TOPICS steps read the priors in place of the measured ${replaced.join(" and ")} (queueStandDownOf changed the input)`
+    : `${read}; both are the priors already, so queueStandDownOf changed nothing`;
+}
+
 /** A ladder probe (roadmap-server topicLadderProbeOf) in lines: its result first, then each layer, then what dated it. Pure. */
 function probeLinesOf(p: TopicLadderProbe): string[] {
   const r = p.reach;
@@ -892,6 +926,54 @@ async function dryRun(): Promise<void> {
     new Set(split.layerOne).size === 8 && [...split.layerOne, split.layerTwo].every((n) => n.length <= t5.TOPIC_LABEL_MAX) && show(expected) === show([4, 4]),
     show({ split, expected })
   );
+  // The TOPICS steps' throughput (T1's note): the mirror's measured queue (c 4/990, the probe's 0.00404…) stands down.
+  const weekly = { kind: "calibrating" as const, have: 0, need: t5.CALIBRATION_WEEKS };
+  const mirror: Throughput = {
+    finalDay: "2026-10-23" as DayKey,
+    trackedMinutes: weekly,
+    geminiShare: null,
+    playMinutes: weekly,
+    trackedByTrack: {},
+    trackedByCategory: {},
+    completions: weekly,
+    activeDays: weekly,
+    adherence: { kind: "calibrating", have: 0, need: t5.ADHERENCE_MIN_JUDGED },
+    reviewsPerDay: weekly,
+    passShare: { kind: "measured", value: 0.46, n: 140 },
+    clearance: { kind: "measured", value: 4 / 990, n: 10 },
+    absencePersistence: { kind: "measured", value: 0.9, n: 40 },
+    newCards: { total: weekly, byField: {}, byDomain: {} },
+  };
+  const down = queueStandDownOf(mirror);
+  const was = t5.reachInputsOf(mirror, 1);
+  const now = t5.reachInputsOf(down, 1);
+  const kept = (Object.keys(mirror) as (keyof Throughput)[]).filter((k) => k !== "clearance" && k !== "absencePersistence");
+  check(
+    "the TOPICS steps' throughput (queueStandDownOf): the measured clearance and ρ stand down, so the reach model reads C_PRIOR and RHO_PRIOR (labelled c and rho); the pass rate and every other figure as loaded, the input unchanged",
+    was.params.c === 4 / 990 &&
+      now.params.c === t5.C_PRIOR &&
+      now.params.rho === t5.RHO_PRIOR &&
+      now.params.p === 0.46 &&
+      show(now.calibrating) === show(["c", "rho"]) &&
+      !("absencePersistence" in down) &&
+      kept.every((k) => show(down[k]) === show(mirror[k])) &&
+      mirror.clearance.kind === "measured",
+    show({ was: was.params, now: now.params, calibrating: now.calibrating })
+  );
+  check("a share figure in words (T1's line)", show([shareWordsOf(mirror.clearance), shareWordsOf(down.clearance), shareWordsOf(undefined)]) === show(["measured 0.4% (n 10)", "calibrating (0 of 1)", "absent"]), show([shareWordsOf(mirror.clearance), shareWordsOf(down.clearance)]));
+  // The lead's run read the clearance measured and ρ calibrating (the probe's priors: p, rho, pace).
+  const queueLines = [mirror, { ...mirror, absencePersistence: { kind: "calibrating" as const, have: 9, need: t5.RHO_MIN_DAYS } }, down].map(queueLineOf);
+  const head = "the review queue as this database measures it: clearance";
+  check(
+    "T1's line says which measured figures the stand-down replaced, and when it changed nothing (both the priors already)",
+    show(queueLines) ===
+      show([
+        `${head} measured 0.4% (n 10), ρ measured 90% (n 40); the TOPICS steps read the priors in place of the measured clearance and ρ (queueStandDownOf changed the input)`,
+        `${head} measured 0.4% (n 10), ρ calibrating (9 of 28); the TOPICS steps read the priors in place of the measured clearance (queueStandDownOf changed the input)`,
+        `${head} calibrating (0 of 1), ρ absent; both are the priors already, so queueStandDownOf changed nothing`,
+      ]),
+    show(queueLines)
+  );
 }
 
 // ── T1 · the TOPICS goal from the recorded replies ─────────────────────────
@@ -910,14 +992,22 @@ async function stepTopicsGoal(): Promise<{ roadmapId: string; replies: string[];
   }
   const field = must("a Field to break down in (the recorded Area by name, else the library's first)", await fieldForTopics());
   info(`Field ${field.name} (${field.id})`);
+  // The record only: a read that throws here is a line, as the server's own read of it is (throughputOrNull: then every
+  // figure calibrating, the priors), never the step.
+  try {
+    info(queueLineOf(await M.throughputServer.loadThroughput(userId, M.lifeDay.addDays(today, -M.types.THROUGHPUT_LAG_DAYS))));
+  } catch (err) {
+    info(`the review queue: the throughput read failed (${err instanceof Error ? err.message : String(err)}); the server reads every figure calibrating in its place (throughputOrNull), the priors`);
+  }
   const { groundResponseOf } = await import("../src/lib/roadmap-model");
   const rec = recordedRepliesOf(await readRecordedPacks(), groundResponseOf);
   const tasks: (() => Promise<void> | void)[] = [];
-  // Every topic switch on for this process's cores (deps.topicSwitches; the build's constants are what they are), the key
-  // "set" for the chain's own gate (ruling N11: the injected callModel answers for it), after() run by hand (settle).
+  // Every topic switch on for this process's cores (deps.topicSwitches; the build's constants are what they are) and the
+  // review queue stood down (topicsDeps), the key "set" for the chain's own gate (ruling N11: the injected callModel
+  // answers for it), after() run by hand (settle).
   const deps: Parameters<Mods["server"]["breakDownCore"]>[3] = {
+    ...topicsDeps(),
     callModel: rec.callModel,
-    topicSwitches: { plans: true, rate: true, place: true, names: true, link: true, ground: true },
     hasKey: true,
     defer: (t) => tasks.push(t),
     clock: () => new Date(),
@@ -931,11 +1021,9 @@ async function stepTopicsGoal(): Promise<{ roadmapId: string; replies: string[];
     track: "CRAFT",
     domainIds: [],
     targetDay: M.lifeDay.addDays(today, 700),
-    // Rework 2: 10 h and 20 new cards a week typed, at Familiar (6). Mastered (L12) at 5 h, and then Retained (L8) at
-    // 10 h, dated the chain's K = 1 rebuilds (only layer 1 ticked while the chain runs) past 3 years on the mirror's
-    // measured pass rate, so no draft row was written ("a topic step's milestones weren't rebuilt") and accept found
-    // none. At 6 every topic is dated to the level the layers pay at; the probe below prints what the ladder read if
-    // it still refuses.
+    // Rework 2: 10 h and 20 new cards a week typed, at Familiar (6). Mastered (L12) at 5 h, Retained (L8) at 10 h and
+    // Familiar alike were refused past 3 years on the mirror's measured clearance (T1's note in the header), never the
+    // depth; with the queue stood down the same intake dates. The probe below prints what the ladder read if it refuses.
     hoursPerWeek: 10,
     newCardsPerWeek: 20,
     typicalHours: null,
@@ -1010,7 +1098,7 @@ async function printProbe(roadmapId: string, why: string): Promise<void> {
 
 async function stepAcceptAll(roadmapId: string): Promise<void> {
   step("T2", "[Accept all]: the shown names ticked, a not-checked name only by its own tap (ruling N30)");
-  const deps = { topicSwitches: { plans: true, rate: true, place: true, names: true, link: true, ground: true } };
+  const deps = topicsDeps();
   const before = await M.server.loadRoadmapView(userId, new Date(), deps, roadmapId);
   const tm0 = must("the draft carries its topic map (DraftView.topicMap)", before.draft?.topicMap ?? null);
   const list = M.topicModel.acceptAllListOf(tm0);
@@ -1041,23 +1129,29 @@ async function stepAcceptAll(roadmapId: string): Promise<void> {
     must("the draft holds milestone rows to accept once the shown names are ticked", rows > 0 ? rows : null, "every rebuild was refused (the probe above says what realism read)");
   }
   // Ruling N35: a Gemini name your library already holds (an earlier run's Domain too) refuses accept (TOPIC_NAME_TAKEN)
-  // until its row's offer is tapped, "Use your Domain «X»", as the page offers it (useMyDomainCore binds it).
+  // until its row's offer is tapped, "Use your Domain «X»". The [Accept all] sheet lists the names it would tick that
+  // do (TopicMapView.acceptAllTaken: the plain accept's acceptRefusal reads the draft as it stands, without them), each
+  // with its row's offer, and its button waits: tapped here as the sheet offers them (useMyDomainCore binds each).
   const taken = must("the map before accept", (await M.server.loadRoadmapView(userId, new Date(), deps, roadmapId)).draft?.topicMap ?? null);
-  if (taken.acceptRefusal === M.types.TOPIC_NAME_TAKEN) {
-    const sameName = taken.layers.flatMap((l) => l.topics).filter((r) => r.domainOffer && M.topics.formKeyOf(r.name) === M.topics.formKeyOf(r.domainOffer.name));
-    for (const r of sameName) {
-      const u = await M.server.useMyDomainCore(userId, roadmapId, r.key, (r.domainOffer as { id: string }).id, new Date(), deps);
-      check(`«${r.name}» wears the name of your Domain «${r.domainOffer?.name}»: its offer tapped, as the row offers it (ruling N35, useMyDomainCore)`, u.ok, u.ok ? "" : u.error);
+  for (const r of M.topicModel.acceptAllTakenRowsOf(taken)) {
+    const offer = r.domainOffer;
+    if (!offer) {
+      check(`«${r.name}» wears the name of a Domain no offer can bind (another goal's): the sheet sends it to its sheet to rename`, false, r.key);
+      continue;
     }
+    const u = await M.server.useMyDomainCore(userId, roadmapId, r.key, offer.id, new Date(), deps);
+    check(`«${r.name}» wears the name of your Domain «${offer.name}»: the [Accept all] sheet lists it, and its offer is tapped there (ruling N35, useMyDomainCore)`, u.ok, u.ok ? "" : u.error);
   }
   const view = await M.server.loadRoadmapView(userId, new Date(), deps, roadmapId);
   const tm = must("the map after the taps", view.draft?.topicMap ?? null);
   const choices = M.topicModel.acceptTopicChoicesOf(tm, { keepAll: true, aftercare: null });
+  // The page sends the over switch itself, on by default (TopicMap's overKept): the draft's needsOver reads the draft as
+  // it stands, and [Accept all]'s ticks can make a plan that is over when that draft is not.
   const needsOver = tm.needsOver === true;
   const field = must("the plan's Field", await M.prisma.roadmap.findUnique({ where: { id: roadmapId }, select: { fieldId: true } }))?.fieldId ?? null;
   const domainsBefore = field ? await M.prisma.domain.findMany({ where: { fieldId: field }, select: { id: true, name: true } }) : [];
-  info(`[Accept all] creates ${choices.create} Domain(s) (${choices.geminiNamed.length} named by Gemini)${needsOver ? ", over your hours or pace (kept on, as the sheet's switch defaults)" : ""}`);
-  const accepted = await M.server.acceptCore(userId, roadmapId, { overAccepted: needsOver, topicMap: choices }, new Date(), deps);
+  info(`[Accept all] creates ${choices.create} Domain(s) (${choices.geminiNamed.length} named by Gemini)${needsOver ? ", over your hours or pace as the draft stands" : ""}; the over switch on, as the sheet's switch defaults`);
+  const accepted = await M.server.acceptCore(userId, roadmapId, { overAccepted: true, topicMap: choices }, new Date(), deps);
   if (!accepted.ok) await printProbe(roadmapId, `accept refused ("${accepted.error}")`);
   const acc = okOr("the plan is accepted with the sheet's own choices (acceptCore, keepAll)", accepted);
   info(`version ${acc.version}`);
@@ -1081,7 +1175,11 @@ async function stepAcceptAll(roadmapId: string): Promise<void> {
 
 // ── T3 · the page as accepted ──────────────────────────────────────────────
 
-const topicsDeps = () => ({ topicSwitches: { plans: true, rate: true, place: true, names: true, link: true, ground: true } });
+/** The TOPICS steps' deps: every topic switch on for this process's cores, and the throughput read through queueStandDownOf (a read that throws is the server's throughputOrNull's to catch). */
+const topicsDeps = () => ({
+  topicSwitches: { plans: true, rate: true, place: true, names: true, link: true, ground: true },
+  io: { throughput: async (u: string, finalDay: DayKey) => queueStandDownOf(await M.throughputServer.loadThroughput(u, finalDay)) },
+});
 
 /** A layer-1 topic to fill (T4, T7): its Domain and name. */
 type FillTopic = { domainId: string; name: string };
@@ -1177,7 +1275,14 @@ async function stepCardsReach(roadmapId: string, milestoneId: string, lineageId:
   const l1s = v.milestones.filter((m) => m.chainRole === "LAYER" && m.layer === 1);
   const l2 = v.milestones.find((m) => m.chainRole === "LAYER" && m.layer === 2);
   check("the rail reads layer 1 REACHED with reachedOnCards and no 'gave rank' line (each part, when split)", l1s.length > 0 && l1s.every((l1) => l1.state === "REACHED" && l1.reachedOnCards === true && l1.gaveRank == null), show(l1s.map((l1) => ({ state: l1.state, onCards: l1.reachedOnCards, gaveRank: l1.gaveRank }))));
-  check("the Aim rank is as it was (a reach on cards gives no rank)", show(v.rank) === show(rankBefore), show({ before: rankBefore, after: v.rank }));
+  // The rank given is as it was; only the next rank's milestone moves on (the reached row can no longer give it).
+  const nextOrdOf = (r: typeof v.rank) => (r?.next?.kind === "milestone" ? r.next.milestoneOrd : 0);
+  const givenOf = (r: typeof v.rank) => r && { index: r.index, name: r.name, newSince: r.newSince, pending: r.pending, given: r.ladder.filter((x) => x.state === "given").map((x) => x.index) };
+  check(
+    "the Aim rank is as it was (a reach on cards gives no rank): the same rank, nothing pending; the next rank now waits on a later milestone",
+    show(givenOf(v.rank)) === show(givenOf(rankBefore)) && nextOrdOf(v.rank) >= nextOrdOf(rankBefore),
+    show({ before: rankBefore, after: v.rank })
+  );
   check("layer 2 is the current milestone and open (no lock, opensAfter null)", v.current?.milestone.id === l2?.id && l2?.lock == null && l2?.opensAfter == null, show({ current: v.current?.milestone.ord, lock: l2?.lock, opensAfter: l2?.opensAfter }));
   const hero = M.nextAction.nextActionOf(v).primary;
   check("the hero moves on to a layer-2 topic (STUDY or ADD_IDEA, ruling N28), never Start", hero.kind === "STUDY" || hero.kind === "ADD_IDEA", show({ kind: hero.kind, label: hero.label }));
@@ -1229,7 +1334,7 @@ async function stepSplit(): Promise<void> {
   check("the draft map reads layer 1 as two milestones (TopicLayerView.parts 2; nothing held large)", tm.layers.find((l) => l.layer === 1)?.parts === 2 && tm.layers.every((l) => l.large == null), show(tm.layers.map((l) => [l.layer, l.parts ?? 1, l.large ?? null])));
   const choices = M.topicModel.acceptTopicChoicesOf(tm, { keepAll: true, aftercare: null });
   const domainsBefore = new Set((await M.prisma.domain.findMany({ where: { fieldId: field.id }, select: { id: true } })).map((d) => d.id));
-  const accepted = await M.server.acceptCore(userId, id, { overAccepted: tm.needsOver === true, topicMap: choices }, new Date(), deps);
+  const accepted = await M.server.acceptCore(userId, id, { overAccepted: true, topicMap: choices }, new Date(), deps);
   if (!accepted.ok) await printProbe(id, `accept refused ("${accepted.error}")`);
   okOr("the written map is accepted with [Accept all]'s choices (acceptCore)", accepted);
   const madeHere = (await M.prisma.domain.findMany({ where: { fieldId: field.id }, select: { id: true, name: true } })).filter((d) => !domainsBefore.has(d.id));

@@ -214,6 +214,8 @@ export const FIXTURE_STATES = [
   "topic-library-tray",
   // Ruling N34 (the review round): a layer the milestone cap held in one milestone of nine ("Large: 9 topics in one milestone")
   "topic-large",
+  // The rehearsal's find: [Accept all]'s sheet names the topics it would tick that are already your Domains, and waits
+  "topic-accept-taken",
   // Ruling N15: three open goals, the switcher on top (GoalSwitcher)
   "goals-three",
   "many-measures",
@@ -3631,7 +3633,7 @@ function topicDraftView(map: TopicMapView): RoadmapView {
 const TOPIC_GATES = { topics: true, topicNames: true } as const;
 
 /** The revision-5 topic states (each in FIXTURE_STATES; drawn with the lead-only gate `topics`). */
-export const TOPIC_STATES = ["topic-map-draft", "topic-map-write", "topic-map-plan", "topic-chain", "topic-estimate-unsure", "topic-sheet", "topic-sources", "topic-parents", "topic-rebreak", "topic-locked", "topic-study", "topic-map-folded", "topic-accept-all", "intake-topics", "topic-split", "topic-library-tray", "topic-large"] as const satisfies readonly FixtureState[];
+export const TOPIC_STATES = ["topic-map-draft", "topic-map-write", "topic-map-plan", "topic-chain", "topic-estimate-unsure", "topic-sheet", "topic-sources", "topic-parents", "topic-rebreak", "topic-locked", "topic-study", "topic-map-folded", "topic-accept-all", "intake-topics", "topic-split", "topic-library-tray", "topic-large", "topic-accept-taken"] as const satisfies readonly FixtureState[];
 type TopicState = (typeof TOPIC_STATES)[number];
 
 function isTopicState(s: FixtureState): s is TopicState {
@@ -3747,6 +3749,38 @@ function topicFixtureOf(state: TopicState): RoadmapFixture {
         gates: TOPIC_GATES,
         topicMap: { map, mode: "draft", open: { key: "T20", sheet: "accept" } },
         note: "Ruling N30: [Accept all]'s sheet: «Creates n Domains» first, each layer's shown names ticked, its not-checked names unticked with their reasons («Google linked no page», «web check failed») and a 44 px tap each; layer 5 holds only not-checked names, so it says «tap a name to keep this layer» and the button waits.",
+      };
+    }
+    case "topic-accept-taken": {
+      // The rehearsal's find (TopicMapView.acceptAllTaken): [Accept all] would tick Beta four and Gamma three, and each wears
+      // one of your Domains' names. Beta four's Domain is free (its row's offer, one tap); Gamma three's another goal holds
+      // (no offer: its sheet, to rename it). The button waits until neither is left.
+      const base = topicMapDraftFixture();
+      const offers: Record<string, { id: string; name: string; geminiNamed: boolean; cards: number }> = { T15: { id: "d-beta4", name: "Beta Four", geminiNamed: false, cards: 7 } };
+      const map: TopicMapView = {
+        ...base,
+        layers: base.layers.map((l) => ({ ...l, topics: l.topics.map((r) => (offers[r.key] ? { ...r, domainOffer: offers[r.key] } : r)) })),
+        fieldId: "f-st",
+        // The server's list for these rows (acceptAllListOfMap: every shown PENDING Gemini name, the drawn links, the not-checked names).
+        acceptAll: [
+          { layer: 1, names: ["Alpha one", "Alpha two"], links: 0 },
+          { layer: 2, names: ["Beta one", "Beta two", "Beta three with a longer name to wrap it", "Beta four"], links: 5 },
+          { layer: 3, names: ["Gamma one", "Gamma two", "Gamma three"], links: 0, unchecked: [{ key: "T13", name: "Gamma hidden two", reason: "NONE" }] },
+          { layer: 4, names: ["Delta one"], links: 1 },
+        ],
+        // Beta Four is one of your free Domains (offered on its row); Gamma three's Domain is another goal's (no offer).
+        layerOneSeeds: [{ id: "d-beta4", name: "Beta Four", geminiNamed: false }],
+        acceptAllTaken: ["T15", "T8"],
+      };
+      return {
+        view: topicDraftView(map),
+        intake: null,
+        aim: null,
+        today: null,
+        startPreview: null,
+        gates: TOPIC_GATES,
+        topicMap: { map, mode: "draft", open: { key: "T15", sheet: "accept" } },
+        note: "The rehearsal's find: [Accept all]'s sheet lists the names it would tick that are already your Domains («Already your Domains: use or rename each, so no copies are made.»): Beta four with its row's offer («Use your Domain Beta Four · 7 cards», one tap) and «Rename Beta four», Gamma three, which another goal holds, with «Rename Gamma three» (ticked first, then its sheet). [Keep them all] waits while either is left; the keep-over switch shows on, with «Used only if the names it adds put the plan over your hours or pace.»",
       };
     }
     case "topic-split": {

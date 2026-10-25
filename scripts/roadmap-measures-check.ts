@@ -2004,6 +2004,14 @@ async function main() {
       const p = R.planRoadmapWrite(depthCtx(o), at(DUE3));
       check(`Paragon is withheld: ${why}`, p.aimReachedDay === null && rankAfter(p, depthRank()).name !== "Paragon", json({ aim: p.aimReachedDay, rank: rankAfter(p, depthRank()).name }));
     }
+    // Ruling 50 in the aim gate: a TOPICS plan at depth 6 (ctx.depth null, topicDepth 6) is a depth plan, so its standard
+    // and its practice hold the aim as at 8 (before, at 6 the aim was reached on the final row and the terms alone).
+    const topics6 = (o: Parameters<typeof depthCtx>[0] = {}): RR.RoadmapContext => ({ ...depthCtx(o), depth: null, topicDepth: 6, planKind: "TOPICS" });
+    eq(
+      "a TOPICS plan at depth 6: the aim is withheld with its standard not logged, and with its practice under KEEP_SHARE; reached with both",
+      [R.planRoadmapWrite(topics6({ logScore: null }), at(DUE3)).aimReachedDay, R.planRoadmapWrite(topics6({ m1Kept: 2 }), at(DUE3)).aimReachedDay, R.planRoadmapWrite(topics6(), at(DUE3)).aimReachedDay],
+      [null, null, DUE3]
+    );
     const later = R.planRoadmapWrite(depthCtx({ pending: addDays(DUE3, -1), due3: addDays(DUE3, 7) }), at(addDays(DUE3, 1)));
     eq("… and given after the hold (the next day the reach is 2 days old)", later.aimReachedDay, addDays(DUE3, 1));
     const noStandard = R.planRoadmapWrite(depthCtx({ standard: false, logScore: null }), at(DUE3));
@@ -2192,6 +2200,14 @@ async function main() {
       "the loader reads a depth plan: depth 12, not legacy, the stage, the notes kept in feasibility, the counts with the retry entry, the standard's logs",
       ctx && [ctx.depth, ctx.legacy, ctx.milestones[0].stage, ctx.milestones[0].notes, ctx.counts?.retry, ctx.checkpointLogs?.length, logReads],
       [12, false, "MASTERED", ["HELD_AT_START"], { [D_I]: { 12: 1 } }, 1, 1]
+    );
+    // Ruling 50 in the readings too: a TOPICS plan at depth 6 (TOPICS only) is measured, never legacy; a LEVELS row at 6 still is.
+    const topics6 = await R.loadRoadmapContext(stub(async () => ({ ...rowRev4, depth: 6, planKind: "TOPICS" })), { userId: UID, statuses: ["ACTIVE"] }, today5);
+    const levels6 = await R.loadRoadmapContext(stub(async () => ({ ...rowRev4, depth: 6, planKind: "LEVELS" })), { userId: UID, statuses: ["ACTIVE"] }, today5);
+    eq(
+      "a TOPICS plan at depth 6 reads not legacy (its depth stays null: no aim depth; topicDepth 6) and reads its standard's logs as a depth plan does; a LEVELS row at depth 6 reads legacy, and an aim depth carries no topicDepth",
+      [topics6?.legacy, topics6?.depth, topics6?.topicDepth, topics6?.planKind, topics6?.checkpointLogs?.length, levels6?.legacy, "topicDepth" in (ctx ?? {})],
+      [false, null, 6, "TOPICS", 1, true, false]
     );
     const missingColumn = Object.assign(new Error("The column `RoadmapMilestone.stage` does not exist in the current database."), { code: "P2022", meta: { column: "RoadmapMilestone.stage" } });
     const old = await R.loadRoadmapContext(
@@ -2732,6 +2748,16 @@ async function main() {
     );
     const stale = R.planRoadmapWrite(topics({ roadmap: { ...topics().roadmap, version: 2 } }), at(MON));
     eq("N26: a row with a goal, a row with a practice term, and a row of another version never reach this way", [withGoal.reaches, practice.reaches, stale.reaches], [[], [], []]);
+    // The final row (a LAYER row at depth 6, where DEPTH_TAIL is 0) never reaches on cards: its reach is the aim's, so it
+    // waits for Start (a stamp on it would leave the aim unreachable: a reach on cards is never the aim's).
+    const finalL2 = layerRow("l2", 2, 2, [rMeasure("a2", [D_P], 8)]);
+    const twoLayers = R.planRoadmapWrite(topics({ topicDepth: 6, milestones: [l1, finalL2] }), at(MON));
+    const oneLayer = R.planRoadmapWrite(topics({ topicDepth: 6, milestones: [l1] }), at(MON));
+    eq(
+      "N26 at depth 6: layer 1 reaches on cards, the final layer row never does though its term holds (8 of 8), and a one-layer plan's only row neither (the aim not reached on cards)",
+      [twoLayers.reaches.map((r) => r.milestoneId), oneLayer.reaches, oneLayer.aimReachedDay],
+      [["l1"], [], null]
+    );
     // The review round (ruling N25): the paying key counts recall cards (`r`): 7 SHORT cards beside one MULTI card at level 6 read 7 of 8, so
     // the layer does not reach; the gate, "n of 8" and this key now count the same rows (a MULTI card never counts anywhere).
     const withMulti = M.cardCountsOf(

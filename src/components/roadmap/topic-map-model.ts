@@ -271,6 +271,12 @@ export function acceptAllBareLayersOf(map: Pick<TopicMapView, "layers">, list: r
     .map((x) => x.layer);
 }
 
+/** TopicMapView.acceptAllTaken's rows in the map's order: the names [Accept all] would put in the plan that wear one of your Domains' names, unbound (acceptCore refuses each until its offer is tapped). */
+export function acceptAllTakenRowsOf(map: Pick<TopicMapView, "layers" | "acceptAllTaken">): TopicRowView[] {
+  const keys = new Set(map.acceptAllTaken ?? []);
+  return keys.size === 0 ? [] : map.layers.flatMap((l) => l.topics.filter((r) => keys.has(r.key)));
+}
+
 // ─── Your Domains (ruling N35) ───
 
 /**

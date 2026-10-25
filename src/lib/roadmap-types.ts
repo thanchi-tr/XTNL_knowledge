@@ -3761,6 +3761,8 @@ export interface KnowledgeCheck {
   earliestDay: DayKey | null;
   lastCardDay: DayKey | null;
   basis: string[];
+  /** Ruling N29 on a draft (the view only, never stored): `basis` in parts, line by line, when a line names one of your Gemini-named Domains (its mark drawn); absent otherwise. */
+  basisParts?: NamedPart[][];
 }
 
 /** One calendar week's tracked load (minutes). */
@@ -3805,6 +3807,8 @@ export interface MilestoneFeasibility {
   /** The worst of its parts: IMPOSSIBLE blocks; OVER needs the switch. */
   worst: KnowledgeVerdict | TimeVerdict;
   basis: string[];
+  /** Ruling N29 on a draft (the view only, never stored): `basis` in parts, as KnowledgeCheck.basisParts. */
+  basisParts?: NamedPart[][];
   remedies: Remedy[];
   weeks: PlanWeek[];
   lastCardDay: DayKey | null;
@@ -7450,6 +7454,13 @@ export interface TopicMapView {
    * server never differ. Absent on a plan (and in fixtures made before it: the client then reads the rows).
    */
   acceptAll?: { layer: number; names: string[]; links: number; unchecked?: AcceptAllUncheckedView[]; tapped?: AcceptAllUncheckedView[] }[];
+  /**
+   * Ruling N35 in [Accept all] (a draft): the keys of the topics it would put in the plan (keptAllOf's chosen set, so the
+   * names it ticks too) that wear the name of a Domain of the Field this map doesn't use, not bound to it: acceptCore
+   * refuses each (TOPIC_NAME_TAKEN) until it is bound, so the sheet lists them with the row's offer and its button
+   * waits. acceptRefusal reads the draft as it stands, this reads it as [Accept all] sends it. Absent when none.
+   */
+  acceptAllTaken?: string[];
   /** A draft over your hours or pace (its feasibility's over, or its date check OVER): [Accept all] asks for the keep-over switch. */
   needsOver?: boolean;
   /** Ruling N10: the goal's Area Field (where [Add an idea here] files ideas); null on a practice-only Area. Absent in fixtures made before it. */

@@ -133,7 +133,7 @@ function fieldOfDomain(view: Pick<RoadmapView, "library" | "planEdit">, domainId
 /**
  * The topic to study now while the current milestone is a planned TOPICS layer (ruling N28; the Study card's rule, N14 and
  * its P15 note): the first of the current layer's topics not done, else the first not done of the next planned layer rows
- * in order (a layer whose topics are all done waits for its reach on cards, N26). The view marks the first planned row
+ * in order (a layer whose topics are all done waits for its reach on cards, N26; the plan's final row waits for Start). The view marks the first planned row
  * PLANNED and every later one OUTLINE (milestoneRowsOf), so a later row is read by either state, unreached and not held:
  * one rule with the server's studyViewOf (the review round). Null on a LEVELS plan or with none left.
  */

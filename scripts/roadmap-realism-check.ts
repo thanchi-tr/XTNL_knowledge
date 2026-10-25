@@ -115,6 +115,7 @@ import {
 import { sharesOf } from "../src/lib/roadmap-goals";
 import { assignRankIndices } from "../src/lib/roadmap-proficiency";
 import { LIFE_MP } from "../src/lib/life-economy";
+import { throughputOf } from "../src/lib/throughput";
 
 let passed = 0;
 let failed = 0;
@@ -3352,6 +3353,122 @@ console.log("— rework 2: a large layer splits into parts (ruling N34) —");
       [paidTime.firstRankDay, paidTime.rankDays, (paidTime.firstRankDay ?? Infinity) <= RT.FIRST_RANK_MAX_DAYS],
     ],
     [7, ["SELF_TEST", "SELF_TEST", "SELF_TEST", "SELF_TEST", "SELF_TEST", "PERFORMANCE_CHECK", "PERFORMANCE_CHECK"], 42, [1, 1, 2, 2, 3, 3, 4], [55, [55, 174, 265, 517], true]]
+  );
+}
+
+// ═══ The --topics rehearsal's TOO_FAR (2026-10-26): a brand-new user's first topic map dates ═══════════════════
+
+console.log("— a brand-new user's first topic map dates; a measured clearance near 0 is what refuses it —");
+{
+  // The lead's mirror run refused every rebuild TOO_FAR ("more than 3 years") for one topic in layer 1, and for 3 or 4
+  // layers, at 10 h a week, 20 new cards a week typed, CHOSEN today + 700. The input as roadmap-server realismInputOf
+  // builds it for a TOPICS draft with no Domain bound yet: no scope, the throughput's reach inputs, the typed pace
+  // ('pace'), one goal (share 1). A brand-new user's throughput (throughputOf on no rows) reads every prior and dates;
+  // the mirror's clearance, measured from DAY_OPEN rows with the queue standing (4 of 990 due cards reviewed), reads
+  // c 0.01 and ρ 0.99 once rounded, so no card reaches level 6 within REACH_T_MAX: the refusal is the clearance's.
+  // Not pinned here, a follow-up: throughput clearanceOf reads measured from one DAY_OPEN day with cards open (the
+  // C_PRIOR doc and the rules page say 14 days), so a user whose first such day cleared under about 12% of the queue
+  // (14% at Retained, the priors otherwise) meets the same refusal, and its remedies can't help.
+  const TR: DayKey = "2026-10-25"; // the run's life day, a Sunday
+  const atR = (k: number): DayKey => addDays(TR, k);
+  const dR = (x: DayKey | null | undefined): number | null => (x ? daysBetween(TR, x) : null);
+  const fresh = throughputOf({ today: TR, finalDay: atR(-RT.THROUGHPUT_LAG_DAYS), epochDay: TR, settledThroughDay: null, heldDays: [], tasks: [], recurring: [], reviews: [], dayOpens: [], newCards: [] });
+  const mirror: RT.Throughput = { ...fresh, clearance: { kind: "measured", value: 4 / 990, n: 10 } };
+  const inR = (tp: RT.Throughput): RT.RealismInput => {
+    const r = RT.reachInputsOf(tp, 1);
+    return {
+      today: TR,
+      targetDay: atR(700),
+      scopes: [],
+      throughput: tp,
+      hoursPerWeek: 10,
+      intensity: "STEADY",
+      startPoint: "BASICS",
+      typicalHours: null,
+      typicalHoursSource: null,
+      m: 1,
+      heldDays: [],
+      areaInMaintenance: false,
+      practicesAllowed: true,
+      trackArea: false,
+      depth: null,
+      dateMode: "CHOSEN",
+      userDate: atR(700),
+      examDay: null,
+      reach: r.params,
+      calibrating: [...r.calibrating, "pace"],
+      sourceRate: 20,
+      planKind: "TOPICS",
+    };
+  };
+  const ikR = (L: RT.TopicDepth): RT.Intake => ({
+    aim: "Run a household's money well",
+    fieldId: "f1",
+    track: "CRAFT",
+    domainIds: [],
+    targetDay: atR(700),
+    hoursPerWeek: 10,
+    newCardsPerWeek: 20,
+    typicalHours: null,
+    typicalHoursSource: null,
+    syllabus: null,
+    startPoint: "BASICS",
+    intensity: "STEADY",
+    practicesAllowed: true,
+    constraints: null,
+    examLabel: null,
+    depth: null,
+    topicDepth: L,
+    planKind: "TOPICS",
+    dateMode: "CHOSEN",
+  });
+  const topicR = (k: number, j: number, deep: boolean): ChainTopicInput => ({ lineageId: `tr-${k}-${j}`, domainId: null, role: deep ? "DEEP" : "BASE", held: false, skipped: false, nd: deep ? RT.COVER_FLOOR_CARDS : RT.TOPIC_FLOOR_CARDS });
+  const oneR = (L: RT.TopicDepth) => ({ layers: [{ layer: 1, topics: [topicR(1, 1, true)] }], depth: L, examDay: null });
+  const fourR = (L: RT.TopicDepth) => ({ layers: [1, 2, 3, 4].map((k) => ({ layer: k, topics: [1, 2].map((j) => topicR(k, j, k === 4)) })), depth: L, examDay: null });
+  let nR = 0;
+  const mkR = () => `tr-${++nR}`;
+  const shapes = [
+    ["one topic, L* 8", oneR(8), 8],
+    ["four layers of two, L* 8", fourR(8), 8],
+    ["one topic, L* 6", oneR(6), 6],
+    ["four layers of two, L* 6", fourR(6), 6],
+  ] as const;
+  const ladderR = (tp: RT.Throughput) => shapes.map(([, chain, L]) => layeredLadderOf(ikR(L), inR(tp), chain, {}, mkR));
+  const datesOf = (r: StageLadderResult) => (r.ok ? [r.plan.map((m) => [m.chainRole, m.layer, dR(m.windowStart), dR(m.dueDay)]), dR(r.dateCheck?.D_real), r.dateCheck?.verdict ?? null] : [r.reason, r.error]);
+  const freshR = ladderR(fresh);
+  eq(
+    "a brand-new user's first topic map dates (throughputOf on no rows: the priors p 0.8, c 0.85, ρ 0.6 and the typed pace stand in, labelled): one topic in layer 1 and four layers of two, at Retained and at Familiar, each from today, the last row holding your date (700 days), D_real FITS",
+    freshR.map(datesOf),
+    [
+      [[["LAYER", 1, 0, 49], ["DEPTH", null, 50, 700]], 105, "FITS"],
+      [[["LAYER", 1, 0, 42], ["LAYER", 2, 43, 84], ["LAYER", 3, 85, 126], ["LAYER", 4, 127, 189], ["DEPTH", null, 190, 700]], 245, "FITS"],
+      [[["LAYER", 1, 0, 700]], 49, "FITS"],
+      [[["LAYER", 1, 0, 49], ["LAYER", 2, 50, 98], ["LAYER", 3, 99, 147], ["LAYER", 4, 148, 700]], 210, "FITS"],
+    ]
+  );
+  check(
+    "… each within SPAN_MAX_DAYS (D_real and every row's due), its date origin the priors (p, c, rho) and your typed pace",
+    freshR.every((r) => r.ok && (dR(r.dateCheck?.D_real) ?? Infinity) <= RT.SPAN_MAX_DAYS && r.plan.every((m) => (dR(m.dueDay) ?? Infinity) <= RT.SPAN_MAX_DAYS) && json(r.dateCheck?.dateOrigin.calibrating) === json(["p", "c", "rho", "pace"])),
+    json(freshR.map((r) => (r.ok ? r.dateCheck?.dateOrigin : r.reason)))
+  );
+  const cut = RT.reachParamsKey(RT.reachInputsOf(mirror, 1).params);
+  eq(
+    "the mirror's measured clearance (4 of 990 due cards reviewed, the rest of the input the same) refuses all four TOO_FAR in words ('more than 3 years': a stage day past REACH_T_MAX), never the depth, the layers or the hours: rounded it is c 0.01 and ρ 0.99, and a card written today reaches level 6 within REACH_T_MAX at under 0.001 (the priors: over 0.999)",
+    [
+      ladderR(mirror).map(datesOf),
+      [cut.c, cut.rho],
+      [RT.reachProb(RT.reachInputsOf(mirror, 1).params, 1, RT.OPEN_LEVEL, RT.REACH_T_MAX) < 0.001, RT.reachProb(RT.reachInputsOf(fresh, 1).params, 1, RT.OPEN_LEVEL, RT.REACH_T_MAX) > 0.999],
+    ],
+    [
+      [
+        ["TOO_FAR", "With these 1 layer, this map needs more than 3 years at 10 h a week. Plan fewer layers, lower the depth, or raise your hours."],
+        ["TOO_FAR", "With these 4 layers, this map needs more than 3 years at 10 h a week. Plan fewer layers, lower the depth, or raise your hours."],
+        ["TOO_FAR", "With these 1 layer, this map needs more than 3 years at 10 h a week. Plan fewer layers, lower the depth, or raise your hours."],
+        ["TOO_FAR", "With these 4 layers, this map needs more than 3 years at 10 h a week. Plan fewer layers, lower the depth, or raise your hours."],
+      ],
+      [0.01, 0.989899],
+      [true, true],
+    ]
   );
 }
 
