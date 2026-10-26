@@ -4,9 +4,19 @@
  * Fixture views for the Body weight card. The actions are fakes: they wait
  * a moment and answer ok, so the forms show their pending and saved states,
  * but nothing is written and the views never change.
+ *
+ * Mind (health-2026-10-27.md phase 1): Body › Mind's card in each fixture
+ * state (MIND_FIXTURES: off, off with check-ins kept from before, not ready,
+ * the read failed, empty, only older ones, calibrating, logged with Undo,
+ * changed, the low-pattern card, paused) and Today's "Check in" strip, plain
+ * and just logged. The check-in fakes save nothing: Save answers with a
+ * receipt built from what was picked, "Show older" pages through the
+ * fixture's own older rows, the rest answer ok, and the views never change.
+ * `state` (the page's ?state=) opens the sheet on load: mind-sheet (blank) or
+ * mind-sheet-picked (MIND_DRAFT).
  */
 import { WeightCard } from "@/components/train/WeightCard";
-import { FIXTURE_TODAY, WEIGHT_FIXTURES, type WeightFixtureName } from "@/components/train/fixtures";
+import { FIXTURE_TODAY, MIND_DRAFT, MIND_FIXTURES, MIND_FIXTURE_TODAY, WEIGHT_FIXTURES, type MindFixture, type MindFixtureName, type WeightFixtureName } from "@/components/train/fixtures";
 import type { WeightActions } from "@/components/train/types";
 import { ExerciseCard, type ExerciseActions } from "@/components/train/ExerciseCard";
 import { MonthDoneCard } from "@/components/task-style/MonthDoneCard";
@@ -14,6 +24,11 @@ import { TaskMonth } from "@/components/task-style/TaskMonth";
 import { TaskStylePicker } from "@/components/task-style/TaskStylePicker";
 import { exerciseWeekOf, type ExerciseSessionView } from "@/lib/exercise";
 import type { MonthDoneTask } from "@/lib/task-style";
+import { MindCard, MindOff } from "@/components/mind/MindCard";
+import { CheckInStrip } from "@/components/mind/CheckInStrip";
+import type { MindActions } from "@/components/mind/types";
+import { zonedToInstant } from "@/lib/life-day";
+import { OLDER_PAGE, pauseUntilOf, receiptLineOf, type MoodCheckView, type OlderCursor } from "@/lib/mind";
 
 const wait = () => new Promise<void>((r) => setTimeout(r, 400));
 const FAKE: WeightActions = {
@@ -92,12 +107,131 @@ export function ExerciseStyleFixtures() {
   );
 }
 
-export function TrainFixtures() {
+/** The fixture receipt's instant: 14:32 on the Mind fixture day, so a screenshot reads the same every run. */
+const MIND_AT = (() => {
+  const [y, m, d] = MIND_FIXTURE_TODAY.split("-").map(Number);
+  return new Date(zonedToInstant(y, m, d, 14).getTime() + 32 * 60_000).toISOString();
+})();
+let mindSeq = 0;
+const FAKE_MIND: MindActions = {
+  logCheck: async (input) => {
+    await wait();
+    const row = {
+      id: `fixture-${++mindSeq}`,
+      day: MIND_FIXTURE_TODAY,
+      at: MIND_AT,
+      valence: input.valence,
+      energy: input.energy,
+      stress: input.stress ?? null,
+      word: input.word ?? null,
+      tags: input.tags ?? [],
+      trigger: input.trigger ?? "self",
+      via: input.via ?? "web",
+    };
+    return { ok: true, value: { ...row, line: receiptLineOf(row), replay: false } };
+  },
+  deleteCheck: async () => {
+    await wait();
+    return { ok: true, value: { deleted: 1 } };
+  },
+  deleteAllChecks: async () => {
+    await wait();
+    return { ok: true, value: { deleted: 0 } };
+  },
+  pauseChecks: async (length) => {
+    await wait();
+    return { ok: true, value: { pausedUntil: length === null ? null : pauseUntilOf(length, MIND_FIXTURE_TODAY) } };
+  },
+  dismissLowPattern: async () => {
+    await wait();
+    return { ok: true, value: { lowSeenAt: MIND_AT } };
+  },
+  loadOlderChecks: async () => {
+    await wait();
+    return { ok: true, value: { checks: [], more: false } };
+  },
+};
+
+/** "Show older" over a fixture's own rows (newest first), OLDER_PAGE at a time, strictly after the cursor. */
+function olderPager(rows: readonly MoodCheckView[]): MindActions["loadOlderChecks"] {
+  return async (before: OlderCursor | null) => {
+    await wait();
+    const from = before ? rows.findIndex((c) => c.id === before.id) + 1 : 0;
+    const page = rows.slice(from, from + OLDER_PAGE);
+    return { ok: true, value: { checks: page, more: from + OLDER_PAGE < rows.length } };
+  };
+}
+
+/** The fakes for one fixture: its older rows behind "Show older", and Delete all answering its own count. */
+function mindActionsOf(f: MindFixture): MindActions {
+  const stored = f.stored ?? f.view.storedCount;
+  return {
+    ...FAKE_MIND,
+    ...(f.older ? { loadOlderChecks: olderPager(f.older) } : {}),
+    deleteAllChecks: async () => {
+      await wait();
+      return { ok: true, value: { deleted: stored } };
+    },
+  };
+}
+
+/** Body › Mind's states and Today's strip. `state` opens the sheet on load (mind-sheet, mind-sheet-picked). */
+export function MindFixtures({ state = null }: { state?: string | null }) {
+  const sheet = state === "mind-sheet" || state === "mind-sheet-picked";
+  const logged = MIND_FIXTURES.logged.receipt ?? null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <p className="t-meta" style={{ margin: 0 }}>
+        Mind fixtures, on {MIND_FIXTURE_TODAY}. Check in opens the real sheet; Save answers with a receipt and saves nothing.
+      </p>
+      <div data-state="mind-sheet">
+        <p className="t-eyebrow" style={{ margin: "0 0 8px" }}>
+          Mind · the sheet{sheet ? " (open)" : ""}
+        </p>
+        <MindCard
+          key={state ?? "none"}
+          view={MIND_FIXTURES.empty.view}
+          actions={FAKE_MIND}
+          sheetOpen={sheet}
+          draft={state === "mind-sheet-picked" ? MIND_DRAFT : undefined}
+        />
+      </div>
+      {(Object.keys(MIND_FIXTURES) as MindFixtureName[]).map((k) => {
+        const f = MIND_FIXTURES[k];
+        return (
+          <div key={k} data-state={`mind-${k}`}>
+            <p className="t-eyebrow" style={{ margin: "0 0 8px" }}>
+              {f.label}
+            </p>
+            {f.view.live ? (
+              <MindCard view={f.view} actions={mindActionsOf(f)} receipt={f.receipt ?? null} holdUndo={f.receipt != null} />
+            ) : (
+              <MindOff stored={f.stored ?? 0} deleteAllChecks={mindActionsOf(f).deleteAllChecks} />
+            )}
+          </div>
+        );
+      })}
+      <div data-state="mind-today-strip">
+        <p className="t-eyebrow" style={{ margin: "0 0 8px" }}>
+          Today · the Check in strip
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 420 }}>
+          <CheckInStrip actions={FAKE_MIND} />
+          <CheckInStrip actions={FAKE_MIND} logged={logged} holdUndo />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function TrainFixtures({ state = null }: { state?: string | null }) {
   return (
     <div className="page narrow">
       <p className="t-meta" style={{ margin: "0 0 16px" }}>
         Fixtures only, on {FIXTURE_TODAY}. The forms answer as if saved and change nothing.
       </p>
+      <MindFixtures state={state} />
+      <div style={{ height: 24 }} />
       <ExerciseStyleFixtures />
       <div style={{ display: "flex", flexDirection: "column", gap: 24, marginTop: 24 }}>
         {(Object.keys(WEIGHT_FIXTURES) as WeightFixtureName[]).map((k) => (

@@ -109,6 +109,8 @@ export const SECTIONS: readonly Section[] = [
     subs: [
       { href: "/train", label: "This week" },
       { href: "/train/exercise", label: "Exercise" },
+      // The check-in's home (health-2026-10-27.md D23: "This week, Exercise, Mind"; a compatible addition).
+      { href: "/train/mind", label: "Mind" },
     ],
   },
 ];

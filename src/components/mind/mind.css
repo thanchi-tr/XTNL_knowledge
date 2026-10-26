@@ -1,0 +1,212 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   MIND — the check-in (src/components/mind): the sheet and its grid, Body › Mind's cards and Today's strip.
+   Imported by the pages that draw them (src/app/train/mind/page.tsx, src/app/today/page.tsx for the strip and its
+   sheet, /dev/style/train), never by a component, so the checks can render the components. Namespaced mind- (a global
+   sheet is never removed on navigation, and no name may be a Tailwind utility). Built on the kit: .card .sunk .btn
+   .chip.btn-chip .sheet.
+   Floors: 12 px text, 44 px targets (the grid is one control: its cells are under 44 px by design), 16 px inputs at
+   every width. No hue says anything about a value: ink and neutral shades only, never --owed, --kept or --warn.
+   Nothing here animates (the house Sheet slides itself, and Still stops that).
+   ===================================================================== */
+@layer components {
+  /* ---------- the sheet ---------- */
+  .mind-body { display: flex; flex-direction: column; gap: 14px; }
+  /* The kit's .sheet-f, for a footer that lives in the body: sticky to the sheet's bottom edge, over its padding.
+     Save and the safety line share one 48 px row, so the footer is 77 px (1 + 8 + 48 + the sheet's 20 px pad). */
+  .mind-foot {
+    position: sticky; bottom: calc(-1 * var(--sheet-pad-b, 0px)); z-index: 1;
+    display: flex; flex-direction: column; gap: 6px; margin-top: 14px;
+    padding: 8px 0 var(--sheet-pad-b, 0px); margin-bottom: calc(-1 * var(--sheet-pad-b, 0px));
+    background: var(--overlay); border-top: 1px solid var(--line-1);
+  }
+  .mind-foot-row { display: flex; align-items: center; gap: 8px; min-height: 48px; }
+  .mind-foot-row > .btn { flex: 1 0 120px; min-height: 48px; }
+  /* At 344 the line wraps to two lines (36 px) inside its 44 px target rather than squeezing Save under 120 px. */
+  .mind-foot-row > .mind-safety { flex: 0 1 auto; min-width: 0; }
+  .mind-label { margin: 0 0 6px; font: 600 13px/18px var(--font-ui); color: var(--ink-1); }
+  .mind-opt { font: 400 12px/16px var(--font-ui); color: var(--ink-2); }
+  /* One line always (the words of a cell are short; the blank line is one short sentence), so the stress row never moves. */
+  .mind-picked {
+    margin: -6px 0 0; min-height: 20px; text-align: center; font: 600 15px/20px var(--font-ui); color: var(--ink-0);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .mind-note { margin: 6px 0 0; }
+
+  /* ---------- the grid: one square control, four soft quadrants, 81 faint cell marks ---------- */
+  /* The grid sizes itself to the sheet's height so the stress row sits above the sticky footer without a scroll on a
+     short phone (a Fold cover in Chrome, 344 × 740, 475 × 643). 88dvh is the sheet's max height (components.css .sheet);
+     344 px is everything else from the sheet's top to the stress row's bottom (241: the grabber and header 87, the axis
+     rows 40, the picked line and gaps 42, stress 72) plus the footer (77) and an error line in it (26). 240 px is the
+     floor (the bottom axis words fit on one line); 360 the ceiling; the width caps it first on a narrow phone. */
+  .mind-grid-box {
+    display: flex; flex-direction: column; gap: 4px; width: 100%; margin: 0 auto;
+    max-width: max(240px, min(360px, calc(88dvh - 344px)));
+  }
+  .mind-axis { margin: 0; display: flex; justify-content: center; font: 500 12px/16px var(--font-ui); color: var(--ink-2); }
+  .mind-axis-bottom { justify-content: space-between; gap: 6px; }
+  .mind-grid {
+    position: relative; width: 100%; aspect-ratio: 1 / 1; border-radius: 14px; overflow: hidden;
+    border: 1px solid var(--line-ctl); background-color: var(--sunken); cursor: pointer; touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent; user-select: none;
+    background-image: radial-gradient(circle, var(--line-2) 1.5px, transparent 2px);
+    background-size: calc(100% / 9) calc(100% / 9);
+  }
+  .mind-grid:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .mind-q {
+    position: absolute; width: 50%; height: 50%; padding: 8px 9px; pointer-events: none;
+    font: 600 12px/16px var(--font-ui); color: var(--ink-1); display: flex;
+  }
+  /* Diagonal pairs share a shade, so neither side of the grid reads as the better one. */
+  .mind-q[data-q="tense"] { left: 0; top: 0; align-items: flex-start; justify-content: flex-start; background: color-mix(in srgb, var(--ink-0) 3%, transparent); }
+  .mind-q[data-q="excited"] { right: 0; top: 0; align-items: flex-start; justify-content: flex-end; text-align: right; background: color-mix(in srgb, var(--ink-0) 6%, transparent); }
+  .mind-q[data-q="low"] { left: 0; bottom: 0; align-items: flex-end; justify-content: flex-start; background: color-mix(in srgb, var(--ink-0) 6%, transparent); }
+  .mind-q[data-q="calm"] { right: 0; bottom: 0; align-items: flex-end; justify-content: flex-end; text-align: right; background: color-mix(in srgb, var(--ink-0) 3%, transparent); }
+  .mind-line { position: absolute; background: var(--line-2); pointer-events: none; }
+  .mind-line-v { left: calc(50% - 0.5px); top: 0; bottom: 0; width: 1px; }
+  .mind-line-h { top: calc(50% - 0.5px); left: 0; right: 0; height: 1px; }
+  .mind-pick {
+    position: absolute; pointer-events: none; display: grid; place-items: center;
+    left: calc(var(--c) * 100% / 9); top: calc(var(--r) * 100% / 9); width: calc(100% / 9); height: calc(100% / 9);
+  }
+  .mind-pick::after {
+    content: ""; width: 62%; height: 62%; border-radius: 50%;
+    background: var(--ink-0); box-shadow: 0 0 0 3px var(--sunken), 0 0 0 4px var(--ink-0);
+  }
+
+  /* ---------- stress: five labelled buttons in one row (about 59 px each at 344) ---------- */
+  .mind-stress-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+  .mind-stress-btn {
+    min-height: 48px; min-width: 0; padding: 4px 2px; border-radius: 10px;
+    border: 1px solid var(--line-ctl); background: transparent; color: var(--ink-0);
+    font: 600 12px/15px var(--font-ui); text-align: center; white-space: normal; overflow-wrap: break-word; cursor: pointer;
+  }
+  .mind-stress-btn:hover { background: var(--raised); }
+  .mind-stress-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .mind-stress-btn[aria-pressed="true"] { background: var(--ink-0); color: var(--page); border-color: var(--ink-0); }
+
+  /* ---------- the word and the tags ---------- */
+  .mind-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mind-chips .chip.btn-chip { min-height: 44px; }
+  .mind-chips .chip.btn-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .mind-chips .chip.btn-chip:disabled { opacity: .45; cursor: not-allowed; }
+  .mind-words .mind-input, .mind-tag-add { margin-top: 8px; }
+  .mind-more { border-top: 1px solid var(--line-1); padding-top: 4px; }
+  .mind-more > summary {
+    display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none;
+    font: 600 13px/18px var(--font-ui); color: var(--ink-1);
+  }
+  .mind-more > summary::-webkit-details-marker { display: none; }
+  .mind-more > summary::before { content: "+"; width: 16px; text-align: center; color: var(--ink-2); }
+  .mind-more[open] > summary::before { content: "−"; }
+  .mind-more > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 8px; }
+  .mind-tag-add { display: flex; gap: 8px; align-items: stretch; }
+  .mind-tag-add .btn { min-height: 44px; flex: none; }
+  .mind-input {
+    flex: 1 1 auto; min-width: 0; width: 100%; min-height: 44px; border-radius: var(--r-ctl);
+    border: 1px solid var(--line-ctl); background: var(--sunken);
+    padding: 10px 14px; font: 500 16px/1.4 var(--font-ui); color: var(--ink-0);
+  }
+  .mind-input::placeholder { color: var(--ink-2); }
+  .mind-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+  /* ---------- the safety line (always visible) and the receipt ---------- */
+  .mind-safety { margin: 0; }
+  .mind-tel {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 2px;
+    font: 500 13px/18px var(--font-ui); color: var(--ink-1); text-decoration: underline; text-underline-offset: 3px;
+  }
+  .mind-tel:hover { color: var(--ink-0); }
+  .mind-tel:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 6px; }
+  .mind-receipt { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; }
+  .mind-receipt-l { margin: 0; min-width: 0; font: 500 14px/20px var(--font-ui); color: var(--ink-0); }
+  .mind-receipt .mind-undo { flex: none; min-height: 44px; }
+
+  /* ---------- Body › Mind ---------- */
+  .mind-card { display: flex; flex-direction: column; gap: 14px; }
+  .mind-card h3 { margin: 0; }
+  .mind-eyebrow { margin: 0; }
+  .mind-lead { margin: 0; color: var(--ink-0); }
+  .mind-card > .t-meta { margin: 0; }
+  .mind-empty { margin: 0; color: var(--ink-1); }
+  .mind-stored { margin: 0; color: var(--ink-0); }
+  .mind-entry, .mind-paused { display: flex; flex-direction: column; gap: 6px; }
+  .mind-entry > .btn { min-height: 48px; }
+  .mind-paused { align-items: flex-start; }
+  .mind-paused p { margin: 0; }
+  .mind-paused .btn { min-height: 44px; }
+
+  .mind-low { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
+  .mind-low-h { margin: 0; font: 600 15px/20px var(--font-ui); color: var(--ink-0); }
+  .mind-low-p { margin: 0; }
+  .mind-low .btn { min-height: 44px; margin-left: -10px; }
+  .mind-contacts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .mind-contacts .mind-tel { font-size: 14px; color: var(--ink-0); }
+
+  .mind-trend { display: flex; flex-direction: column; gap: 10px; }
+  .mind-trend-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .mind-trend-h p { margin: 0; }
+  .mind-strip-fig { margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .mind-band { display: flex; flex-direction: column; gap: 2px; }
+  .mind-band-l { margin: 0; font: 500 12px/16px var(--font-ui); color: var(--ink-2); }
+  .mind-band svg { width: 100%; height: auto; display: block; }
+  .mind-strip-axis { display: flex; justify-content: space-between; font: 500 12px/16px var(--font-ui); color: var(--ink-2); }
+
+  .mind-weeks { display: flex; flex-direction: column; gap: 6px; }
+  .mind-weeks p { margin: 0; }
+  .mind-week-list { list-style: none; margin: 0; padding: 0; }
+  .mind-week { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; }
+  .mind-week + .mind-week { border-top: 1px solid var(--line-1); }
+  .mind-week-h { display: flex; justify-content: space-between; gap: 8px; font: 600 13px/18px var(--font-ui); color: var(--ink-1); }
+  /* One row an axis (label · median · range): "Pleasantness" can't fit a third of 278 px at 12 px. */
+  .mind-week-stats {
+    display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; gap: 2px 12px;
+    margin: 0; padding: 8px 12px; border-radius: var(--r-ctl); background: var(--sunken);
+  }
+  .mind-week-stats > div { display: contents; }
+  .mind-week-stats dt { font: 600 12px/20px var(--font-ui); color: var(--ink-2); }
+  .mind-week-stats dd { margin: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 8px; min-width: 0; }
+  .mind-med { font: 600 15px/20px var(--font-ui); color: var(--ink-0); }
+  .mind-iqr { font: 400 12px/16px var(--font-ui); color: var(--ink-2); }
+  .mind-weeks .mind-more { margin-top: 2px; }
+  .mind-changed { display: flex; align-items: baseline; gap: 8px; font: 400 13px/18px var(--font-ui); color: var(--ink-0); }
+  .mind-changed .chip { flex: none; }
+
+  .mind-hist { display: flex; flex-direction: column; gap: 6px; }
+  .mind-hist p { margin: 0; }
+  .mind-list { list-style: none; margin: 0; padding: 0; }
+  .mind-item { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 6px 0; }
+  .mind-item + .mind-item { border-top: 1px solid var(--line-1); }
+  .mind-item-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .mind-item-when { font: 600 12px/16px var(--font-ui); color: var(--ink-2); }
+  .mind-item-what { font: 600 14px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .mind-item-sub { font: 400 12px/16px var(--font-ui); color: var(--ink-1); overflow-wrap: anywhere; }
+  .mind-del {
+    flex: none; min-height: 44px; min-width: 64px; padding: 0 10px; border-radius: 10px;
+    border: 1px solid transparent; background: transparent; color: var(--ink-1);
+    font: 600 13px/1 var(--font-ui); cursor: pointer; white-space: nowrap;
+  }
+  .mind-del:hover:not(:disabled) { color: var(--ink-0); background: var(--raised); }
+  .mind-del:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .mind-del:disabled { opacity: .45; cursor: not-allowed; }
+  .mind-del.mind-armed { border-color: var(--line-ctl); color: var(--ink-0); }
+
+  .mind-ctl { display: flex; flex-direction: column; gap: 6px; }
+  .mind-ctl p { margin: 0; }
+  .mind-ctl-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .mind-ctl-row .btn { min-height: 44px; }
+  .mind-confirm { display: flex; flex-direction: column; gap: 8px; }
+
+  /* ---------- Today's strip (the side column, under Due elsewhere) ---------- */
+  .mind-strip { display: grid; overflow: hidden; }
+  .mind-strip-btn {
+    display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 14px;
+    border: 0; background: transparent; color: var(--ink-0); text-align: left; cursor: pointer;
+    font: 600 13px/18px var(--font-ui);
+  }
+  .mind-strip-btn svg { flex: none; color: var(--ink-2); }
+  .mind-strip-btn:hover { background: var(--raised); }
+  .mind-strip-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: var(--r-card); }
+  .mind-strip .mind-receipt { border-top: 1px solid var(--line-1); padding: 0 4px 0 14px; }
+  .mind-strip-msg { padding: 0 14px 10px; }
+}

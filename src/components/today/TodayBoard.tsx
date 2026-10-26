@@ -221,6 +221,13 @@ interface Props {
    */
   elsewhere?: ReactNode;
   /**
+   * The check-in (health-2026-10-27.md D3, extending "Tasks only" by one row): the page's <CheckInStrip/>, a slim
+   * "Check in" row under the strip that opens the check-in sheet, drawn while check-ins are open, ready and not paused.
+   * Only drawn: no count, no value, never red, no Ask, no row on the board; buildBoard and todayCountsOf never see it,
+   * and the board imports nothing of Mind. A work tab never shows it. Absent or null: no row.
+   */
+  checkIn?: ReactNode;
+  /**
    * The Main quest card (blueprint P15, D11; the page's <MainQuestCard/> over main-quest-card.ts), drawn in the side
    * column above the goals (its key results). Only drawn, like the strip: it adds no Ask, no count and no row to the
    * board; buildBoard and todayCountsOf never see it. A work tab never shows it. Absent or null: no card.
@@ -506,7 +513,10 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * The review quest, the roadmap's week quests and aim line, the encounters
  * and the Ideas Asks live on the Ideas landing (/review); the streak and the
  * Full day on Character (/you); weight and walks on Body (/train). What is
- * due there is the page's one slim strip (`elsewhere`), drawn first.
+ * due there is the page's one slim strip (`elsewhere`), drawn first. One row
+ * more (health-2026-10-27.md D3): while check-ins are open, a slim "Check in"
+ * (`checkIn`) under it opens the check-in sheet; it shows no count, no value
+ * and no Ask, and the check-ins themselves live on Body › Mind.
  *
  * The board holds its own optimistic copy of the day: a tick lands on the
  * tap, every other row re-prices against the new knee base straight away
@@ -557,7 +567,7 @@ function LaneChipView({ chip }: { chip: LaneChip }) {
   );
 }
 
-export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, momentum = null, momentumSettled = false, credits = null, elsewhere = null, mainQuest = null, nextWeek = null }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, momentum = null, momentumSettled = false, credits = null, checkIn = null, elsewhere = null, mainQuest = null, nextWeek = null }: Props) {
   /** A work tab: nothing of the game (no XP, no moments, no goals, no plan card). */
   const isWork = workTab !== null;
   const router = useRouter();
@@ -2591,6 +2601,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
 
           {/* The three sections: what is due in Ideas and Body, one slim strip of links out (the page's slot). */}
           {elsewhere != null && elsewhere !== false && <div className="o2">{elsewhere}</div>}
+          {/* The check-in (D3): one "Check in" row under the strip that opens the sheet; never a count or a value. */}
+          {!isWork && checkIn != null && checkIn !== false && <div className="o2">{checkIn}</div>}
 
           {/* A work tab (work-boards.ts) draws no card here: its name and menu are the work frame's header (the Office
               workspace, 2026-10-20). Nothing of the game: no capacity, no life XP, no Asks. */}

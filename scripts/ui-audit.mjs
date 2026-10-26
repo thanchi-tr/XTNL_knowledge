@@ -5,7 +5,7 @@
  * server. It never starts one: run the rehearsal server (or `next dev`) yourself.
  *
  *   node scripts/ui-audit.mjs [--base http://localhost:3100] [--routes all|real|fixtures|/today,/review]
- *                             [--widths 344,375,932,1440] [--json out.json] [--chrome <path>] [--plan]
+ *                             [--widths 344,375,932,1440] [--json out.json] [--chrome <path>] [--plan] [--shots <dir>]
  *                             [--gate '{"route":…,"width":…,"ask":[…],"aimLines":[…]}']
  *                             [--motion all|dev|off] [--budgets report|hard] [--no-gl]
  *
@@ -67,6 +67,10 @@
  *   - console errors or uncaught exceptions
  *   - on /today and /review: any running infinite animation at rest
  *   - the height gates above (the ASK card, Today's aim line)
+ *   - the check-in sheet's fit (health-2026-10-27.md; mind.css .mind-grid-box): on /dev/style/train?state=mind-sheet
+ *     and ?state=mind-sheet-picked at 344 × 740, 344 × 812 and 475 × 643 (SHEET_FIT_SIZES: a short phone, the common
+ *     one, a Fold cover in Chrome), the open sheet's stress row ends at or above its sticky footer's top, with no
+ *     scroll; each is screenshotted into --shots (default: <tmp>/xtnl-ui-audit-shots)
  * And once, with prefers-reduced-motion: the first frame must carry html[data-motion="still"].
  *
  * ui-motion (docs/life-plan/ui-motion.md §11.7; lane M0c). Per route × width, also:
@@ -118,7 +122,7 @@
  * shader probes have WebGL headless; --no-gl restores --disable-gpu.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -154,6 +158,8 @@ const REAL_ROUTES = [
   "/you/stats",
   "/settings",
   "/train",
+  // Body › Mind (health-2026-10-27.md phase 1): its render only reads (loadMindView, or countChecks while the switch is off).
+  "/train/mind",
 ];
 /**
  * /dev/style/roadmap?state=… (roadmap F23): R5's FIXTURE_STATES, read from
@@ -203,6 +209,8 @@ const FIXTURE_ROUTES = [
   "/dev/style/art/you",
   "/dev/style/settings",
   "/dev/style/train",
+  // The check-in sheet opened on load (blank, and already picked), so its targets, overlaps and 12 px floor are measured.
+  ...["mind-sheet", "mind-sheet-picked"].map((s) => `/dev/style/train?state=${s}`),
   ...ROADMAP_FIXTURE_STATES.map((s) => `/dev/style/roadmap?state=${s}`),
   // ui-motion (§9.1): the glyph gallery and the shader slots (the WAIT weave running).
   "/dev/style/glyphs",
@@ -238,6 +246,19 @@ const WIDTHS = opt("widths", "344,375,932,1440").split(",").map(Number);
  */
 const EXTRA_WIDTHS = { "/dev/style/today": [768, 1366], "/today": [768, 1366] };
 const widthsFor = (route) => (WIDTHS_GIVEN ? WIDTHS : [...WIDTHS, ...(EXTRA_WIDTHS[pathOf(route)] ?? []).filter((w) => !WIDTHS.includes(w))]);
+/**
+ * The check-in sheet's fit (mind.css .mind-grid-box sizes the grid to 88dvh): at each width × height the open sheet's
+ * .mind-stress-row ends at or above its sticky .mind-foot. A short phone, the common one, and a Fold cover in Chrome
+ * (its innerHeight once the toolbar and the gesture bar are taken out). Run on the mind-sheet fixture routes listed.
+ */
+const SHEET_FIT_SIZES = [
+  [344, 740],
+  [344, 812],
+  [475, 643],
+];
+const SHEET_FIT_ROUTES = ROUTES.filter((r) => pathOf(r) === "/dev/style/train" && /^mind-sheet(-picked)?$/.test(new URLSearchParams(r.split("?")[1] ?? "").get("state") ?? ""));
+/** Where the sheet-fit screenshots go. */
+const SHOTS_DIR = opt("shots", join(tmpdir(), "xtnl-ui-audit-shots"));
 
 // ── ui-motion options and routes (ui-motion.md §11.7) ────────────────────────
 /** --budgets report|hard: the §3.2 word budgets print (report) or fail the route (hard: RZ's final pass). */
@@ -291,6 +312,9 @@ const WORD_BUDGETS = [
   { id: "today-week-quests", paths: ["/dev/style/today", "/today"], each: ".rm-quests-slot:not(:has(.rm-aim-slot))", max: 34 },
   // …and live in the Ideas landing's lead (/review), where it starts as its one summary line.
   { id: "today-week-quests", paths: ["/review"], each: ".rv-lead-quests", max: 34 },
+  // health-2026-10-27.md D3 (brief §4, a word budget per new card): Today's Check in strip, "Check in Logged 14:32 Undo"
+  // at most (never a count or a value; mind-check pins the exact text); the fixtures draw it plain and just logged.
+  { id: "check-in-strip", paths: ["/dev/style/train", "/today"], each: '[data-wc-block="check-in"]', max: 5 },
   ...roadmapWordBudgets(),
 ];
 /** A route's ?state= (the roadmap fixture page's state), or null. */
@@ -448,6 +472,7 @@ if (args.includes("--plan")) {
       widths: WIDTHS,
       extraWidths: Object.fromEntries(ROUTES.map((r) => [r, widthsFor(r).filter((w) => !WIDTHS.includes(w))]).filter(([, w]) => w.length > 0)),
       gates: GATES,
+      sheetFit: { sizes: SHEET_FIT_SIZES, routes: SHEET_FIT_ROUTES, shots: SHOTS_DIR },
       budgets: BUDGETS,
       wordBudgets: WORD_BUDGETS,
       motion: MOTION,
@@ -795,8 +820,8 @@ const navigate = async (url, timeout = 15000) => {
  * sessionStorage on the app's origin (the shader's AMBIENT budget and the WAIT
  * pause live there; it survives navigation within the tab).
  */
-async function visit(url, { width, reduced = false, contrast = false, forced = false, dpr = 1, settle = 900, fresh = false }) {
-  await send("Emulation.setDeviceMetricsOverride", { width, height: width < 600 ? 812 : 900, deviceScaleFactor: dpr, mobile: width < 600 });
+async function visit(url, { width, height = width < 600 ? 812 : 900, reduced = false, contrast = false, forced = false, dpr = 1, settle = 900, fresh = false }) {
+  await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: dpr, mobile: width < 600 });
   await send("Emulation.setEmulatedMedia", { features: mediaFeatures({ reduced, contrast, forced }) });
   if (fresh) {
     await navigate(`${BASE}/dev/style`);
@@ -899,6 +924,58 @@ for (const route of ROUTES) {
       for (const o of r.overField.slice(0, 4)) console.log(`      over a slot: ${o}`);
       for (const c of r.chipLines.slice(0, 4)) console.log(`      chip: ${c}`);
       for (const e of errors.slice(0, 4)) console.log(`      error: ${e}`);
+    }
+  }
+}
+
+// ── The check-in sheet's fit (health-2026-10-27.md; mind.css .mind-grid-box) ─
+// The open sheet's stress row must end at or above its sticky footer's top with no scroll (a tap under the footer
+// breaks the 5-second check-in). Each size is screenshotted, so the evidence is the page, not a number alone.
+if (SHEET_FIT_ROUTES.length > 0) {
+  try {
+    mkdirSync(SHOTS_DIR, { recursive: true });
+  } catch {
+    /* the screenshot write below says so */
+  }
+  for (const route of SHEET_FIT_ROUTES) {
+    for (const [width, height] of SHEET_FIT_SIZES) {
+      const { errors } = await visit(`${BASE}${route}`, { width, height });
+      let m;
+      try {
+        m = await evaluate(`(() => {
+          const sheet = document.querySelector('.sheet.mind-sheet.show');
+          const row = sheet && sheet.querySelector('.mind-stress-row');
+          const foot = sheet && sheet.querySelector('.mind-foot');
+          if (!sheet || !row || !foot) return null;
+          const grid = sheet.querySelector('.mind-grid');
+          return { rowBottom: row.getBoundingClientRect().bottom, footTop: foot.getBoundingClientRect().top, scrollTop: sheet.scrollTop, grid: grid ? grid.getBoundingClientRect().width : 0 };
+        })()`);
+      } catch (e) {
+        m = { error: String(e).slice(0, 160) };
+      }
+      const problems = [];
+      if (!m) problems.push("the open sheet, its stress row or its footer isn't drawn");
+      else if (m.error) problems.push(m.error);
+      else {
+        if (m.rowBottom > m.footTop + 0.5) problems.push(`the stress row ends at ${Math.round(m.rowBottom)}px, under the footer's top at ${Math.round(m.footTop)}px`);
+        if (m.scrollTop > 0) problems.push(`the sheet opened scrolled (${Math.round(m.scrollTop)}px)`);
+      }
+      if (errors.length) problems.push(`${errors.length} console errors`);
+      let shot = null;
+      try {
+        const png = await send("Page.captureScreenshot", { format: "png" });
+        shot = join(SHOTS_DIR, `mind-sheet-${stateOf(route)}-${width}x${height}.png`);
+        writeFileSync(shot, Buffer.from(png.data, "base64"));
+      } catch (e) {
+        problems.push(`screenshot: ${String(e).slice(0, 80)}`);
+        shot = null;
+      }
+      const ok = problems.length === 0;
+      if (!ok) failures++;
+      results.push({ route, width, height, check: "check-in sheet fit", ok, ...(m && !m.error ? m : {}), shot, problems });
+      const at = m && !m.error ? ` (stress row ${Math.round(m.rowBottom)} ≤ footer ${Math.round(m.footTop)}, grid ${Math.round(m.grid)}px)` : "";
+      console.log(`${ok ? "PASS" : "FAIL"} check-in sheet fit ${route} @${width}x${height}${at}${ok ? "" : ` — ${problems.join("; ")}`}`);
+      if (shot) console.log(`      shot: ${shot}`);
     }
   }
 }

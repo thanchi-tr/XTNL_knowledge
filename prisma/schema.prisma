@@ -1031,6 +1031,72 @@ model TaskStyle {
   @@schema("public")
 }
 
+// ── Mind: the 5-second check-in (migration 20270103000000_mind_checks; health-2026-10-27.md D1, D5, D8) ──
+// A record, never a reward: nothing in the economy reads these tables, and no check-in (or any value it holds) pays
+// XP, MP, a streak day, a quest, a side-quest input, a Mall credit or a calibration input. No check-in is an
+// ActivityEvent, so the 'life' reset never deletes one (as it never deletes a weigh-in) and each one can be deleted on
+// its own. src/lib/mind.ts holds the rules (the grid, the words, the trend, the low pattern, the safety lines);
+// src/lib/mind-server.ts is their only reader and writer, fail soft. A check-in, a pause and a hide wait for
+// MIND_LAUNCH_DAY (null in code); the deletes never do (the user can always remove what was recorded). Values never go
+// into a URL, a push payload, /check, the widget, a log line or Gemini.
+
+/// One check-in: one tap on the 9×9 pleasantness × energy grid (valence and energy, −4..+4 each), then an optional
+/// stress rating (0..4: Not at all, A little, Some, Quite a lot, Very much), feeling word and up to 8 tags. Many a day,
+/// keyed by instant and clientId (a resend answers the row it wrote). A plain userId with no foreign key. Every
+/// timestamp is timestamptz.
+/// Not expressible in Prisma 6: CHECK "MoodCheck_valence_check" (−4..4), CHECK "MoodCheck_energy_check" (−4..4), CHECK
+/// "MoodCheck_stress_check" (null or 0..4), CHECK "MoodCheck_word_check" (null or 1..24 characters), CHECK
+/// "MoodCheck_tags_check" (at most 8), CHECK "MoodCheck_trigger_check" (prompted | self | close), CHECK
+/// "MoodCheck_via_check" (the eight surfaces), CHECK "MoodCheck_tookMs_check" (null or 0..600000), CHECK
+/// "MoodCheck_clientId_check" (1..64 characters), and "tags" NOT NULL.
+model MoodCheck {
+  id         String    @id @default(cuid())
+  userId     String
+  /// The life day it was felt on (src/lib/life-day.ts dateColumn of `at`): a 01:00 check-in counts for the day before.
+  day        DateTime  @db.Date
+  /// The instant it was felt (a queued phone send keeps its own).
+  at         DateTime  @db.Timestamptz(3)
+  /// Pleasantness, −4..+4 (mind.ts GRID_MIN..GRID_MAX).
+  valence    Int       @db.SmallInt
+  /// −4..+4.
+  energy     Int       @db.SmallInt
+  /// 0..4 (mind.ts STRESS_LEVELS); null when skipped.
+  stress     Int?      @db.SmallInt
+  /// An optional feeling word, at most 24 characters (mind.ts WORD_MAX).
+  word       String?
+  /// Up to 8 context tags (mind.ts TAGS_MAX, DEFAULT_TAGS).
+  tags       String[]  @default([])
+  /// prompted | self | close (mind.ts CHECK_TRIGGERS).
+  trigger    String    @default("self")
+  /// web | today | check | widget | tile | notify | capture | close (mind.ts CHECK_VIAS).
+  via        String    @default("web")
+  /// When the prompt it answered was shown; null when it was not prompted.
+  promptedAt DateTime? @db.Timestamptz(3)
+  /// Opening the sheet to saving it, 0..600000 ms (the 5-second claim, measured); null when not measured.
+  tookMs     Int?
+  clientId   String
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@unique([userId, clientId])
+  /// The Mind view's read: a user's check-ins over a span of life days.
+  @@index([userId, day])
+  /// The latest check-in's read.
+  @@index([userId, at])
+  @@schema("public")
+}
+
+/// One row a user: the pause (check-ins resume on pausedUntil, a life day; null: not paused) and when the low-pattern
+/// card was last hidden (once hidden, it stays hidden 7 days; null: never hidden). "Delete all check-ins" clears
+/// lowSeenAt and keeps the pause.
+model MindPrefs {
+  userId      String    @id
+  pausedUntil DateTime? @db.Date
+  lowSeenAt   DateTime? @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@schema("public")
+}
+
 // ── Question variants (migration idea_question_variants) ──────────────────
 // Additive: one new table, no existing table altered, no foreign keys. Other
 // wordings of an idea's question (same answer); a review shows one of them,

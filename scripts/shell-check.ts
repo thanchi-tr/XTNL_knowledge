@@ -131,9 +131,12 @@ eq("nav: Tasks' sub-pages: Board, Weekly review, Habits, Rules", sectionById("ta
   ["Habits", "/today/habits"],
   ["Rules", "/today/rules"],
 ]);
-eq("nav: Body's sub-pages: This week, Exercise", sectionById("body").subs.map((s) => [s.label, s.href]), [
+// Re-pinned for the check-in (health-2026-10-27.md D23, phase 1): Body › Mind (/train/mind), the check-in's home, follows
+// Exercise, a compatible addition ("This week, Exercise, Mind").
+eq("nav: Body's sub-pages: This week, Exercise, Mind", sectionById("body").subs.map((s) => [s.label, s.href]), [
   ["This week", "/train"],
   ["Exercise", "/train/exercise"],
+  ["Mind", "/train/mind"],
 ]);
 // Re-pinned for blueprint P2 (D6): the /skills row is labelled Emblems; its route and its tree icon stay. Re-pinned for P5
 // (D7 to D9): You › Skills (/you/skills, the named competencies by hours) is the second row, a compatible addition.
@@ -159,7 +162,7 @@ eq(
   ["/review", "/workspace", "/library/abc", "/add", "/structure", "/taxonomy", "/you/roadmap", "/you/roadmap/new"].map(sectionOf),
   ["ideas", "ideas", "ideas", "ideas", "ideas", "ideas", "ideas", "ideas"]
 );
-eq("nav: /train and /train/exercise are Body", ["/train", "/train/exercise"].map(sectionOf), ["body", "body"]);
+eq("nav: /train, /train/exercise and /train/mind are Body", ["/train", "/train/exercise", "/train/mind"].map(sectionOf), ["body", "body", "body"]);
 {
   const profilePaths = ["/you", "/you/loadout", "/you/moments", "/you/stats", "/skills", "/skills/mind", "/settings", "/overview", "/dashboard"];
   eq("nav: the profile pages light no tab (sectionOf null)", profilePaths.map(sectionOf), profilePaths.map(() => null));
@@ -202,9 +205,10 @@ eq("nav: /today/habits title (from the path: no ShellTitle swap)", titleFor("/to
 eq("nav: /add title", titleFor("/add"), { eyebrow: "Ideas", title: "New idea" });
 eq("nav: /library/[id] title", titleFor("/library/xyz"), { eyebrow: "Ideas", title: "Idea" });
 eq("nav: /structure title", titleFor("/structure"), { eyebrow: "Ideas", title: "Fields & Domains" });
-eq("nav: /train and /train/exercise titles", [titleFor("/train"), titleFor("/train/exercise")], [
+eq("nav: /train, /train/exercise and /train/mind titles", [titleFor("/train"), titleFor("/train/exercise"), titleFor("/train/mind")], [
   { eyebrow: "Body", title: "This week" },
   { eyebrow: "Body", title: "Exercise" },
+  { eyebrow: "Body", title: "Mind" },
 ]);
 eq("nav: /dev/style title", titleFor("/dev/style"), { eyebrow: "Dev · Style", title: "Style" });
 eq("nav: each /dev/style fixture route has its own title (no ShellTitle swap)", ["/dev/style/today", "/dev/style/review", "/dev/style/celebrate", "/dev/style/art/ladder", "/dev/style/settings"].map((p) => titleFor(p).title), [
@@ -370,10 +374,11 @@ check(
     check("phone strip: the section strip keeps the page's 16 px gutter and leaves from 600 (the top bar carries the tabs there)", /padding:\s*2px 16px/.test(body("nav.sec-tabs")) && /display:\s*none/.test(body("nav.sec-tabs", /min-width:\s*600px/)));
     check("phone strip: the profile strip leaves from 600 too (you.css)", youCss.some((r) => r.at.some((a) => /min-width:\s*600px/.test(a)) && /\.you-tabs/.test(r.selector) && /display:\s*none/.test(r.body)));
   }
+  // Re-pinned for the check-in (D23): Body's strip has three tabs (This week, Exercise, Mind).
   eq(
-    "phone strip: each section's tabs, from nav.ts (Ideas 5, Tasks 4, Body 2; all over one page, so all shown)",
+    "phone strip: each section's tabs, from nav.ts (Ideas 5, Tasks 4, Body 3; all over one page, so all shown)",
     SECTIONS.map((x) => [x.id, x.subs.length]),
-    [["ideas", 5], ["tasks", 4], ["body", 2]]
+    [["ideas", 5], ["tasks", 4], ["body", 3]]
   );
   check(`tabs at 344: the Ideas strip (${widthAt(sectionById("ideas").subs.map((x) => x.label))} px at least) scrolls, so its cue matters`, widthAt(sectionById("ideas").subs.map((x) => x.label)) > 312);
 }

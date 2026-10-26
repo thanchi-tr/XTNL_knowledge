@@ -52,6 +52,8 @@ export type CacheTag =
   | "roadmap"
   /** Exercise sessions (src/lib/exercise-server.ts). */
   | "exercise"
+  /** Check-ins and their prefs: the pause and the low-pattern card's last hide (MoodCheck, MindPrefs; src/lib/mind-server.ts). */
+  | "mind"
   /** Word completion's record of the user's picks and passes (WordChoice; src/lib/vocabulary.ts). */
   | "words"
   /**
@@ -68,7 +70,7 @@ export type CacheTag =
  * reads them, so the shell does not rebuild for them. Not 'work' either: the
  * work tabs' search index is read by the work frame, never by the shell.
  */
-export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight", "roadmap", "exercise"];
+export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight", "roadmap", "exercise", "mind"];
 
 /**
  * Short by design. The cache exists to collapse the several round trips of

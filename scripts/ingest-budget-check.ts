@@ -19,12 +19,16 @@
  *   4. P8 (D34): a widget tick is 1 tap. The cover-screen widget's row tick runs WidgetTick, which queues the tick on
  *      the phone and sends it (no dialog, no screen opened); every row but a proof or reading one ticks (Check's own
  *      rule). The quick-settings tile opens the quick line at its task section, as the Quick task shortcut does.
+ *   5. The check-in on the web (health-2026-10-27.md D2, D3; brief §2.1, §4) is 1 tap to open plus 2: Today's strip and
+ *      Body › Mind's Check in open the sheet in one tap; in it the grid tap picks, and a stress tap then saves (while
+ *      no word or tag was added), or Save saves the grid alone. The phone's Check row, widget and tile (phase 2) join
+ *      this part when they exist.
  *
  * What is measured and what is wiring (P6 review): part 2's count is derived (the keys enterAction and the gates take,
  * and the writes tickNamedRowCore makes through its stubs), and so is part 1's key (one keydown through decideBoardKey,
- * whose run is the tick, and nothing left waiting after it). The taps of parts 1, 3 and 4 are wiring pins: they read
- * the source for a path with nothing between the tap and the tick (no confirm, no sheet, no screen opened), so they
- * fail when one is added on that path, and their names say "wiring", never a measured count.
+ * whose run is the tick, and nothing left waiting after it). The taps of parts 1, 3, 4 and 5 are wiring pins: they read
+ * the source for a path with nothing between the tap and the tick or the save (no confirm, no sheet, no screen
+ * opened), so they fail when one is added on that path, and their names say "wiring", never a measured count.
  */
 import "./_no-model";
 import { readFileSync } from "node:fs";
@@ -42,6 +46,9 @@ import type { DayKey } from "../src/lib/life-day";
 const TICK_BUDGET = 1;
 const DONE_NOW_BUDGET = 3;
 const QUICK_CHECK_TAPS = 2;
+/** The check-in: one tap opens the sheet, then two (the grid, and a stress level or Save). */
+const CHECK_IN_OPEN_TAPS = 1;
+const CHECK_IN_TAPS = 2;
 
 const ROOT = join(__dirname, "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8").replace(/\r\n/g, "\n");
@@ -198,9 +205,39 @@ function widgetTick(): void {
   );
 }
 
+// ── 5. The check-in on the web: 1 tap to open + 2 ───────────────────────────
+function checkIn(): void {
+  console.log(`\n── 5. The check-in on the web: ${CHECK_IN_OPEN_TAPS} tap to open + ${CHECK_IN_TAPS}`);
+  const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  const strip = code(read("src/components/mind/CheckInStrip.tsx"));
+  const card = code(read("src/components/mind/MindCard.tsx"));
+  const sheet = code(read("src/components/mind/CheckInSheet.tsx"));
+  const grid = code(read("src/components/mind/MindGrid.tsx"));
+  check(
+    `web (wiring): Today's strip and Body › Mind's Check in open the sheet in ${CHECK_IN_OPEN_TAPS} tap (no confirm, no screen between)`,
+    /<button ref=\{btnRef\} type="button" className="mind-strip-btn" aria-haspopup="dialog" onClick=\{\(\) => setOpen\(true\)\}>/.test(strip) &&
+      /<Button variant="primary" size="lg" icon="grid" block aria-haspopup="dialog" onClick=\{\(\) => setOpen\(true\)\}>/.test(card) &&
+      /<CheckInSheet\s+open=\{open\}/.test(strip) && /<CheckInSheet\s+open=\{open\}/.test(card)
+  );
+  check(
+    "web (wiring): tap 1, the grid: one click picks the cell (cellAt), nothing to confirm",
+    /function onClick\(e: MouseEvent<HTMLDivElement>\) \{\s*const box = e\.currentTarget\.getBoundingClientRect\(\);\s*const cell = cellAt\([^)]*\);\s*if \(cell\) onChange\(cell\);\s*\}/.test(grid) && /onChange=\{pick\}/.test(sheet)
+  );
+  check(
+    `web (wiring): tap 2, a stress level, saves while nothing else was added (grid + stress = ${CHECK_IN_TAPS}); else Save saves (grid + Save = ${CHECK_IN_TAPS})`,
+    /const stressSaves = cell !== null && !extras;/.test(sheet) && /if \(stressSaves\) \{\s*setStress\(value\);\s*save\(value\);\s*return;\s*\}/.test(sheet) && /onClick=\{\(\) => tapStress\(s\.value\)\}/.test(sheet) &&
+      /<Button variant="primary" size="lg" onClick=\{\(\) => save\(\)\} disabled=\{!cell \|\| pending\}>/.test(sheet)
+  );
+  check(
+    "web (wiring): the save is the save: logCheck in the same tap (no timer, no second sheet), and the opener shows the receipt",
+    /startTransition\(async \(\) => \{\s*try \{\s*const res = await logCheck\(/.test(sheet) && !/setTimeout|setInterval/.test(/export function CheckInForm[\s\S]*$/.exec(sheet)?.[0] ?? "x setTimeout")
+  );
+}
+
 void doneNowLine().then(() => {
   quickCheck();
   widgetTick();
+  checkIn();
   console.log(`\ningest-budget-check: ${failed ? `${failed} failed` : "all passed"}`);
   process.exit(failed ? 1 : 0);
 });

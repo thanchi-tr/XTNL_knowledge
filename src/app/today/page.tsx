@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "@/components/task-style/task-style.css";
+import "@/components/mind/mind.css";
 import { after } from "next/server";
 import { redirect } from "next/navigation";
 import { getCurrentUserId } from "@/lib/user";
@@ -28,6 +29,8 @@ import { loadMomentum, settleMomentum } from "@/lib/momentum-server";
 import { creditTagsOn } from "@/lib/credits";
 import { loadNextWeek } from "@/lib/week-calibration-server";
 import { NextWeekCard } from "@/components/home/NextWeekCard";
+import { loadMindView } from "@/lib/mind-server";
+import { CheckInSlot } from "@/components/mind/CheckInSlot";
 
 // The board turns on the clock (a 04:00 day edge, a ten-minute undo window)
 // and on every tick — never statically cache it.
@@ -55,6 +58,12 @@ export const metadata: Metadata = { title: "Today" };
  * (week-calibration-server loadNextWeek: Today's three sizes, the capacity
  * suggestion and the one-tap suggestions), headed "This week". Null at once
  * while AUDIT_LAUNCH_DAY is not in force, and on every other day no read.
+ *
+ * The check-in (health-2026-10-27.md D3): a slim "Check in" row under the
+ * strip that opens the check-in sheet, while check-ins are open (mind-server
+ * loadMindView: before MIND_LAUNCH_DAY it answers live: false at once and
+ * reads nothing), the table is there and they aren't paused. Only that
+ * yes or no reaches the board: no count, no value.
  */
 export default async function TodayPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   // A work tab asked for by the query (/today?board=<id>, an old call back reminder's tap URL; work-boards.ts) is its own
@@ -94,6 +103,8 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const namedTitlesLoad = loadTodayNamedTitles(userId, now).catch(() => ({}) as Record<string, string[]>);
   // P32: the week's calibration, Mondays only (started with the wave, awaited after it; a failure reads as none).
   const nextWeekLoad = weekdayOf(day) === 1 ? loadNextWeek(userId, now).catch(() => null) : Promise.resolve(null);
+  // The check-in row (D3): started with the wave, awaited after it (cached; nothing read before launch; a failure reads as no row).
+  const mindLoad = loadMindView(userId, now).catch(() => null);
   const [board, streak, bosses, feed, quests, weight, momentum, questCard] = await Promise.all([
     loadTodayBoard(userId, day, now),
     getDailyStreak(userId),
@@ -108,6 +119,8 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   ]);
   const namedTitles = await namedTitlesLoad;
   const nextWeek = await nextWeekLoad;
+  const mind = await mindLoad;
+  const checkInOpen = mind != null && mind.live && mind.ready && !mind.paused;
 
   // Writes a render may owe, after the response and only when owed: the
   // day's first open fixes the quest's target, and a study task the day's
@@ -173,6 +186,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
         footClock={{ time: clock.time, zone: clock.zone, tz: clock.tz }}
         launched={isLaunched(day)}
         elsewhere={elsewhere.length > 0 ? <DueElsewhere rows={elsewhere} /> : null}
+        checkIn={checkInOpen ? <CheckInSlot /> : null}
         mainQuest={mainQuestView ? <MainQuestCard view={mainQuestView} /> : null}
         nextWeek={nextWeek ? <NextWeekCard view={nextWeek} title="This week" headingId="nw-today-h" /> : null}
         namedTitles={Object.keys(namedTitles).length > 0 ? { names: namedTitles, mark: <NamedMark /> } : null}
