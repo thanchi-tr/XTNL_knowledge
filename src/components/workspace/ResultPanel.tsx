@@ -38,11 +38,11 @@ import { formatAmount, formatNumber } from "@/components/ui/format";
 import type { SubmitReviewResult } from "@/app/actions/review";
 import { medallionMaterial } from "@/lib/materials";
 import { play } from "@/lib/motion";
-import { formulaOf, sealsOf, type RunCard } from "./review-model";
+import { formulaOf, overrideLineOf, sealsOf, type RunCard } from "./review-model";
 
 export const AUTO_ADVANCE_MS = 1800;
-/** The formats a miss can be counted as right on by hand (srs.ts OVERRIDE_TYPES: the checker matches words). */
-const OVERRIDABLE: ReadonlySet<string> = new Set(["SHORT", "LIST"]);
+/** The formats a miss can be counted as right on by hand (srs.ts OVERRIDE_TYPES: the typed answers, whose checker matches words or form). */
+const OVERRIDABLE: ReadonlySet<string> = new Set(["SHORT", "LIST", "CLOZE", "FORMULA", "NUMERIC"]);
 
 interface Props {
   open: boolean;
@@ -59,7 +59,7 @@ interface Props {
   /** Where the "+N" token takes off from (the runner flies it to the session tally). */
   payRef?: RefObject<HTMLSpanElement | null>;
   /**
-   * "I was right": the reviewer overrides the checker on a short answer or a list it marked wrong (overrideReview).
+   * "I was right": the reviewer overrides the checker on a typed answer it marked wrong (OVERRIDABLE; overrideReview).
    * Absent: not offered. `overriding` while it is on its way; `overrideError` when it was refused.
    */
   onOverride?: () => void;
@@ -211,10 +211,10 @@ export function ResultPanel({ open, card: cardNow, result: resultNow, answer: an
                   ? "The combo resets to 0. Points already paid stay paid."
                   : `The combo drops to ${result.combo.next}. Points already paid stay paid.`}
               </p>
-              {/* The checker matches words; a right meaning in other words is the reviewer's call to make. */}
+              {/* The checker matches words, or form and value; a right answer it read wrong is the reviewer's call to make. */}
               {onOverride && OVERRIDABLE.has(card.questionType) && (
                 <div className="rv-override">
-                  <p className="t-meta">Same meaning in other words? The checker compares words, so you can count it as right.</p>
+                  <p className="t-meta">{overrideLineOf(card.questionType)}</p>
                   <Button variant="secondary" size="lg" block onClick={onOverride} disabled={overriding}>
                     {overriding ? "Counting it…" : "I was right: count it"}
                   </Button>

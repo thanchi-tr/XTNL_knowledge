@@ -692,12 +692,18 @@ export async function applyReviewResult(
   return outcome;
 }
 
-/** How long after a miss it can still be counted as right (overrideReview), and on which formats. */
+/**
+ * How long after a miss it can still be counted as right (overrideReview), and on which formats: the typed answers a
+ * checker can read wrong. SHORT, LIST and CLOZE match words (a right meaning in other words, a plural, a dropped word);
+ * FORMULA and NUMERIC match value (an equal expression in a notation the parser can't read; a number written as 1/2 or
+ * 50%). MULTI and ORDER are picked, not typed, so their check is exact and a miss there stands; DIAGRAM labels are typed
+ * but stay out by choice (the user's ask of 2026-10-27 named math and fill the blanks).
+ */
 export const OVERRIDE_WINDOW_MS = 10 * 60_000;
-export const OVERRIDE_TYPES: readonly string[] = ["SHORT", "LIST"];
+export const OVERRIDE_TYPES: readonly string[] = ["SHORT", "LIST", "CLOZE", "FORMULA", "NUMERIC"];
 
 /**
- * The reviewer's own call on a miss the checker made (SHORT and LIST, whose checker matches words, not meaning):
+ * The reviewer's own call on a miss the checker made (OVERRIDE_TYPES: the typed formats, whose checker matches words or form, not meaning):
  * "I was right". Takes back the miss on the server's own record of it, never on the client's word: the idea's latest
  * REVIEW row must be that miss (xp 0, 'strike', 'degraded' or 'shielded' with the level it was taken at), inside
  * OVERRIDE_WINDOW_MS, and never overridden before (an ADJUST row keyed 'review-override:<row>' marks it, so a second
@@ -717,7 +723,7 @@ export async function undoMissCore(userId: string, ideaId: string, now: Date = n
     ]);
   let [idea, row] = await read();
   if (!idea) return { ok: false, error: "That idea no longer exists." };
-  if (!OVERRIDE_TYPES.includes(idea.questionType)) return { ok: false, error: "Only a short answer or a list can be counted as right by hand." };
+  if (!OVERRIDE_TYPES.includes(idea.questionType)) return { ok: false, error: "Only a typed answer (short, list, fill the blanks, formula or number) can be counted as right by hand." };
   const missOf = (r: typeof row) => (r && r.xp === 0 ? /^(strike|degraded|shielded|retry) · L(\d+)/.exec(r.detail ?? "") : null);
   // The miss's row is written just after its answer is sent: give it a moment once.
   if (!missOf(row)) {

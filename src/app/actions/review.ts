@@ -204,8 +204,9 @@ export interface OverrideReviewInput {
 }
 
 /**
- * "I was right": the reviewer overrides the checker on a miss (SHORT and LIST, whose checker matches words, so a
- * right meaning in other words can read as wrong). The miss is taken back on the server's own record (srs.ts
+ * "I was right": the reviewer overrides the checker on a miss on a typed answer (srs.ts OVERRIDE_TYPES: SHORT, LIST
+ * and CLOZE, whose checker matches words, so a right meaning in other words can read as wrong; FORMULA and NUMERIC,
+ * whose checker matches form and value, so an equal form, a rounding or a unit can read as wrong). The miss is taken back on the server's own record (srs.ts
  * undoMissCore: the idea's latest review must be that miss, within 10 minutes, never overridden before; a lost level
  * and its points come back), then the answer is recorded as a pass, paid as any pass is at the level it was given.
  * Returns the same result a right answer returns, so the runner shows it in the miss's place.

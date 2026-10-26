@@ -93,6 +93,8 @@ function start(state: FixtureState): { index: number; answered: number; phase: "
     case "seal":
       return { index: 4, answered: 5, phase: "answered" };
     case "miss":
+    case "miss-cloze":
+    case "miss-math":
       return { index: 5, answered: 6, phase: "answered" };
     case "retry":
       // Card 6, missed, asked again at the end of the run.
@@ -227,7 +229,7 @@ export function ReviewFixtures({ state, data, loadoutStrip }: { state: FixtureSt
         }}
         onRetry={() => setPhase({ kind: "ask" })}
         onRequestExit={() => window.location.assign("/dev/style/review?state=hub")}
-        // Fixtures: "I was right" shows on a SHORT or LIST miss and is inert here (nothing is saved).
+        // Fixtures: "I was right" shows on a typed miss (miss-cloze, miss-math; never on "miss", a choice) and is inert here (nothing is saved).
         onOverride={() => {}}
       />
     </>

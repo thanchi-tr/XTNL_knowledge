@@ -91,9 +91,13 @@ import {
   seededOrder,
   sessionCardFacts,
   tallyOf,
+  answerTextOf,
+  overrideLineOf,
   type CardResult,
 } from "../src/components/workspace/review-model";
-import { reviewFixtures } from "../src/app/dev/style/review/fixtures";
+import { TYPED_MISS, reviewFixtures } from "../src/app/dev/style/review/fixtures";
+import { displayAnswer } from "../src/lib/idea-display";
+import { verifyAnswer } from "../src/lib/verification";
 import { GET as workspaceRedirect } from "../src/app/workspace/route";
 
 const ROOT = join(__dirname, "..");
@@ -458,9 +462,18 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   check("action: grading stays on the server; the answer returns only after it", /= gradeReview\(\{ questionType: idea\.questionType, answer: idea\.answer, answerCaseSensitive: idea\.answerCaseSensitive, given: input\.userAnswer \}\)/.test(submit) && submit.indexOf("gradeReview(") < submit.indexOf("expected:"));
   check("action: L3's detectCelebrations runs after the write and cannot fail the answer", /detectCelebrations\(before, afterSnap/.test(submit) && /\.catch\(\(\) => \[\]\)/.test(submit));
 
-  // "I was right" (overrideReview): the reviewer overrides the checker on a SHORT or LIST miss, on the server's record.
+  // "I was right" (overrideReview): the reviewer overrides the checker on a typed miss (SHORT, LIST, CLOZE, FORMULA,
+  // NUMERIC: the user's ask, 2026-10-27, "allow math, fill in the gap question can be over mark by I was correct (same
+  // as short answer)"), on the server's record. MULTI and ORDER are picked, not typed, so a miss there stands; DIAGRAM
+  // labels are typed but stay out by choice (the ask named math and fill the blanks).
   const undo = srs.slice(srs.indexOf("export async function undoMissCore"), srs.indexOf("export async function degradeOverdueIdeas"));
-  check("override: only SHORT and LIST, within 10 minutes of the miss", /OVERRIDE_TYPES: readonly string\[\] = \["SHORT", "LIST"\]/.test(srs) && /OVERRIDE_WINDOW_MS = 10 \* 60_000/.test(srs));
+  check(
+    "override: the typed formats only (SHORT, LIST, CLOZE, FORMULA, NUMERIC; never MULTI, ORDER or DIAGRAM), within 10 minutes of the miss",
+    /OVERRIDE_TYPES: readonly string\[\] = \["SHORT", "LIST", "CLOZE", "FORMULA", "NUMERIC"\]/.test(srs) &&
+      !/OVERRIDE_TYPES: readonly string\[\] = \[[^\]]*"(MULTI|ORDER|DIAGRAM)"/.test(srs) &&
+      /OVERRIDE_WINDOW_MS = 10 \* 60_000/.test(srs) &&
+      /if \(!OVERRIDE_TYPES\.includes\(idea\.questionType\)\) return \{ ok: false, error: "Only a typed answer \(short, list, fill the blanks, formula or number\) can be counted as right by hand\." \};/.test(srs)
+  );
   check(
     "override: the miss is read from the idea's own latest REVIEW row (xp 0, its outcome and level), never from the client",
     /source: "REVIEW", sourceId: ideaId \}, orderBy: \{ occurredAt: "desc" \}/.test(undo) && /r\.xp === 0 \? \/\^\(strike\|degraded\|shielded\|retry\) · L\(\\d\+\)\//.test(undo)
@@ -470,7 +483,47 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   const over = action.slice(action.indexOf("export async function overrideReview"));
   check("override: the action takes the miss back first, then records the answer as a pass", over.indexOf("undoMissCore(userId, input.ideaId, now)") > 0 && over.indexOf("undoMissCore(") < over.indexOf("applyReviewResult(idea.id, true, now, combo"));
   const panelSrc = code(read("src/components/workspace/ResultPanel.tsx"));
-  check("override: the result panel offers 'I was right' on a SHORT or LIST miss only", /OVERRIDABLE: ReadonlySet<string> = new Set\(\["SHORT", "LIST"\]\)/.test(panelSrc) && /\{onOverride && OVERRIDABLE\.has\(card\.questionType\) && \(/.test(panelSrc));
+  check(
+    "override: the result panel offers 'I was right' on the server's formats exactly (OVERRIDABLE = OVERRIDE_TYPES), never on a choice, an order or a diagram",
+    /OVERRIDABLE: ReadonlySet<string> = new Set\(\["SHORT", "LIST", "CLOZE", "FORMULA", "NUMERIC"\]\)/.test(panelSrc) && /\{onOverride && OVERRIDABLE\.has\(card\.questionType\) && \(/.test(panelSrc)
+  );
+  // The line above the button says what each format's checker can read wrong (the review round: a formula is checked by
+  // value, so any equal form already passes; a number is read as a plain number; the worded formats compare words).
+  check(
+    "override: the line per format: a formula 'a notation the checker can't read … compares values', a number '1/2 or 50% … a plain number', a worded answer (SHORT, LIST, CLOZE) 'compares words'",
+    overrideLineOf("FORMULA") === "Same formula in a notation the checker can't read? It compares values, so you can count it as right." &&
+      overrideLineOf("NUMERIC") === "Same number written another way, like 1/2 or 50%? The checker reads a plain number, so you can count it as right." &&
+      ["SHORT", "LIST", "CLOZE"].every((t) => overrideLineOf(t) === "Same meaning in other words? The checker compares words, so you can count it as right.") &&
+      /<p className="t-meta">\{overrideLineOf\(card\.questionType\)\}<\/p>/.test(panelSrc)
+  );
+  // A cloze answer reads blank by blank, numbered as "The answer" is (displayAnswer), so a swapped pair shows as swapped.
+  check(
+    "override: 'You answered' on a cloze numbers its blanks as 'The answer' does ([1] …  [2] …), so a swapped pair or a blank with a comma reads as such; every other format reads as before",
+    answerTextOf("CLOZE", ["long tail", "median"]) === "[1] long tail  [2] median" &&
+      displayAnswer("CLOZE", JSON.stringify(["median", "long tail"])) === "[1] median  [2] long tail" &&
+      answerTextOf("CLOZE", ["Paris, France", "Seine"]) === "[1] Paris, France  [2] Seine" &&
+      answerTextOf("LIST", ["a", "b"]) === "a, b" &&
+      answerTextOf("SHORT", "x") === "x" &&
+      /onSubmit=\{\(a\) => onAnswer\(a, answerTextOf\(card\.questionType, a\)\)\}/.test(code(read("src/components/workspace/SessionCard.tsx")))
+  );
+  // /dev/style/review reaches a typed miss for each kind (miss-cloze, miss-math), so the button can be seen at 344 px;
+  // each is a right answer the real checker rejects (verifyAnswer: false), shown as the runner and the server show it.
+  const typedMiss = (["CLOZE", "FORMULA"] as const).map((t) => reviewFixtures(t).results[5]);
+  check(
+    "override: the fixtures' miss-cloze and miss-math states miss card 6 as a CLOZE and a FORMULA the real checker rejects (verifyAnswer false on their given and stored answers), shown numbered and as displayAnswer shows it; the plain miss stays a choice",
+    typedMiss[0].card.questionType === "CLOZE" &&
+      typedMiss[1].card.questionType === "FORMULA" &&
+      !typedMiss.some((r) => r.result.correct) &&
+      verifyAnswer("CLOZE", TYPED_MISS.CLOZE.given, TYPED_MISS.CLOZE.stored) === false &&
+      verifyAnswer("FORMULA", TYPED_MISS.FORMULA.given, TYPED_MISS.FORMULA.stored) === false &&
+      typedMiss[0].result.expected === "[1] median  [2] long tail" &&
+      typedMiss[0].answer === "[1] middle value  [2] tail" &&
+      typedMiss[1].result.expected === "Var(X) + Var(Y)" &&
+      reviewFixtures().results[5].card.questionType === "MULTI" &&
+      /"miss", "miss-cloze", "miss-math"/.test(read("src/app/dev/style/review/states.ts")) &&
+      /"miss", "miss-cloze", "miss-math"/.test(read("scripts/ui-audit.mjs")),
+    JSON.stringify(typedMiss.map((r) => [r.card.questionType, r.answer, r.result.expected]))
+  );
 
   const route = [...walk("src/components/workspace"), ...walk("src/app/review")];
   const withRandom = route.filter((f) => /\.(ts|tsx)$/.test(f) && /Math\.random/.test(code(read(f))));

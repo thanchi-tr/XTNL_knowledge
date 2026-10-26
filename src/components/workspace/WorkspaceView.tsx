@@ -279,7 +279,7 @@ export function WorkspaceView(props: Props) {
   }
 
   /**
-   * "I was right" on a short answer or a list the checker marked wrong: the server takes the miss back on its own
+   * "I was right" on a typed answer the checker marked wrong (short, list, fill the blanks, formula, number): the server takes the miss back on its own
    * record and pays the answer as a pass (overrideReview); the result replaces the miss, in the panel and the recap.
    */
   function overrideMiss() {

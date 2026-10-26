@@ -19,7 +19,8 @@ import { IDEA_MASTERY_POINTS, comboMasteryBonus, reviewMasteryFraction } from "@
 import { historyOf, trueFactOf, type HistoryRow } from "@/lib/review-facts";
 import { COMBO_CAP, EASE_DEFAULT, MASTERY_BONUS, MASTERY_LEVEL, comboMultiplier, domainLevelProgress, easeAfterClean, easeAfterLapse, ideaIntervalDays, relearnIntervalDays, reviewPayout, riseLine, riseStep } from "@/lib/xp";
 import { formatAmount, formatNumber } from "@/components/ui/format";
-import type { CardResult, RunCard } from "@/components/workspace/review-model";
+import { answerTextOf, type CardResult, type RunCard } from "@/components/workspace/review-model";
+import { displayAnswer } from "@/lib/idea-display";
 import type { RecentIdea, ReviewEffects } from "@/components/workspace/ReviewHub";
 import type { StripSlot } from "@/components/skills/LoadoutStrip";
 import { SKILL_POOL } from "@/lib/skill-pool";
@@ -178,13 +179,14 @@ function pass(card: RunCard, combo: number, hist: HistoryRow[], opts: { domainLe
 }
 
 /** The day's lapse (a first miss): strike 1 of 2, the spacing tightened (xp.ts easeAfterLapse). */
-function miss(card: RunCard, combo: number, hist: HistoryRow[]): SubmitReviewResult {
+function miss(card: RunCard, combo: number, hist: HistoryRow[], shown: { expected: string; explanation: string } | null = null): SubmitReviewResult {
   const ease = { before: EASE_DEFAULT, after: easeAfterLapse(EASE_DEFAULT) };
   return {
     correct: false,
     outcome: { outcome: "strike", failedAttempts: 1, strikeLimit: 2, nextCombo: 0, nextDue: new Date(NOW.getTime() + 86_400_000).toISOString(), ease },
-    expected: FX_ANSWERS[card.id],
+    expected: shown?.expected ?? FX_ANSWERS[card.id],
     explanation:
+      shown?.explanation ??
       "The median depends only on rank order, so the long tail moves it by at most a position. The mode is not defined for continuous data without binning.",
     judged: null,
     combo: { before: combo, multiplier: 1, cap: COMBO_CAP, capped: false, next: 0, nextMultiplier: 1 },
@@ -228,13 +230,35 @@ export interface ReviewFixtureData {
   recent: RecentIdea[];
 }
 
-export function reviewFixtures(): ReviewFixtureData {
+/**
+ * Card 6 as a typed format for the miss states (miss-cloze, miss-math): its stored answer and a right answer the real
+ * checker rejects (review-check runs verifyAnswer on both: a word it can't match, a notation it can't read), shown as
+ * the runner (answerTextOf) and the server (displayAnswer) show them, so the result panel offers "I was right".
+ */
+export const TYPED_MISS: Record<"CLOZE" | "FORMULA", { card: Partial<RunCard>; stored: string; given: string | string[]; explanation: string }> = {
+  CLOZE: {
+    card: { questionType: "CLOZE", question: "Under strong right skew the [1] is the centre least pulled by the [2].", preview: "Under strong right skew the [1] is the centre least pulled by the [2].", prompt: null },
+    stored: JSON.stringify(["median", "long tail"]),
+    given: ["middle value", "tail"],
+    explanation: "The median depends only on rank order, so the long tail moves it by at most a position.",
+  },
+  FORMULA: {
+    card: { questionType: "FORMULA", question: "Var(X + Y), X and Y independent", preview: "Var(X + Y), X and Y independent", prompt: null },
+    stored: "Var(X) + Var(Y)",
+    given: "sigma_X^2 + sigma_Y^2",
+    explanation: "Independence makes the covariance term zero, so the variances add.",
+  },
+};
+
+export function reviewFixtures(missType: "CLOZE" | "FORMULA" | null = null): ReviewFixtureData {
   // Reset the running domain totals so every render computes the same figures.
   DOMAINS.Probability = { id: "fx-prob", name: "Probability", level: 6, points: 2380 };
   DOMAINS.Combinatorics = { id: "fx-comb", name: "Combinatorics", level: 4, points: 1100 };
   DOMAINS["Descriptive statistics"] = { id: "fx-desc", name: "Descriptive statistics", level: 5, points: 1180 };
 
-  const [c1, c2, c3, c4, c5, c6] = FX_CARDS;
+  const typed = missType ? TYPED_MISS[missType] : null;
+  const [c1, c2, c3, c4, c5, c6base] = FX_CARDS;
+  const c6: RunCard = typed ? { ...c6base, ...typed.card } : c6base;
   const r1 = pass(c1, 0, history([["2026-09-30", "REVIEW", "advanced"]]), { interval: 2 });
   const r2 = pass(c2, 1, history([["2026-09-17", "REVIEW", "advanced"], ["2026-09-24", "REVIEW", "advanced"]]), { interval: 12 });
   const r3 = pass(c3, 2, history([["2026-09-27", "REVIEW", "advanced"], ["2026-09-29", "REVIEW", "advanced"]]), { interval: 4 });
@@ -257,7 +281,7 @@ export function reviewFixtures(): ReviewFixtureData {
     ]),
     { domainLevelAfter: 7, interval: 50 }
   );
-  const r6 = miss(c6, 5, history([["2026-09-25", "REVIEW", "advanced"]]));
+  const r6 = miss(c6, 5, history([["2026-09-25", "REVIEW", "advanced"]]), typed && missType && { expected: displayAnswer(missType, typed.stored), explanation: typed.explanation });
   // Card 6 comes back at the end and is right: relearned at its lapsed ease, level held, back at the relearn interval.
   const lapsedEase = easeAfterLapse(EASE_DEFAULT);
   const r7 = pass(c6, 0, history([["2026-09-25", "REVIEW", "advanced"], [FX_TODAY, "REVIEW", "strike · L3"]]), {
@@ -289,11 +313,11 @@ export function reviewFixtures(): ReviewFixtureData {
   r5.celebrations = [seal];
 
   let done = 9;
-  const queue: RunCard[] = [...FX_CARDS, c6];
+  const queue: RunCard[] = [c1, c2, c3, c4, c5, c6, c6];
   const results: CardResult[] = [r1, r2, r3, r4, r5, r6, r7].map((result, i) => {
     done += 1;
     result.quest = { done, target: 15 };
-    return { card: queue[i], result, answer: i === 5 ? "Mean" : FX_ANSWERS[queue[i].id] };
+    return { card: queue[i], result, answer: i === 5 ? (typed && missType ? answerTextOf(missType, typed.given) : "Mean") : FX_ANSWERS[queue[i].id] };
   });
   results[0].result.streakSecured = true;
 
@@ -366,7 +390,7 @@ export function reviewFixtures(): ReviewFixtureData {
   };
 
   return {
-    cards: FX_CARDS,
+    cards: [c1, c2, c3, c4, c5, c6],
     queue,
     results,
     seal,

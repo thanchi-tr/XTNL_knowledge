@@ -491,6 +491,27 @@ export function sameOption(a: string, b: string): boolean {
   return a === b;
 }
 
+/**
+ * The line above "I was right" (ResultPanel), per format: what its checker can read wrong. A formula is checked by
+ * value at sample points (formula-equivalence: any equal form already passes), so a miss is notation it can't read or
+ * a different value; a number is read as a plain number (1/2 or 50% is not one); the worded formats compare words.
+ */
+export function overrideLineOf(questionType: string): string {
+  if (questionType === "FORMULA") return "Same formula in a notation the checker can't read? It compares values, so you can count it as right.";
+  if (questionType === "NUMERIC") return "Same number written another way, like 1/2 or 50%? The checker reads a plain number, so you can count it as right.";
+  return "Same meaning in other words? The checker compares words, so you can count it as right.";
+}
+
+/**
+ * What the player answered, readable beside "The answer" (idea-display displayAnswer): a cloze's blanks numbered and
+ * spaced as that line numbers them ("[1] median  [2] long tail"), so each blank lines up with its own (a swapped pair
+ * or a blank holding a comma reads as such before "I was right"); every other format as answerText.
+ */
+export function answerTextOf(questionType: string, answer: string | string[] | Record<string, string>): string {
+  if (questionType === "CLOZE" && Array.isArray(answer)) return answer.map((blank, i) => `[${i + 1}] ${blank}`).join("  ");
+  return answerText(answer);
+}
+
 /** A readable form of what the player answered. */
 export function answerText(answer: string | string[] | Record<string, string>): string {
   if (typeof answer === "string") return answer;

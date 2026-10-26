@@ -24,7 +24,7 @@ import { cx } from "@/components/ui/cx";
 // Revision 5, lane 9 (contracts ruling 67): pv.named after a Domain Gemini named
 import { DomainName } from "@/components/glyph/NamedMark";
 import { FormatAnswer, formatPrompt } from "./FormatAnswer";
-import { answerText, sameOption, type RunCard } from "./review-model";
+import { answerText, answerTextOf, sameOption, type RunCard } from "./review-model";
 
 export type CardPhase = "ask" | "pending" | "answered";
 
@@ -125,7 +125,7 @@ export function SessionCard({ card, today, phase, expected, picked, onAnswer }: 
           question={card.question}
           disabled={phase !== "ask"}
           pending={phase === "pending"}
-          onSubmit={(a) => onAnswer(a, answerText(a))}
+          onSubmit={(a) => onAnswer(a, answerTextOf(card.questionType, a))}
         />
       )}
     </>

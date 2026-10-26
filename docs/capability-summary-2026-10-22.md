@@ -24,7 +24,7 @@ A native Android app for the Fold 8 handles quick checks, review and logging thr
 - **Quick capture.** A line `idea: Q :: A` files itself in the background. If it fails or is a duplicate, it stays as an Inbox draft.
 - **Writing aids.** Word completion learned from your own writing, auto-correct (can be switched off), and a formula editor whose grading accepts equivalent forms.
 - **Review.** Cards are due from 04:00 Sydney time. A session covers all Fields, one Field or one roadmap topic. The order stays the same if you reload. A missed card comes back up to 3 times in the session. The daily quest is min(15, cards due).
-- **Grading happens on the server.** Short answers allow typos, key words and synonyms, plus a meaning check that uses no AI model. "I was right" works on Short and List misses for 10 minutes.
+- **Grading happens on the server.** Short answers allow typos, key words and synonyms, plus a meaning check that uses no AI model. "I was right" works on typed misses (Short, List, Fill the blanks, Formula and Number) for 10 minutes; a multiple choice, order or diagram miss stands.
 - **Spacing.**
   - 20 levels, with intervals from 1 day up to 2,850 days, multiplied by a per-idea ease of 0.6–1.8.
   - A card is mastered at L12. L13–20 is a ladder after mastery.
