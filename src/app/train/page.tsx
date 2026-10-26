@@ -8,6 +8,7 @@ import { durationLabel } from "@/lib/exercise";
 import { deleteWeight, logWeight, setWeightGoal } from "@/app/actions/weight";
 import { Button } from "@/components/ui/Button";
 import { WeightCard } from "@/components/train/WeightCard";
+import { SessionWeekSummary, todaySessionsLine } from "@/components/train/ExerciseWeek";
 
 // A weigh-in and a walk turn over with the life day (04:00) — never statically cache it.
 export const dynamic = "force-dynamic";
@@ -20,11 +21,14 @@ const km = (v: number): string => `${v.toFixed(v < 10 ? 2 : 1).replace(/\.?0+$/,
 /**
  * Body › This week (the three sections: Ideas, Tasks, Body): the health log.
  * The weight card (a record, never a reward: no XP, MP, streak or
- * celebration), then this week's walks, the Exercise card's own totals
- * (sessions, distance, time and climb from Monday), with "Log a walk" to
- * Body › Exercise, where walks are logged and listed. Both reads are cached
- * per life day and fail soft (the empty views) before their migrations. No
- * new data: what Body tracks is what it logs, weight and walks.
+ * celebration), then this week's exercise. Every kind (health-2026-10-27.md
+ * D23, once the strength_sets migration is applied): the Exercise card's own
+ * week (sessions, time, the WHO effort minutes and strength days, the kinds
+ * logged) with "Log exercise" to Body › Exercise. Before it, the walks'
+ * totals (sessions, distance, time and climb from Monday) with "Log a walk",
+ * as always. Both reads are cached per life day and fail soft (the empty
+ * views) before their migrations. No new data: what Body tracks is what it
+ * logs, weight and sessions.
  */
 export default async function TrainPage() {
   const now = new Date();
@@ -33,45 +37,60 @@ export default async function TrainPage() {
   // One wave; each fails soft to its empty view when its tables are missing.
   const [view, walks] = await Promise.all([loadWeightView(userId, now), loadExerciseView(userId, now)]);
   const w = walks.week;
-  const walkedToday = walks.sessions.filter((s) => s.day === today);
+  const walkedToday = walks.sessions.filter((s) => s.kind === "WALK" && s.day === today);
 
   return (
     <div className="page narrow">
       <div style={{ paddingTop: 12, display: "flex", flexDirection: "column", gap: 16 }}>
         <WeightCard view={view} today={today} actions={{ logWeight, deleteWeight, setWeightGoal }} />
-        <section className="card pad-l wt-ex-card" aria-labelledby="train-walks-h">
-          <h2 id="train-walks-h" className="t-eyebrow wt-eyebrow">
-            Walking · this week
-          </h2>
-          <dl className="wt-ex-week" aria-label="This week">
+        {walks.kindsReady ? (
+          <section className="card pad-l wt-ex-card" aria-labelledby="train-ex-h">
+            <h2 id="train-ex-h" className="t-eyebrow wt-eyebrow">
+              Exercise · this week
+            </h2>
+            <SessionWeekSummary sessions={walks.sessions} today={today} />
+            <p className="t-meta">{todaySessionsLine(walks.sessions, today) ?? "Nothing logged today yet."}</p>
             <div>
-              <dt>Walks</dt>
-              <dd>{w.sessions}</dd>
+              <Button variant="primary" href="/train/exercise" icon="train">
+                Log exercise
+              </Button>
             </div>
+          </section>
+        ) : (
+          <section className="card pad-l wt-ex-card" aria-labelledby="train-walks-h">
+            <h2 id="train-walks-h" className="t-eyebrow wt-eyebrow">
+              Walking · this week
+            </h2>
+            <dl className="wt-ex-week" aria-label="This week">
+              <div>
+                <dt>Walks</dt>
+                <dd>{w.sessions}</dd>
+              </div>
+              <div>
+                <dt>Distance</dt>
+                <dd>{km(w.distanceKm)}</dd>
+              </div>
+              <div>
+                <dt>Time</dt>
+                <dd>{durationLabel(w.durationMin)}</dd>
+              </div>
+              <div>
+                <dt>Climb</dt>
+                <dd>{w.climbM} m</dd>
+              </div>
+            </dl>
+            <p className="t-meta wt-ex-week-l">
+              {walkedToday.length > 0
+                ? `Today: ${walkedToday.length} ${walkedToday.length === 1 ? "walk" : "walks"}, ${km(walkedToday.reduce((n, s) => n + s.distanceKm, 0))}.`
+                : "From Monday. Nothing logged today yet."}
+            </p>
             <div>
-              <dt>Distance</dt>
-              <dd>{km(w.distanceKm)}</dd>
+              <Button variant="primary" href="/train/exercise" icon="train">
+                Log a walk
+              </Button>
             </div>
-            <div>
-              <dt>Time</dt>
-              <dd>{durationLabel(w.durationMin)}</dd>
-            </div>
-            <div>
-              <dt>Climb</dt>
-              <dd>{w.climbM} m</dd>
-            </div>
-          </dl>
-          <p className="t-meta wt-ex-week-l">
-            {walkedToday.length > 0
-              ? `Today: ${walkedToday.length} ${walkedToday.length === 1 ? "walk" : "walks"}, ${km(walkedToday.reduce((n, s) => n + s.distanceKm, 0))}.`
-              : "From Monday. Nothing logged today yet."}
-          </p>
-          <div>
-            <Button variant="primary" href="/train/exercise" icon="train">
-              Log a walk
-            </Button>
-          </div>
-        </section>
+          </section>
+        )}
       </div>
     </div>
   );

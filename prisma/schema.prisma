@@ -997,22 +997,59 @@ model WeightGoal {
 // are records, never rewards: nothing in the economy reads them.
 // src/lib/exercise-server.ts and src/lib/task-style-server.ts read them fail
 // soft (a missing table reads as nothing logged / no style).
+// Migration 20270104000000_strength_sets (health-2026-10-27.md D10, D11) adds
+// ten nullable columns to ExerciseSession, the one header for every kind. A
+// walk pays as before (momentum.md §A.6, its 'walk-1' receipt); every other
+// kind is a record until SESSION_PAY_LAUNCH_DAY (src/lib/exercise.ts, null).
+// Every read and write of the table names its columns (a build that predates
+// the migration never asks for a new one).
 
-/// One exercise session on Train › Exercise. Only WALK for now.
+/// One exercise session on Train › Exercise, of any kind (src/lib/exercise.ts EXERCISE_KINDS). A kind with no
+/// distance (HIIT, SPORT, YOGA, MOBILITY, LIFT, …) stores distanceKm 0 (D11). A live LIFT carries its wall clock
+/// (startedAt, endedAt). A plain userId with no foreign key; a session's delete removes its ExerciseEntry and
+/// ExerciseSet rows in the same transaction.
+/// Not expressible in Prisma 6: CHECK "ExerciseSession_variant_check" (null or an upper-case key, 1..24 characters),
+/// CHECK "ExerciseSession_label_check" (null or 1..40 characters), CHECK "ExerciseSession_ended_check" (endedAt null, or
+/// startedAt set and endedAt at or after it), CHECK "ExerciseSession_avgHr_check" (null or 30..250), CHECK
+/// "ExerciseSession_maxHr_check" (null or 30..250), CHECK "ExerciseSession_hr_check" (maxHr at or above avgHr), CHECK
+/// "ExerciseSession_avgWatts_check" (null or 1..2000), CHECK "ExerciseSession_poolM_check" (null or 10..100), CHECK
+/// "ExerciseSession_sessionRpe_check" (null or 0..10), CHECK "ExerciseSession_clientId_check" (null or 1..64
+/// characters), and partial UNIQUE "ExerciseSession_userId_open_key" (userId) WHERE startedAt IS NOT NULL AND endedAt
+/// IS NULL (one open session a user). No CHECK on kind: the core holds EXERCISE_KINDS.
 model ExerciseSession {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   userId      String
   /// The life day (src/lib/life-day.ts dateColumn).
-  day         DateTime @db.Date
-  /// WALK (src/lib/exercise.ts EXERCISE_KINDS).
-  kind        String   @default("WALK")
-  /// The incline in degrees (0 = flat), as the user set it.
-  angleDeg    Float    @default(0)
+  day         DateTime  @db.Date
+  /// WALK | RUN | CYCLE | SWIM | ROW | ELLIPTICAL | HIIT | CIRCUIT | SPORT | YOGA | MOBILITY | LIFT (exercise.ts EXERCISE_KINDS).
+  kind        String    @default("WALK")
+  /// The incline in degrees (0 = flat), as the user set it (a walk, a run).
+  angleDeg    Float     @default(0)
+  /// Kilometres; 0 for a kind with no distance.
   distanceKm  Float
   durationMin Float
   note        String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
+  /// The kind's variant (exercise.ts KIND_SPECS: RUN TREADMILL, CYCLE SPIN, SWIM BREAST, SPORT TENNIS, YOGA VINYASA, …).
+  variant     String?
+  /// The user's name for it, 1..40 characters ("Push day"; the sport of a SPORT OTHER).
+  label       String?
+  /// A live session's wall clock: started, and ended (null while open).
+  startedAt   DateTime? @db.Timestamptz(3)
+  endedAt     DateTime? @db.Timestamptz(3)
+  /// Beats a minute, 30..250.
+  avgHr       Int?      @db.SmallInt
+  maxHr       Int?      @db.SmallInt
+  /// 1..2000 W.
+  avgWatts    Int?      @db.SmallInt
+  /// A swim's pool length, 10..100 m; null for open water.
+  poolM       Float?    @db.Real
+  /// "How hard was it?" 0..10 (CR10): a record only, never priced.
+  sessionRpe  Int?      @db.SmallInt
+  /// A save's key: a resend answers the row it wrote, once.
+  clientId    String?
 
+  @@unique([userId, clientId])
   @@index([userId, day])
   @@schema("public")
 }
@@ -1028,6 +1065,139 @@ model TaskStyle {
   updatedAt  DateTime @updatedAt
 
   @@index([userId])
+  @@schema("public")
+}
+
+// ── Strength sets (migration 20270104000000_strength_sets; health-2026-10-27.md D12, D14-D18) ──
+// The lift logger: a LIFT ExerciseSession holds its movements in order (ExerciseEntry), each with its sets
+// (ExerciseSet); a movement the user adds is a UserMovement (the starter library lives in code,
+// src/lib/training-library.ts STARTER_MOVEMENTS, never seeded). A record, never a reward: nothing in the economy reads
+// these tables, and no set (or any load, rep count, RIR or record derived from one) pays or costs XP, MP, a streak day,
+// a quest, a kept week, a skill hour, a side-quest input, a Mall credit or a calibration input; strength PR Seals carry
+// no XP (D14). Kilograms are stored, the unit is display only (WeightGoal.unit). Set count, volume, the top set, the
+// heaviest weight, e1RM, rep maxes and hard sets per muscle are derived on read, never stored. Plain TEXT ids with no
+// foreign key; every timestamp is timestamptz.
+
+/// A movement the user adds: its name (1..40 characters) and normal form (training-library.ts normNameOf; one live
+/// movement per name), pattern, equipment, primary (1..4) and secondary (0..6) muscles in the free-exercise-db
+/// vocabulary, how its load is read (EXT the total, PAIR one of two implements, ONE a single implement, BW a body
+/// fraction plus a signed added load, TIME a hold, CARRY a load carried), whether it is done one side at a time, its
+/// weight step and its rest. Archived, never deleted: a set logged with it keeps its key ('u:' and this id).
+/// Not expressible in Prisma 6: CHECK "UserMovement_name_check" (1..40 characters), CHECK "UserMovement_normName_check"
+/// (1..40 characters), CHECK "UserMovement_pattern_check" (the ten PATTERNS), CHECK "UserMovement_equipment_check" (the
+/// nine EQUIPMENT), CHECK "UserMovement_primary_check" (1..4 of the 17 MUSCLES), CHECK "UserMovement_secondary_check"
+/// (at most 6 of the 17 MUSCLES), CHECK "UserMovement_load_check" (EXT | PAIR | ONE | BW | TIME | CARRY), CHECK
+/// "UserMovement_bodyFraction_check" (null, or 0.05..1 on a BW movement), CHECK "UserMovement_stepKg_check" (null or
+/// 0.25..25), CHECK "UserMovement_restSec_check" (null or 0..600), "primaryMuscles" and "secondaryMuscles" NOT NULL,
+/// and partial UNIQUE "UserMovement_userId_normName_live_key" (userId, normName) WHERE archivedAt IS NULL.
+model UserMovement {
+  id               String    @id @default(cuid())
+  userId           String
+  name             String
+  /// training-library.ts normNameOf(name): lower case, letters, digits and single spaces.
+  normName         String
+  /// SQUAT | HINGE | LUNGE | PUSH_H | PUSH_V | PULL_H | PULL_V | CARRY | CORE | ISOLATION (training-library.ts PATTERNS).
+  pattern          String
+  /// BARBELL | DUMBBELL | KETTLEBELL | MACHINE | CABLE | EZ_BAR | BODY | BAND | OTHER (training-library.ts EQUIPMENT).
+  equipment        String
+  /// free-exercise-db muscle names (training-library.ts MUSCLES): 1..4.
+  primaryMuscles   String[]  @default([])
+  /// 0..6, none of them primary.
+  secondaryMuscles String[]  @default([])
+  /// EXT | PAIR | ONE | BW | TIME | CARRY (training-library.ts LOAD_KINDS).
+  load             String    @default("EXT")
+  /// A BW movement's share of body weight (1.0 a pull-up, 0.65 a push-up); null: reps only.
+  bodyFraction     Float?    @db.Real
+  /// Reps are logged per side, both sides done.
+  unilateral       Boolean   @default(false)
+  /// The weight step in kg (2.5 a barbell, 2 a dumbbell, 5 a machine); null: the equipment's.
+  stepKg           Float?    @db.Real
+  /// Seconds of rest after a working set; null: the pattern's default.
+  restSec          Int?
+  archivedAt       DateTime? @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+
+  /// The picker's read: a user's movements.
+  @@index([userId])
+  @@schema("public")
+}
+
+/// One movement in a LIFT session, in order (1..50), so "Repeat Push day" and the phone's "Next: Bench" exist before
+/// any set. movementKey is a library key (training-library.ts STARTER_MOVEMENTS) or 'u:' and a UserMovement id;
+/// groupNo joins a superset or a circuit; bodyKg is the BodyWeight reading it was logged against (that day's, else the
+/// latest before it), a snapshot for BW loads (null: reps only).
+/// Not expressible in Prisma 6: CHECK "ExerciseEntry_movementKey_check" (a library key or 'u:' and an id), CHECK
+/// "ExerciseEntry_ord_check" (1..50), CHECK "ExerciseEntry_groupNo_check" (null or 1..50), CHECK
+/// "ExerciseEntry_bodyKg_check" (null or 20..400, weight.ts MIN_KG..MAX_KG), and CHECK "ExerciseEntry_note_check" (null
+/// or 1..200 characters).
+model ExerciseEntry {
+  id          String   @id @default(cuid())
+  userId      String
+  /// The LIFT ExerciseSession it belongs to (a plain id).
+  sessionId   String
+  movementKey String
+  ord         Int      @db.SmallInt
+  groupNo     Int?     @db.SmallInt
+  bodyKg      Decimal? @db.Decimal(6, 2)
+  note        String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  /// A session's read (its movements in order) and its delete.
+  @@index([sessionId])
+  /// "Last time" for a movement.
+  @@index([userId, movementKey])
+  @@schema("public")
+}
+
+/// One "Set done", one idempotent insert keyed by clientId (the phone's queue replays safely). ord is its place in the
+/// entry (1..100). kind is WARMUP | WORKING | DROP | MINI (rest-pause); a DROP or MINI names the head set it continues
+/// (chainOf, an earlier ord), and chainOf is null exactly on a WARMUP or WORKING set. weightKg is EXT the total, PAIR
+/// and ONE one implement, BW the signed added load (−20: 20 kg of assistance). rir 0..5 (5 is "4+"); toFailure means
+/// RIR 0 and is never on a warm-up; amrap is a working set's target. durationSec is a hold, distanceM a carry, restSec
+/// the rest the timer gave it (never typed). movementKey and day (the session's life day) are copied from the entry and
+/// the session for the history reads.
+/// Not expressible in Prisma 6: CHECK "ExerciseSet_movementKey_check" (a library key or 'u:' and an id), CHECK
+/// "ExerciseSet_ord_check" (1..100), CHECK "ExerciseSet_kind_check" (WARMUP | WORKING | DROP | MINI), CHECK
+/// "ExerciseSet_chainOf_check" (null, or 1..ord − 1), CHECK "ExerciseSet_chain_check" (chainOf null exactly on WARMUP and
+/// WORKING), CHECK "ExerciseSet_weightKg_check" (null or −200..500), CHECK "ExerciseSet_reps_check" (null or 1..100),
+/// CHECK "ExerciseSet_rir_check" (null or 0..5), CHECK "ExerciseSet_flags_check" (toFailure: not a warm-up, RIR null or
+/// 0; amrap: WORKING only), CHECK "ExerciseSet_durationSec_check" (null or 1..3600), CHECK "ExerciseSet_distanceM_check"
+/// (null or over 0 to 10000), CHECK "ExerciseSet_restSec_check" (null or 0..3600), CHECK "ExerciseSet_measure_check"
+/// (reps, durationSec or distanceM set), and CHECK "ExerciseSet_clientId_check" (1..64 characters).
+model ExerciseSet {
+  id          String   @id @default(cuid())
+  userId      String
+  sessionId   String
+  entryId     String
+  movementKey String
+  /// The session's life day (src/lib/life-day.ts dateColumn).
+  day         DateTime @db.Date
+  ord         Int      @db.SmallInt
+  /// WARMUP | WORKING | DROP | MINI (training-library.ts SET_KINDS).
+  kind        String   @default("WORKING")
+  chainOf     Int?     @db.SmallInt
+  weightKg    Decimal? @db.Decimal(6, 2)
+  reps        Int?     @db.SmallInt
+  rir         Int?     @db.SmallInt
+  toFailure   Boolean  @default(false)
+  amrap       Boolean  @default(false)
+  durationSec Int?
+  distanceM   Float?   @db.Real
+  restSec     Int?
+  doneAt      DateTime @db.Timestamptz(3)
+  clientId    String
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([userId, clientId])
+  /// An entry's sets in order.
+  @@index([entryId])
+  /// A session's read and its delete.
+  @@index([sessionId])
+  /// A movement's history over a span of life days.
+  @@index([userId, movementKey, day])
   @@schema("public")
 }
 

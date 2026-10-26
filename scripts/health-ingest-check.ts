@@ -423,9 +423,16 @@ const run = (f: Fake, batch: Partial<HcBatch>, env: Record<string, string> = LIV
   const migrations = readdirSync(join(ROOT, "prisma/migrations"));
   const schema = read("prisma/schema.prisma");
   const exModel = schema.slice(schema.indexOf("model ExerciseSession {"), schema.indexOf("\n}", schema.indexOf("model ExerciseSession {")));
+  const exDoc = schema.slice(schema.lastIndexOf("\n\n", schema.indexOf("\nmodel ExerciseSession {")), schema.indexOf("\nmodel ExerciseSession {"));
+  const exFields = exModel.split("\n").map((l) => /^\s+(\w+)\s+\S/.exec(l)?.[1]).filter((x): x is string => !!x);
+  // Re-pinned on purpose (health-2026-10-27.md D10, D11; migration 20270104000000_strength_sets): ExerciseSession is no
+  // longer unchanged. It gains exactly the ten strength_sets columns named below, and still none is a source or an
+  // external id (an import stays named by its INGEST row 'ingest:hc:<id>'), in the model or in its comment.
   check(
-    "no migration: the dedupe row is the ledger's own unique (userId, dedupeKey), weight's source 'import' already exists, and ExerciseSession is unchanged",
-    !migrations.some((m) => /health|ingest|hc_|connect/i.test(m)) && !/externalId|source/.test(exModel) && /@@unique\(\[userId, dedupeKey\]\)/.test(schema) && /\/\/\/ manual \| capture \| import/.test(schema)
+    "no migration of its own: the dedupe row is the ledger's own unique (userId, dedupeKey), weight's source 'import' already exists, and ExerciseSession gains only strength_sets' ten columns (variant, label, startedAt, endedAt, avgHr, maxHr, avgWatts, poolM, sessionRpe, clientId), none a source or an external id",
+    !migrations.some((m) => /health|ingest|hc_|connect/i.test(m)) && !/externalId|source/i.test(exModel) && !/externalId|source/i.test(exDoc) && /@@unique\(\[userId, dedupeKey\]\)/.test(schema) && /\/\/\/ manual \| capture \| import/.test(schema) &&
+      same(exFields, ["id", "userId", "day", "kind", "angleDeg", "distanceKm", "durationMin", "note", "createdAt", "variant", "label", "startedAt", "endedAt", "avgHr", "maxHr", "avgWatts", "poolM", "sessionRpe", "clientId"]),
+    exFields.join(", ")
   );
   const life = read("package.json");
   check("life:check runs this check right after proof-pages-check", /tsx scripts\/proof-pages-check\.ts && tsx scripts\/health-ingest-check\.ts && tsx scripts\/settle-check\.ts/.test(life));

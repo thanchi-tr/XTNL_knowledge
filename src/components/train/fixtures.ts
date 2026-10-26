@@ -15,11 +15,25 @@
  * Undo), changed, low and paused; each fixture's `older` holds its rows from
  * before the 14-day list, newest first, for the fake "Show older". MIND_DRAFT
  * starts the sheet already picked.
+ *
+ * Fixture ExerciseViews for Train › Exercise with every kind (health-2026-10-27.md phase 3; /dev/style/train):
+ * EXERCISE_FIXTURES on a fortnight of made-up sessions (two walks, a run, a swim, yoga, a game, a ride, a row),
+ * each opening the card on a state: kinds (the picker, Walk picked), empty, again (the Again chip), run (live pace,
+ * Counts as), more (a run with More open: the name, incline, heart rates and the RPE chips, 7 pressed), runOffer (a run
+ * at a walking pace: "Log it as a walk?"), swim (a 25 m pool, 60 lengths), sport, yoga, longNames (a 40-character game
+ * on the Again chip and a 60-character habit on Counts as, wrapping inside the card), counted (a ride counted as the
+ * habit), countedDelete (that ride on its Sure? step: the habit stays ticked), refused (a run faster than 25 km/h),
+ * recordOnly (no habit due: the record-only line), walkOffer ("Log it as a run?"), lift (the set logger arrives next)
+ * and walkOnly (before the strength_sets migration). The saved lines are sessionLoggedLineOf's own, so they read as
+ * the server's would.
  */
 import { addDays, daysBetween, zonedToInstant, type DayKey } from "@/lib/life-day";
 import { MIN_READINGS_FOR_RATE, STALE_AFTER_DAYS, TREND_ALPHA, type WeightGoalView, type WeightTrendPoint, type WeightView } from "@/lib/weight";
 import { EMPTY_PREFS, emptyMindView, mindViewOf, olderFromOf, receiptLineOf, type MindPrefsView, type MindView, type MoodCheckView } from "@/lib/mind";
 import type { LoggedCheck } from "@/lib/mind-server";
+import { exerciseWeekOf, sessionLoggedLineOf, sessionRefusalOf, type SessionView } from "@/lib/exercise";
+import type { ExerciseView } from "@/lib/exercise-server";
+import type { ExerciseCardInitial } from "./ExerciseCard";
 
 export const FIXTURE_TODAY: DayKey = "2026-10-01";
 
@@ -250,3 +264,160 @@ export const MIND_FIXTURES: Record<MindFixtureName, MindFixture> = {
 
 /** The sheet opened already picked (the "sheet, picked" state): calm and a little tired, a little stressed, a word. */
 export const MIND_DRAFT = { cell: { valence: 2, energy: -1 }, stress: 1, word: "Relaxed", tags: ["Work"] };
+
+// ── Exercise: every kind (health-2026-10-27.md D10-D13; phase 3) ──────────
+
+/** Train › Exercise's fixture day: the Mind fixtures' Thursday, after MOMENTUM_LAUNCH_DAY, so the view is a live one. */
+export const EXERCISE_FIXTURE_TODAY: DayKey = MIND_FIXTURE_TODAY;
+
+/** A made-up session: `ago` days back, the rest as stored (every added column null unless given). */
+function sessionOf(id: string, ago: number, s: Partial<SessionView> & Pick<SessionView, "kind" | "durationMin">): SessionView {
+  return {
+    id,
+    day: addDays(EXERCISE_FIXTURE_TODAY, -ago),
+    angleDeg: 0,
+    distanceKm: 0,
+    note: null,
+    variant: null,
+    label: null,
+    poolM: null,
+    avgWatts: null,
+    avgHr: null,
+    maxHr: null,
+    sessionRpe: null,
+    startedAt: null,
+    endedAt: null,
+    clientId: null,
+    ...s,
+  };
+}
+
+/** A fortnight of mixed sessions, newest first (as the server lists them): two walks, a run, a swim, a game, yoga, a ride, a row. */
+const EXERCISE_SESSIONS: SessionView[] = [
+  sessionOf("ex-w1", 0, { kind: "WALK", distanceKm: 3.2, durationMin: 42, angleDeg: 5 }),
+  sessionOf("ex-r1", 1, { kind: "RUN", distanceKm: 5, durationMin: 27, variant: "ROAD", avgHr: 152, maxHr: 171, sessionRpe: 7 }),
+  sessionOf("ex-s1", 2, { kind: "SWIM", distanceKm: 1.5, durationMin: 32, variant: "FREESTYLE", poolM: 25 }),
+  sessionOf("ex-y1", 2, { kind: "YOGA", durationMin: 45, variant: "VINYASA", label: "Morning flow" }),
+  sessionOf("ex-g1", 3, { kind: "SPORT", durationMin: 60, variant: "TENNIS", avgHr: 138 }),
+  sessionOf("ex-w2", 5, { kind: "WALK", distanceKm: 5, durationMin: 58 }),
+  sessionOf("ex-c1", 7, { kind: "CYCLE", durationMin: 40, variant: "STATIONARY", avgWatts: 150 }),
+  sessionOf("ex-o1", 8, { kind: "ROW", distanceKm: 2, durationMin: 8 + 10 / 60 }),
+];
+
+const EX_LINK = { templateId: "t-cardio", title: "Cardio 30 min" };
+
+function exerciseViewOf(sessions: readonly SessionView[], over: Partial<ExerciseView> = {}): ExerciseView {
+  const walks = sessions.filter((s) => s.kind === "WALK");
+  return {
+    today: EXERCISE_FIXTURE_TODAY,
+    sessions: [...sessions],
+    week: exerciseWeekOf(walks, EXERCISE_FIXTURE_TODAY),
+    ready: true,
+    kindsReady: true,
+    live: true,
+    link: EX_LINK,
+    paid: { "ex-w1": { xp: 14.2, day: EXERCISE_FIXTURE_TODAY, reversible: true } },
+    ...over,
+  };
+}
+
+const MIXED = exerciseViewOf(EXERCISE_SESSIONS);
+/** A 10 km "run" in 20 minutes: 30 km/h, past the 25 km/h a run can count at. */
+const FAST_RUN = sessionOf("ex-fast", 0, { kind: "RUN", distanceKm: 10, durationMin: 20 });
+const A_ROW = sessionOf("ex-row", 0, { kind: "ROW", distanceKm: 2, durationMin: 8 + 10 / 60 });
+const A_RIDE = sessionOf("ex-ride", 0, { kind: "CYCLE", distanceKm: 18.4, durationMin: 45, variant: "ROAD" });
+/** A game under its own name at the 40 characters a name may have (SESSION_LIMITS), for the Again chip's longest line. */
+const LONG_GAME = sessionOf("ex-long", 1, { kind: "SPORT", variant: "OTHER", label: "Ultimate frisbee with the Thursday group", durationMin: 90 });
+/** A 60-character habit title on "Counts as". */
+const LONG_LINK = { templateId: "t-long", title: "Cardio intervals on the bike, the rower or the treadmill 30m" };
+
+export type ExerciseFixtureName =
+  | "kinds"
+  | "empty"
+  | "again"
+  | "run"
+  | "more"
+  | "runOffer"
+  | "swim"
+  | "sport"
+  | "yoga"
+  | "longNames"
+  | "counted"
+  | "countedDelete"
+  | "refused"
+  | "recordOnly"
+  | "walkOffer"
+  | "lift"
+  | "walkOnly";
+
+export interface ExerciseFixture {
+  label: string;
+  view: ExerciseView;
+  initial?: ExerciseCardInitial;
+}
+
+export const EXERCISE_FIXTURES: Record<ExerciseFixtureName, ExerciseFixture> = {
+  kinds: { label: "Exercise · every kind: the picker, the week, the list (Walk picked)", view: MIXED },
+  empty: { label: "Exercise · every kind, nothing logged yet", view: exerciseViewOf([], { link: null, paid: {} }) },
+  again: { label: "Exercise · Run picked: the Again chip (the last run, on today's date)", view: MIXED, initial: { kind: "RUN" } },
+  run: {
+    label: "Exercise · a run typed in: live pace and speed, Counts as pre-selected",
+    view: MIXED,
+    initial: { kind: "RUN", draft: { distance: "5", duration: "26:30", variant: "ROAD" } },
+  },
+  more: {
+    label: "Exercise · a run with More open: the name, incline, heart rates and how hard (7)",
+    view: MIXED,
+    initial: { kind: "RUN", draft: { distance: "5", duration: "26:30", avgHr: "152", maxHr: "171", rpe: 7 }, more: true },
+  },
+  runOffer: {
+    label: "Exercise · a run at a walking pace (3 km in 45 min): Log it as a walk?",
+    view: MIXED,
+    initial: { kind: "RUN", draft: { distance: "3", duration: "45" } },
+  },
+  swim: {
+    label: "Exercise · a swim in a 25 m pool: 60 lengths, its pace per 100 m",
+    view: MIXED,
+    initial: { kind: "SWIM", draft: { poolM: "25", lengths: "60", duration: "32", variant: "FREESTYLE" } },
+  },
+  sport: { label: "Exercise · a game: the sport from the list", view: MIXED, initial: { kind: "SPORT", draft: { variant: "TENNIS", duration: "60" } } },
+  yoga: { label: "Exercise · yoga: the style chips (Hatha unless picked)", view: MIXED, initial: { kind: "YOGA", draft: { variant: "VINYASA", duration: "45" } } },
+  longNames: {
+    label: "Exercise · long names: a 40-character game on Again, a 60-character habit on Counts as (they wrap)",
+    view: exerciseViewOf([EXERCISE_SESSIONS[0], LONG_GAME, ...EXERCISE_SESSIONS.slice(1)], { link: LONG_LINK }),
+    initial: { kind: "SPORT" },
+  },
+  counted: {
+    label: "Exercise · a ride saved, counted as the habit",
+    view: MIXED,
+    initial: { kind: "CYCLE", saved: sessionLoggedLineOf(A_RIDE, null, { kind: "COUNTED", title: EX_LINK.title }) },
+  },
+  countedDelete: {
+    label: "Exercise · a ride that counted as the habit, on its Sure? step: the habit stays ticked",
+    view: exerciseViewOf([A_RIDE, ...EXERCISE_SESSIONS], { link: null, counted: { [A_RIDE.id]: EX_LINK.title } }),
+    initial: { kind: "CYCLE", confirm: A_RIDE.id },
+  },
+  refused: {
+    label: "Exercise · a refusal: a run faster than 25 km/h, saved as a record that never counts",
+    view: MIXED,
+    initial: { kind: "RUN", saved: sessionLoggedLineOf(FAST_RUN, sessionRefusalOf(FAST_RUN), { kind: "NOT_COUNTED", error: "this session can't count" }) },
+  },
+  recordOnly: {
+    label: "Exercise · the record-only line (no habit due): a row saved",
+    view: exerciseViewOf(EXERCISE_SESSIONS, { link: null }),
+    initial: { kind: "ROW", saved: sessionLoggedLineOf(A_ROW, null, null) },
+  },
+  walkOffer: {
+    label: "Exercise · a walk faster than a walk: Log it as a run?",
+    view: MIXED,
+    initial: { kind: "WALK", draft: { distance: "5", duration: "28" } },
+  },
+  lift: { label: "Exercise · Lift: the set logger arrives next (nothing is saved)", view: MIXED, initial: { kind: "LIFT" } },
+  walkOnly: {
+    label: "Exercise · before the strength_sets migration: walking only, as always",
+    view: exerciseViewOf(
+      EXERCISE_SESSIONS.filter((s) => s.kind === "WALK"),
+      { kindsReady: false }
+    ),
+  },
+};

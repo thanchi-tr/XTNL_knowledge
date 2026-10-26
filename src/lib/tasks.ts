@@ -2179,6 +2179,12 @@ type SettleArgs = {
   detail?: string | null;
   /** Momentum §A.6 (completeLinkedCore): the walk that completes the task; prices as SESSION and is stored on the instance. */
   workoutId?: string;
+  /**
+   * health-2026-10-27.md D12, D13 (completeLinkedCore with asTick): the record session (a run, a swim, a game) this
+   * tick counts. Stored on the instance as its workoutId, so the same session never ticks twice; the tick itself is
+   * a plain one (never SESSION), priced at the habit's own price.
+   */
+  countedBy?: string;
   /** Proof of work (P23): the timer this tick names (CompleteOptions.sessionId). */
   sessionId?: string | null;
   /** Pages proof (P24): the pages this tick reports (CompleteOptions.proof's). */
@@ -2351,7 +2357,7 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
         completedAt: a.now,
         minutes,
         xpPaid: plan.receipt.xp,
-        ...(a.workoutId ? { workoutId: a.workoutId } : {}),
+        ...(a.workoutId ? { workoutId: a.workoutId } : a.countedBy ? { workoutId: a.countedBy } : {}),
         ...(pagesCols?.proofKind ? pagesCols : {}),
       },
       update: {
@@ -2360,7 +2366,7 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
         completedAt: a.now,
         minutes,
         xpPaid: plan.receipt.xp,
-        ...(a.workoutId ? { workoutId: a.workoutId } : {}),
+        ...(a.workoutId ? { workoutId: a.workoutId } : a.countedBy ? { workoutId: a.countedBy } : {}),
         ...(pagesCols ?? {}),
       },
     }),
@@ -2559,6 +2565,17 @@ const LINK_ATTEMPTS = 2;
  * Refused ({ok: false}): a work tab's task, a template that is not EXERCISE
  * (or is a goal, an idea draft or study-linked), or a day momentum is not
  * live on (linkedTickPlanOf).
+ *
+ * `asTick` (health-2026-10-27.md D12, D13: a record kind's session, a run, a
+ * swim, a game, never a walk) writes the tick a manual tick of the habit
+ * would: the plain path (no workoutId, so never SESSION; the habit's own
+ * price, its proof rules with the session's minutes as the report, its
+ * streak unit), with the manual tick's own refusals too (an archived, goal,
+ * idea-draft or deferred template, a must decided not kept). The instance
+ * carries the session (countedBy), so the same session again answers
+ * tickedRaw null and writes nothing; any other tick that day answers its raw
+ * and nothing is written (there is no top-up: the session pays nothing).
+ * Without it, the walk's tick exactly as above.
  */
 export async function completeLinkedCore(input: {
   userId: string;
@@ -2567,6 +2584,8 @@ export async function completeLinkedCore(input: {
   workoutId: string;
   minutes: number;
   at: Date;
+  /** A record session's link: the habit's own tick, never SESSION (see above). */
+  asTick?: boolean;
 }): Promise<{ ok: true; instanceId: string; tickedRaw: number | null } | { ok: false; error: string }> {
   const { userId, templateId, workoutId, at } = input;
   const today = todayKey(at);
@@ -2611,12 +2630,19 @@ export async function completeLinkedCore(input: {
     if (refusal) return { ok: false, error: refusal };
     const block = completionBlockOf({ t, rule, day, today, lastDone: lastDoneOf(read.history), onDay: read.history.filter((i) => i.day === day) });
     if (block) return { ok: false, error: block };
+    // A record session's tick is a manual tick: the manual tick's own refusals hold for it too (completeInstanceCore).
+    if (input.asTick) {
+      const manual = completableReason(t, row) ?? deferredRefusalOf(t, at) ?? (read.decidedNotKept ? DECIDED_NOT_KEPT : null);
+      if (manual) return { ok: false, error: manual };
+    }
 
     const minutes = Number.isFinite(input.minutes) && input.minutes > 0 ? input.minutes : null;
     const res = await settleCompletion(
       userId,
       read,
-      { day, today, slot: 0, minutes, now: at, countsForStreak: true, detail: "completed by a walk", workoutId },
+      input.asTick
+        ? { day, today, slot: 0, minutes, now: at, countedBy: workoutId }
+        : { day, today, slot: 0, minutes, now: at, countsForStreak: true, detail: "completed by a walk", workoutId },
       load
     );
     if (!res.ok) return { ok: false, error: res.error };

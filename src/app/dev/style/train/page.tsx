@@ -14,8 +14,11 @@ const MIND_SHEET_STATES = ["mind-sheet", "mind-sheet-picked"];
 /**
  * /dev/style/train: the Body weight card on fixture views (empty,
  * calibrating, on track, away, reached, pounds) with fake actions that save
- * nothing, and Body › Mind's states with Today's Check in strip (fixtures.ts
- * MIND_FIXTURES). ?state=mind-sheet or ?state=mind-sheet-picked opens the
+ * nothing, Body › Mind's states with Today's Check in strip (fixtures.ts
+ * MIND_FIXTURES), and Train › Exercise with every kind (EXERCISE_FIXTURES,
+ * each under data-state="ex-<name>": the picker, a run, a swim with pool
+ * lengths, a sport, yoga, the Again chip, a refusal, the record-only line,
+ * Lift's "arrives next"). ?state=mind-sheet or ?state=mind-sheet-picked opens the
  * check-in sheet on load, so the browser audit can reach it. Gated like every
  * /dev/style page.
  */

@@ -148,7 +148,7 @@ console.log("— task style (task-style.ts) —");
 
 console.log("— the cards —");
 {
-  const actions: ExerciseActions = { logWalk: async () => ({ ok: false, error: "fixture" }), deleteExercise: async () => ({ ok: true, value: null }) };
+  const actions: ExerciseActions = { logWalk: async () => ({ ok: false, error: "fixture" }), deleteExercise: async () => ({ ok: true, value: null }), logSession: async () => ({ ok: false, error: "fixture" }), deleteSession: async () => ({ ok: true, value: null }) };
   const sessions: ExerciseSessionView[] = [{ id: "w1", kind: "WALK", day: TODAY, angleDeg: 5, distanceKm: 3, durationMin: 45, note: null }];
   const view = { today: TODAY, sessions, week: exerciseWeekOf(sessions, TODAY), ready: true };
   const html = renderToStaticMarkup(createElement(ExerciseCard, { view, actions }));
@@ -431,7 +431,7 @@ console.log("— momentum: 'Counts as' and the card —");
       linkCandidateOf([tpl("Walk", "TARGET:2/W")], [{ templateId: "Walk", day: "2026-10-05", status: "DONE" }, { templateId: "Walk", day: "2026-10-06", status: "DONE" }], TODAY) === null &&
       linkCandidateOf([tpl("Hike", null, { dueDay: TODAY })], [], TODAY)?.templateId === "Hike"
   );
-  const actions: ExerciseActions = { logWalk: async () => ({ ok: false, error: "fixture" }), deleteExercise: async () => ({ ok: true, value: null }) };
+  const actions: ExerciseActions = { logWalk: async () => ({ ok: false, error: "fixture" }), deleteExercise: async () => ({ ok: true, value: null }), logSession: async () => ({ ok: false, error: "fixture" }), deleteSession: async () => ({ ok: true, value: null }) };
   const sessions: ExerciseSessionView[] = [{ id: "w1", kind: "WALK", day: TODAY, angleDeg: 0, distanceKm: 3.75, durationMin: 45, note: null }];
   const view = { today: TODAY, sessions, week: exerciseWeekOf(sessions, TODAY), ready: true };
   const before = renderToStaticMarkup(createElement(ExerciseCard, { view: { ...view, link: { templateId: "t1", title: "Walk 30 min" }, paid: { w1: { xp: 16.6, day: TODAY, reversible: true } } }, actions }));

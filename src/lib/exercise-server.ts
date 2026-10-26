@@ -16,6 +16,33 @@
  *   logWalkMomentsCore(userId, raw, now?, opts?)  logWalkCore inside L3's moments on a live day (a PB Seal)
  *   deleteExerciseCore(userId, id, now?)   → { ok, value: WalkDeleteOutcome | null } | { ok: false, error }
  *
+ * Every other kind (health-2026-10-27.md D10-D13; health-brief-2026-10-27.md §3.6 H2, H3). The view lists every
+ * kind (viewOf keeps the row's kind) while its `week` and every walk reader stay walks only: the view's week, the
+ * walks' pay, the hand-log twin guard (importedWalksOn) and Health Connect's match (health-ingest-server sessionsOn)
+ * read kind 'WALK' alone, and the ledger readers (readLiveWalks, competency-server, snapshot) are untouched, so a
+ * record is never a walk's twin, never on the walks' curve and never a walk's personal best.
+ *   logSessionCore(userId, raw, now?, opts?)  → { ok, value: LoggedSession } | { ok: false, error }
+ *                                            a run, a ride, a swim, a row, an elliptical, HIIT or circuit session, a
+ *                                            game, yoga or mobility (never a walk, never a lift: the set logger is
+ *                                            next): the ExerciseSession row alone, with its kind, variant, name and
+ *                                            clientId (a resend answers the row it wrote, once). A RECORD: no
+ *                                            ActivityEvent, no pay, no streak, quest, kept week, skill hour, Vitality,
+ *                                            side quest or calibration input. "Counts as" (a session dated today and
+ *                                            not refused) ticks the user's own linked EXERCISE habit as a manual tick
+ *                                            would, at the habit's own price (tasks.ts completeLinkedCore asTick); a
+ *                                            habit ticked already that day (by hand or by a walk) is left as it is; a
+ *                                            resend answers from the habit its first save ticked, never a second one;
+ *                                            a walk's refusal words are said for a record (recordLinkErrorOf)
+ *   logSessionMomentsCore(userId, raw, now?, opts?)  logSessionCore, and for a "Counts as" tick on a live day the
+ *                                            moments a manual tick returns (a streak milestone, a habit rung, the
+ *                                            BODY quest done); the record has no moments of its own
+ *   deleteSessionCore(userId, id)          → { ok, value: null } | { ok: false, error }  a record's delete: the row
+ *                                            alone, since nothing was paid (a walk's delete is deleteExerciseCore's);
+ *                                            the view names the habit a record ticked (view.counted), which stays
+ * The added columns (migration 20270104000000_strength_sets) may be missing on a database it has not reached: the
+ * view then falls back to the walk-only read (kindsReady false: the card is the walking card it always was), and
+ * logSessionCore says so in one plain line (KINDS_NOT_READY). A walk never reads or writes an added column.
+ *
  * Momentum (docs/life-plan/momentum.md §A.6, §A.7; INERT until momentumLive(the session's day)). On a live day:
  *   - A logged walk dated today or yesterday writes one WORKOUT row (workout:<sessionId>) through the daily knee,
  *     under tasks.ts lifeLockOp + freshnessGuardOp like a tick (a stale read re-reads and re-prices, 3 tries). One
@@ -37,9 +64,12 @@ import { activityOp, invalidateActivity, isDuplicateActivity } from "./activity"
 import { HC_WALK_INGESTED, alreadyHereLineOf, importedTwinOf, ingestEventInput, isIngestReceipt, type IngestReceipt, type SameDaySession } from "./health-ingest";
 import { LIFE_TZ, addDays, dateColumn, dayKeyOf, keyOfDateColumn, todayKey, weekKeyOf, type DayKey } from "./life-day";
 import {
+  RECORD_KINDS,
   bodyQuestDoneBy,
+  cleanSessionInput,
   cleanWalkInput,
   exerciseWeekOf,
+  isExerciseKind,
   isWalkReceipt,
   linkCandidateOf,
   paidFactsOf,
@@ -47,11 +77,17 @@ import {
   prEventInput,
   priceWalk,
   reversalInputOf,
+  sessionRefusalOf,
   walkEventInput,
   walkReceiptOf,
+  type ExerciseKind,
   type ExerciseSessionView,
   type ExerciseWeek,
+  type RawSessionInput,
+  type SessionLinkOutcome,
   type SessionPayView,
+  type SessionRefusal,
+  type SessionView,
   type WalkDeleteOutcome,
   type WalkFactsPaid,
   type WalkPay,
@@ -91,7 +127,7 @@ import {
   settledDayGuardOp,
 } from "./tasks";
 import { captureSnapshot, detectCelebrations } from "./celebrations";
-import { withMoments } from "./today-board";
+import { LINKED_KIND_REFUSAL, LINKED_NOT_EXERCISE, LINKED_NOT_LIVE, LINKED_WORK_REFUSAL, isDoneStatus, withMoments } from "./today-board";
 import type { SnapshotPart } from "./celebration-detect";
 import type { CelebrationEvent } from "./celebration-types";
 import type { Receipt, Track } from "./life-types";
@@ -100,26 +136,59 @@ export type ExerciseResult<T> = { ok: true; value: T } | { ok: false; error: str
 
 export const EXERCISE_HISTORY_DAYS = 90;
 export const EXERCISE_NOT_READY = "Exercise logging needs a one-time database update first.";
+/** logSessionCore before the strength_sets migration: the added columns aren't there, so only a walk can be saved. */
+export const KINDS_NOT_READY = "Kinds other than walking need a one-time database update first. Walks log as before.";
+/** logSessionCore is never a walk's path: a walk is priced and paid by logWalkCore alone. */
+export const SESSION_WALK_ELSEWHERE = "A walk is logged with Log walk.";
+/** LIFT is a placeholder in this phase (health-2026-10-27.md D24 phase 4): no lift is written until the set logger. */
+export const LIFT_NOT_YET = "The lift logger arrives next. Lifts can't be saved here yet.";
 const SAVE_FAILED = "Couldn't save that. Try again.";
 const GONE = "That session is no longer here.";
 
+/**
+ * A listed session: every ExerciseSessionView field, and the added columns when the view read them (kindsReady). The
+ * fallback read (before the migration) lists walks with none of them; a check's fixture may leave them out too.
+ */
+export type ListedSession = ExerciseSessionView & Partial<Omit<SessionView, keyof ExerciseSessionView>>;
+
 export interface ExerciseView {
   today: DayKey;
-  sessions: ExerciseSessionView[];
+  /** The last EXERCISE_HISTORY_DAYS of sessions of every kind (walks only before the migration), newest first. */
+  sessions: ListedSession[];
+  /** This week's walks (exerciseWeekOf over the walks alone). */
   week: ExerciseWeek;
   /** False when the table isn't there yet (the form says so instead of failing on save). */
   ready: boolean;
+  /**
+   * The added columns are there (migration 20270104000000_strength_sets): the card offers every kind. False or absent:
+   * the walk-only fallback, and the card is the walking card it always was.
+   */
+  kindsReady?: boolean;
   /** Momentum is live today (only with { momentum: true }): the card shows the pay lines and "Counts as". Absent before launch. */
   live?: boolean;
   /** The personal EXERCISE habit due today and not done: the form pre-selects "Counts as: <title>". Live days only. */
   link?: { templateId: string; title: string } | null;
   /** Each paid session's pay, by session id. Live days only. */
   paid?: Record<string, SessionPayView>;
+  /**
+   * The habit each record session ticked ("Counts as"), by session id: its title. Live days only. Its tick stays when the
+   * record is deleted, and the card says so on the Sure? step.
+   */
+  counted?: Record<string, string>;
 }
 
 /** A logged walk, with what it paid on a live day (absent before launch: a record, as always). */
 export interface LoggedWalk extends ExerciseSessionView {
   pay?: WalkPay;
+}
+
+/** A logged record session (logSessionCore): the row, why it would never count (null: it would), and "Counts as". */
+export interface LoggedSession extends SessionView {
+  refusal: SessionRefusal | null;
+  /** What "Counts as" did; null when it was not asked for (or the session is not dated today). */
+  link: SessionLinkOutcome | null;
+  /** A resend of the same clientId: the row that key wrote first, nothing new written. */
+  replay: boolean;
 }
 
 /** The table is not there yet (the migration has not reached this database). */
@@ -129,10 +198,32 @@ export function isMissingExerciseTable(err: unknown): boolean {
   return /\b(P2021|42P01)\b|(relation|table) [`"][^`"]*ExerciseSession[`"]? does not exist/i.test(message);
 }
 
+/** The ExerciseSession columns migration 20270104000000_strength_sets adds. */
+const ADDED_COLUMNS = /\b(variant|label|startedAt|endedAt|avgHr|maxHr|avgWatts|poolM|sessionRpe|clientId)\b/;
+
+/**
+ * The added ExerciseSession columns are not there yet (the strength_sets migration has not reached this database:
+ * P2022, Postgres 42703), or the client predates them (competency-server.ts isMissingSkillSchema's pattern).
+ */
+export function isMissingSessionColumns(err: unknown): boolean {
+  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2022") return true;
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  if (err instanceof Prisma.PrismaClientValidationError) return ADDED_COLUMNS.test(message);
+  return /\b(P2022|42703)\b|column [`"]?[^`"\s]*[`"]? does not exist/i.test(message);
+}
+
+/** A unique index refused the row (P2002): for a session, its (userId, clientId). */
+function isUniqueViolation(err: unknown): boolean {
+  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") return true;
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return /\b(P2002|23505)\b|Unique constraint failed/i.test(message);
+}
+
 type Row = { id: string; day: Date; kind: string; angleDeg: number; distanceKm: number; durationMin: number; note: string | null };
+/** The row as it is, its kind kept (H2: never forced to a walk). A kind outside EXERCISE_KINDS is never listed (loadExerciseView). */
 const viewOf = (r: Row): ExerciseSessionView => ({
   id: r.id,
-  kind: "WALK",
+  kind: isExerciseKind(r.kind) ? r.kind : "WALK",
   day: keyOfDateColumn(r.day),
   angleDeg: r.angleDeg,
   distanceKm: r.distanceKm,
@@ -140,20 +231,88 @@ const viewOf = (r: Row): ExerciseSessionView => ({
   note: r.note,
 });
 
+type FullRow = Row & {
+  variant: string | null;
+  label: string | null;
+  startedAt: Date | null;
+  endedAt: Date | null;
+  avgHr: number | null;
+  maxHr: number | null;
+  avgWatts: number | null;
+  poolM: number | null;
+  sessionRpe: number | null;
+  clientId: string | null;
+};
+
+/** Every column, the added ones included: read only where the fallback to the walk-only read is in place. */
+const FULL_SELECT = {
+  id: true,
+  day: true,
+  kind: true,
+  angleDeg: true,
+  distanceKm: true,
+  durationMin: true,
+  note: true,
+  variant: true,
+  label: true,
+  startedAt: true,
+  endedAt: true,
+  avgHr: true,
+  maxHr: true,
+  avgWatts: true,
+  poolM: true,
+  sessionRpe: true,
+  clientId: true,
+} as const;
+
+/** A full row as a SessionView. poolM is a float4 (REAL), so it is rounded back to the 0.01 m it was written to. */
+const sessionViewOf = (r: FullRow): SessionView => ({
+  ...viewOf(r),
+  variant: r.variant,
+  label: r.label,
+  poolM: r.poolM == null ? null : Math.round(r.poolM * 100) / 100,
+  avgWatts: r.avgWatts,
+  avgHr: r.avgHr,
+  maxHr: r.maxHr,
+  sessionRpe: r.sessionRpe,
+  startedAt: r.startedAt ? r.startedAt.toISOString() : null,
+  endedAt: r.endedAt ? r.endedAt.toISOString() : null,
+  clientId: r.clientId,
+});
+
+const isWalk = (s: { kind: string }): boolean => s.kind === "WALK";
+
+/**
+ * Before the strength_sets migration the full read fails on every load (a wasted round trip): once it has, the view
+ * reads walks only for this long, then tries the full read again (so the kinds appear soon after the migration).
+ */
+const COLUMNS_RETRY_MS = 10 * 60_000;
+let columnsMissingUntil = 0;
+
 export async function loadExerciseView(userId: string, now: Date = new Date(), opts: { momentum?: boolean } = {}): Promise<ExerciseView> {
   const today = todayKey(now);
-  const view = await cached(`exercise:${userId}:${today}`, ["exercise"], async () => {
+  const view = await cached(`exercise:${userId}:${today}`, ["exercise"], async (): Promise<ExerciseView> => {
+    const where = { userId, day: { gte: dateColumn(addDays(today, -EXERCISE_HISTORY_DAYS)) } };
+    const orderBy = [{ day: "desc" as const }, { createdAt: "desc" as const }];
     try {
-      const rows = await prisma.exerciseSession.findMany({
-        where: { userId, day: { gte: dateColumn(addDays(today, -EXERCISE_HISTORY_DAYS)) } },
-        orderBy: [{ day: "desc" }, { createdAt: "desc" }],
-        select: { id: true, day: true, kind: true, angleDeg: true, distanceKm: true, durationMin: true, note: true },
-      });
-      const sessions = rows.map(viewOf);
-      return { today, sessions, week: exerciseWeekOf(sessions, today), ready: true };
+      let sessions: ListedSession[] | null = null;
+      let kindsReady = false;
+      if (Date.now() >= columnsMissingUntil) {
+        try {
+          const rows = await prisma.exerciseSession.findMany({ where, orderBy, select: FULL_SELECT });
+          sessions = rows.filter((r) => isExerciseKind(r.kind)).map(sessionViewOf);
+          kindsReady = true;
+        } catch (err) {
+          if (!isMissingSessionColumns(err)) throw err;
+          columnsMissingUntil = Date.now() + COLUMNS_RETRY_MS;
+        }
+      }
+      // Before the strength_sets migration: the walks alone, with the columns they always had (the card is walking only).
+      if (!sessions) sessions = (await prisma.exerciseSession.findMany({ where: { ...where, kind: "WALK" }, orderBy, select: SESSION_SELECT })).map(viewOf);
+      return { today, sessions, week: exerciseWeekOf(sessions.filter(isWalk), today), ready: true, kindsReady };
     } catch (err) {
       if (!isMissingExerciseTable(err)) console.error("Exercise: the sessions failed to load; showing none.", err);
-      return { today, sessions: [], week: exerciseWeekOf([], today), ready: !isMissingExerciseTable(err) };
+      return { today, sessions: [], week: exerciseWeekOf([], today), ready: !isMissingExerciseTable(err), kindsReady: false };
     }
   });
   // Momentum's parts only where asked for (Train › Exercise) and only on a live day: before launch the view is exactly the record.
@@ -161,11 +320,18 @@ export async function loadExerciseView(userId: string, now: Date = new Date(), o
   return { ...view, ...(await loadWalkMomentum(userId, today, view.sessions)) };
 }
 
-/** The live day's extras: each listed session's pay (live WORKOUT and PR rows) and the "Counts as" habit. Fail soft. */
-async function loadWalkMomentum(userId: string, today: DayKey, sessions: readonly ExerciseSessionView[]): Promise<Pick<ExerciseView, "live" | "link" | "paid">> {
-  const ids = sessions.map((s) => s.id);
+/**
+ * The live day's extras: each listed walk's pay (live WORKOUT and PR rows; a record kind writes none) and the "Counts
+ * as" habit (a walk's, and a record session's, which ticks it at its own price), and the habit each listed record
+ * ticked (recordTicksOf). Fail soft.
+ */
+async function loadWalkMomentum(userId: string, today: DayKey, sessions: readonly ExerciseSessionView[]): Promise<Pick<ExerciseView, "live" | "link" | "paid" | "counted">> {
+  const ids = sessions.filter(isWalk).map((s) => s.id);
+  // Records only: a walk's SESSION tick carries its id too, and its pay line already says what it did.
+  const recordIds = sessions.filter((s) => !isWalk(s)).map((s) => s.id);
   // Logging and deleting invalidate 'exercise'; a tick or an undo on the board, 'life' and 'activity'.
   return cached(`exerciseMomentum:${userId}:${today}`, ["exercise", "life", "activity"], async () => {
+    const counted = await recordTicksOf(userId, today, recordIds);
     try {
       const [rows, logged, templates] = await Promise.all([
         ids.length
@@ -222,12 +388,33 @@ async function loadWalkMomentum(userId: string, today: DayKey, sessions: readonl
         instances.map((i) => ({ templateId: i.templateId, day: keyOfDateColumn(i.day), status: i.status })),
         today
       );
-      return { live: true, link, paid };
+      return { live: true, link, paid, counted };
     } catch (err) {
       console.error("Exercise: the walks' pay failed to load; showing none.", err);
-      return { live: true, link: null, paid: {} };
+      return { live: true, link: null, paid: {}, counted };
     }
   });
+}
+
+/**
+ * The habit each listed record session ticked ("Counts as": its done instance carries the session's id), by session id:
+ * the habit's title. On the (userId, day) index: a record ticks its habit on its own day, inside the view's days. Fail
+ * soft: none.
+ */
+async function recordTicksOf(userId: string, today: DayKey, ids: readonly string[]): Promise<Record<string, string>> {
+  if (ids.length === 0) return {};
+  try {
+    const rows = await prisma.taskInstance.findMany({
+      where: { userId, day: { gte: dateColumn(addDays(today, -EXERCISE_HISTORY_DAYS)) }, workoutId: { in: [...ids] } },
+      select: { workoutId: true, status: true, template: { select: { title: true } } },
+    });
+    const out: Record<string, string> = {};
+    for (const r of rows) if (r.workoutId && isDoneStatus(r.status)) out[r.workoutId] = r.template.title;
+    return out;
+  } catch (err) {
+    console.error("Exercise: the records' habit ticks failed to load; showing none.", err);
+    return {};
+  }
 }
 
 /** How far back the "Counts as" read looks for a habit's done days (an AFTER rule's last done, a target's week). */
@@ -280,12 +467,13 @@ export async function logWalkCore(userId: string, raw: Parameters<typeof cleanWa
 }
 
 /**
- * The sessions Health Connect brought in on one life day (each with its own INGEST row naming it, not a match), as
- * health-ingest.ts reads them: the hand-log guard's read. A failed read is none (logged): it never blocks a walk.
+ * The walks Health Connect brought in on one life day (each with its own INGEST row naming it, not a match), as
+ * health-ingest.ts reads them: the hand-log guard's read. Walks only (H3): a run or a swim is never a walk's twin.
+ * A failed read is none (logged): it never blocks a walk.
  */
 async function importedWalksOn(userId: string, day: DayKey): Promise<SameDaySession[]> {
   try {
-    const sessions = await prisma.exerciseSession.findMany({ where: { userId, day: dateColumn(day) }, select: { id: true, durationMin: true, distanceKm: true } });
+    const sessions = await prisma.exerciseSession.findMany({ where: { userId, day: dateColumn(day), kind: "WALK" }, select: { id: true, durationMin: true, distanceKm: true } });
     if (sessions.length === 0) return [];
     const rows = await prisma.activityEvent.findMany({ where: { userId, source: "INGEST", sourceId: { in: sessions.map((s) => s.id) } }, select: { sourceId: true, receipt: true } });
     const at = new Map<string, { start: Date; end: Date }>();
@@ -659,6 +847,176 @@ export async function deleteExerciseCore(userId: string, id: string, now: Date =
       invalidate("exercise", "life", "activity");
     }
     return { ok: true, value: { kind: "REVERSED", xp } };
+  } catch (err) {
+    if (isMissingExerciseTable(err)) return { ok: false, error: EXERCISE_NOT_READY };
+    console.error("Exercise: a session wasn't deleted.", err);
+    return { ok: false, error: SAVE_FAILED };
+  }
+}
+
+// ── Every other kind: records (health-2026-10-27.md D10-D13) ───────────────
+
+/** The kinds logSessionCore writes: every record kind but LIFT, whose sessions the set logger writes (phase 4). */
+const SESSION_CORE_KINDS: readonly ExerciseKind[] = RECORD_KINDS.filter((k) => k !== "LIFT");
+
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+export interface LogSessionOptions {
+  /** "Counts as": the personal EXERCISE habit this session ticks (a session dated today), at the habit's own price. */
+  countsAs?: string | null;
+}
+
+/** The session a clientId wrote first (a resend), or null. */
+async function sessionByClientId(userId: string, clientId: string): Promise<SessionView | null> {
+  const row = await prisma.exerciseSession.findFirst({ where: { userId, clientId }, select: FULL_SELECT });
+  return row && isExerciseKind(row.kind) ? sessionViewOf(row) : null;
+}
+
+/**
+ * The habit a record session's first save ticked (its done instance carries the session's id), or null: a resend
+ * answers from that habit. On the (userId, day) index. Fail soft: null.
+ */
+async function habitCountedBy(userId: string, s: SessionView): Promise<string | null> {
+  const rows = await prisma.taskInstance.findMany({ where: { userId, day: dateColumn(s.day), workoutId: s.id }, select: { templateId: true, status: true } }).catch(() => []);
+  return rows.find((r) => isDoneStatus(r.status))?.templateId ?? null;
+}
+
+/** completeLinkedCore's refusals are a walk's words (the walk keeps them): a record says its own. Any other as it is. */
+const RECORD_LINK_WORDS: Readonly<Record<string, string>> = {
+  [LINKED_NOT_EXERCISE]: "Only an exercise task or habit can be counted",
+  [LINKED_KIND_REFUSAL]: "Only a task or a habit can be counted",
+  [LINKED_WORK_REFUSAL]: "A work tab's task is kept out of the game",
+  [LINKED_NOT_LIVE]: "It counts only once momentum is live on its day",
+};
+
+/** A record's "not counted" reason in its own words (sessionLoggedLineOf says it after "not counted as the habit:"). */
+export function recordLinkErrorOf(error: string): string {
+  return RECORD_LINK_WORDS[error] ?? error;
+}
+
+/**
+ * "Counts as" for a record session: tasks.ts completeLinkedCore with asTick, the habit's own tick as a manual one
+ * would be (its price, its proof rules with the session's minutes, its streak unit), never SESSION and never a
+ * walk's top-up. The same session again (a resend) answers as the first call; a habit ticked already that day
+ * writes nothing and says so. Never throws: the session is saved whatever happens here.
+ */
+async function linkRecord(userId: string, templateId: string, s: SessionView, now: Date): Promise<SessionLinkOutcome> {
+  try {
+    const res = await completeLinkedCore({ userId, templateId, day: s.day, workoutId: s.id, minutes: Math.max(1, Math.round(s.durationMin)), at: now, asTick: true });
+    if (!res.ok) return { kind: "NOT_COUNTED", error: recordLinkErrorOf(res.error) };
+    const t = await prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: { title: true } });
+    const title = t?.title ?? "the habit";
+    return res.tickedRaw == null ? { kind: "COUNTED", title } : { kind: "ALREADY", title };
+  } catch (err) {
+    console.error("Exercise: a session wasn't counted as its habit.", err);
+    return { kind: "NOT_COUNTED", error: "Couldn't count it as the habit." };
+  }
+}
+
+/**
+ * Logs a session of a record kind (a run, a ride, a swim, a row, an elliptical, HIIT or circuit session, a game, yoga
+ * or mobility): exercise.ts cleanSessionInput checks it, then one ExerciseSession row with its kind, variant, name
+ * and clientId. A RECORD: no ActivityEvent of its own (no WORKOUT, PR or INGEST row), no pay, and nothing for the
+ * streak, a quest, a kept week, a skill hour, Vitality, a side quest or calibration (SESSION_PAY_LAUNCH_DAY is null and
+ * nothing here reads it). A walk is refused here (logWalkCore is its one path), and so is a lift (the set logger is
+ * next). A clientId already written answers the row it wrote (replay), and "Counts as" runs again only through its
+ * own idempotent path, on the habit the first save ticked (habitCountedBy) whatever the resend asks: one session
+ * never ticks a second habit. "Counts as" (opts.countsAs) is tried for a session dated today that sessionRefusalOf
+ * does not refuse (a walk's rule: a refused walk counts as no habit either).
+ */
+export async function logSessionCore(userId: string, raw: RawSessionInput, now: Date = new Date(), opts: LogSessionOptions = {}): Promise<ExerciseResult<LoggedSession>> {
+  const today = todayKey(now);
+  const clean = cleanSessionInput(raw ?? {}, today);
+  if (!clean.ok) return clean;
+  const v = clean.value;
+  if (v.kind === "WALK") return { ok: false, error: SESSION_WALK_ELSEWHERE };
+  if (!SESSION_CORE_KINDS.includes(v.kind)) return { ok: false, error: LIFT_NOT_YET };
+  let session: SessionView;
+  let replay = false;
+  try {
+    const row = await prisma.exerciseSession.create({
+      data: {
+        userId,
+        day: dateColumn(v.day),
+        kind: v.kind,
+        angleDeg: v.angleDeg,
+        distanceKm: v.distanceKm,
+        durationMin: v.durationMin,
+        note: v.note,
+        variant: v.variant,
+        label: v.label,
+        poolM: v.poolM,
+        avgWatts: v.avgWatts,
+        avgHr: v.avgHr,
+        maxHr: v.maxHr,
+        sessionRpe: v.sessionRpe,
+        clientId: v.clientId,
+      },
+      select: FULL_SELECT,
+    });
+    invalidate("exercise");
+    session = sessionViewOf(row);
+  } catch (err) {
+    if (isMissingExerciseTable(err)) return { ok: false, error: EXERCISE_NOT_READY };
+    if (isMissingSessionColumns(err)) return { ok: false, error: KINDS_NOT_READY };
+    // The clientId landed first (a retried save, a double tap): that row is the answer, and nothing new is written.
+    const prior = v.clientId && isUniqueViolation(err) ? await sessionByClientId(userId, v.clientId).catch(() => null) : null;
+    if (!prior) {
+      console.error("Exercise: a session wasn't saved.", err);
+      return { ok: false, error: SAVE_FAILED };
+    }
+    session = prior;
+    replay = true;
+  }
+  const refusal = sessionRefusalOf(session);
+  const asked = typeof opts.countsAs === "string" && ID_RE.test(opts.countsAs) ? opts.countsAs : null;
+  // A resend answers from the habit its first save ticked (a "Counts as" changed since never ticks a second one).
+  const counted = replay && !refusal && session.day === today ? await habitCountedBy(userId, session) : null;
+  const countsAs = counted ?? asked;
+  let link: SessionLinkOutcome | null = null;
+  if (countsAs && session.day === today) {
+    link = refusal ? { kind: "NOT_COUNTED", error: "this session can't count" } : await linkRecord(userId, countsAs, session, now);
+  }
+  return { ok: true, value: { ...session, refusal, link, replay } };
+}
+
+/**
+ * logSession's path (actions/exercise.ts): logSessionCore, and for a "Counts as" tick on a live day the moments a
+ * manual tick returns (actions/tasks.ts completeTask's aroundTick: a streak milestone, a habit rung, the BODY quest
+ * done), from the snapshot a manual tick takes (scope 'tick', the habit's template), returned as `celebrations`. The
+ * record has no moments of its own: with no "Counts as", a session not dated today, or a day momentum is not live,
+ * it is logSessionCore exactly (no snapshot, no extra read); a refused, repeated or already-ticked link takes no
+ * second snapshot.
+ */
+export async function logSessionMomentsCore(
+  userId: string,
+  raw: RawSessionInput,
+  now: Date = new Date(),
+  opts: LogSessionOptions = {}
+): Promise<ExerciseResult<LoggedSession & { celebrations?: CelebrationEvent[] }>> {
+  const today = todayKey(now);
+  const countsAs = typeof opts.countsAs === "string" && ID_RE.test(opts.countsAs) ? opts.countsAs : null;
+  const day = raw && typeof raw.day === "string" && raw.day !== "" ? raw.day : today;
+  if (!countsAs || day !== today || !momentumLive(today)) return logSessionCore(userId, raw, now, opts);
+  return withMoments({
+    snapshot: () => captureSnapshot(userId, { scope: "tick", templateIds: [countsAs] }),
+    detect: (before, after) => detectCelebrations(before, after, { cause: "tick", now }),
+    write: () => logSessionCore(userId, raw, now, { countsAs }),
+    changed: (v) => v.link?.kind === "COUNTED" && !v.replay,
+  });
+}
+
+/**
+ * Deletes a record session (a kind logSessionCore writes): the row alone, since a record wrote no ledger row and paid
+ * nothing; a habit it counted as stays ticked, as a manual tick does (its own Undo is on Today). A walk is never
+ * deleted here (deleteExerciseCore takes its pay back first), nor a lift (its entries and sets go with it, phase 4).
+ */
+export async function deleteSessionCore(userId: string, id: string): Promise<ExerciseResult<null>> {
+  if (typeof id !== "string" || !ID_RE.test(id)) return { ok: false, error: GONE };
+  try {
+    const out = await prisma.exerciseSession.deleteMany({ where: { id, userId, kind: { in: [...SESSION_CORE_KINDS] } } });
+    invalidate("exercise");
+    return out.count > 0 ? { ok: true, value: null } : { ok: false, error: GONE };
   } catch (err) {
     if (isMissingExerciseTable(err)) return { ok: false, error: EXERCISE_NOT_READY };
     console.error("Exercise: a session wasn't deleted.", err);

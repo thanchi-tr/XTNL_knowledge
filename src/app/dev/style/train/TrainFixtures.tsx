@@ -14,15 +14,37 @@
  * fixture's own older rows, the rest answer ok, and the views never change.
  * `state` (the page's ?state=) opens the sheet on load: mind-sheet (blank) or
  * mind-sheet-picked (MIND_DRAFT).
+ *
+ * Exercise, every kind (health-2026-10-27.md phase 3): the card in each
+ * EXERCISE_FIXTURES state (data-state="ex-<name>": the picker, empty, the
+ * Again chip, a run, a run with More open, a run at a walking pace offered
+ * as a walk, a swim with pool lengths, a sport, yoga, long names on the
+ * chips, a ride counted as the habit, that ride on its Sure? step, a
+ * refusal, the record-only line, a walk offered as a run, Lift's "arrives
+ * next", and walking only before the migration). Log answers
+ * with the line the server would give for what was typed (cleanSessionInput,
+ * sessionRefusalOf, and "Counts as" as counted) and saves nothing.
  */
 import { WeightCard } from "@/components/train/WeightCard";
-import { FIXTURE_TODAY, MIND_DRAFT, MIND_FIXTURES, MIND_FIXTURE_TODAY, WEIGHT_FIXTURES, type MindFixture, type MindFixtureName, type WeightFixtureName } from "@/components/train/fixtures";
+import {
+  EXERCISE_FIXTURES,
+  EXERCISE_FIXTURE_TODAY,
+  FIXTURE_TODAY,
+  MIND_DRAFT,
+  MIND_FIXTURES,
+  MIND_FIXTURE_TODAY,
+  WEIGHT_FIXTURES,
+  type ExerciseFixtureName,
+  type MindFixture,
+  type MindFixtureName,
+  type WeightFixtureName,
+} from "@/components/train/fixtures";
 import type { WeightActions } from "@/components/train/types";
 import { ExerciseCard, type ExerciseActions } from "@/components/train/ExerciseCard";
 import { MonthDoneCard } from "@/components/task-style/MonthDoneCard";
 import { TaskMonth } from "@/components/task-style/TaskMonth";
 import { TaskStylePicker } from "@/components/task-style/TaskStylePicker";
-import { exerciseWeekOf, type ExerciseSessionView } from "@/lib/exercise";
+import { cleanSessionInput, exerciseWeekOf, sessionRefusalOf, type ExerciseSessionView } from "@/lib/exercise";
 import type { MonthDoneTask } from "@/lib/task-style";
 import { MindCard, MindOff } from "@/components/mind/MindCard";
 import { CheckInStrip } from "@/components/mind/CheckInStrip";
@@ -52,12 +74,27 @@ const WALKS: ExerciseSessionView[] = [
   { id: "w2", kind: "WALK", day: "2026-10-07", angleDeg: 0, distanceKm: 5, durationMin: 58, note: null },
   { id: "w3", kind: "WALK", day: "2026-10-05", angleDeg: 8.5, distanceKm: 2.4, durationMin: 40, note: null },
 ];
+let exSeq = 0;
 const FAKE_EX: ExerciseActions = {
   logWalk: async () => {
     await wait();
     return { ok: false, error: "Fixtures save nothing." };
   },
   deleteExercise: async () => {
+    await wait();
+    return { ok: true, value: null };
+  },
+  // The answer the server would give for what was typed, saved nowhere: "Counts as" reads as counted.
+  logSession: async (input) => {
+    await wait();
+    const clean = cleanSessionInput(input, EXERCISE_FIXTURE_TODAY);
+    if (!clean.ok) return clean;
+    const session = { ...clean.value, id: `fixture-ex-${++exSeq}` };
+    const refusal = sessionRefusalOf(session);
+    const link = input.countsAs ? (refusal ? { kind: "NOT_COUNTED" as const, error: "this session can't count" } : { kind: "COUNTED" as const, title: "Cardio 30 min" }) : null;
+    return { ok: true, value: { ...session, refusal, link, replay: false } };
+  },
+  deleteSession: async () => {
     await wait();
     return { ok: true, value: null };
   },
@@ -85,6 +122,20 @@ export function ExerciseStyleFixtures() {
         </p>
         <ExerciseCard view={{ today: EX_TODAY, sessions: WALKS, week: exerciseWeekOf(WALKS, EX_TODAY), ready: true }} actions={FAKE_EX} />
       </div>
+      <p className="t-meta" style={{ margin: 0 }}>
+        Every kind, on {EXERCISE_FIXTURE_TODAY}. Log answers with the server&apos;s line for what was typed and saves nothing.
+      </p>
+      {(Object.keys(EXERCISE_FIXTURES) as ExerciseFixtureName[]).map((k) => {
+        const f = EXERCISE_FIXTURES[k];
+        return (
+          <div key={k} data-state={`ex-${k}`}>
+            <p className="t-eyebrow" style={{ margin: "0 0 8px" }}>
+              {f.label}
+            </p>
+            <ExerciseCard view={f.view} actions={FAKE_EX} initial={f.initial} />
+          </div>
+        );
+      })}
       <div>
         <p className="t-eyebrow" style={{ margin: "0 0 8px" }}>
           A task&apos;s drawer: its month and its look

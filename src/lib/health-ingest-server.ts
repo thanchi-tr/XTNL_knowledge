@@ -49,7 +49,7 @@ export type IngestResult<T> = { ok: true; value: T } | { ok: false; error: strin
 export interface IngestStore {
   /** Which of these keys are on the user's ledger already. */
   ingested(userId: string, keys: readonly string[]): Promise<Set<string>>;
-  /** The user's sessions on these life days, each with its Health Connect minutes when it was imported. */
+  /** The user's walks on these life days, each with its Health Connect minutes when it was imported. */
   sessionsOn(userId: string, days: readonly DayKey[]): Promise<SameDaySession[]>;
   /** A matched walk's key, against the session it already is: true when written, false when the key was there. */
   recordMatch(userId: string, input: ActivityInput): Promise<boolean>;
@@ -67,8 +67,9 @@ export const prismaIngestStore: IngestStore = {
   },
   sessionsOn: async (userId, days) => {
     if (days.length === 0) return [];
+    // Walks only (health-brief-2026-10-27.md §3.6 H3): a walk from Health Connect matches a walk, never a run or a swim.
     const sessions = await prisma.exerciseSession.findMany({
-      where: { userId, day: { in: days.map(dateColumn) } },
+      where: { userId, day: { in: days.map(dateColumn) }, kind: "WALK" },
       select: { id: true, day: true, durationMin: true, distanceKm: true },
     });
     if (sessions.length === 0) return [];

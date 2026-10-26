@@ -935,8 +935,15 @@ console.log("— momentum: one payment for one walk (§A.6, completeLinkedCore) 
   const tasks = src("../src/lib/tasks.ts");
   const fn = /export async function completeLinkedCore[\s\S]*?\n\}\n/.exec(tasks)?.[0] ?? "";
   check(
-    "completeLinkedCore(input: { userId, templateId, day, workoutId, minutes, at }) → { ok, instanceId, tickedRaw } | { ok: false, error }",
-    /export async function completeLinkedCore\(input: \{\s*userId: string;\s*templateId: string;\s*day: DayKey;\s*workoutId: string;\s*minutes: number;\s*at: Date;\s*\}\): Promise<\{ ok: true; instanceId: string; tickedRaw: number \| null \} \| \{ ok: false; error: string \}>/.test(fn)
+    // Re-pinned (health-2026-10-27.md D12, D13): an optional asTick, a record kind's session, after the walk's six fields.
+    "completeLinkedCore(input: { userId, templateId, day, workoutId, minutes, at, asTick? }) → { ok, instanceId, tickedRaw } | { ok: false, error }",
+    /export async function completeLinkedCore\(input: \{\s*userId: string;\s*templateId: string;\s*day: DayKey;\s*workoutId: string;\s*minutes: number;\s*at: Date;\s*(?:\/\*\*[^\n]*\*\/\s*)?asTick\?: boolean;\s*\}\): Promise<\{ ok: true; instanceId: string; tickedRaw: number \| null \} \| \{ ok: false; error: string \}>/.test(fn)
+  );
+  check(
+    "…asTick (a run, a swim, a game: a record) writes the habit's own plain tick: no workoutId (never SESSION), the session as countedBy on the instance, the manual tick's refusals; a walk's arguments are as before",
+    /input\.asTick\s*\?\s*\{ day, today, slot: 0, minutes, now: at, countedBy: workoutId \}\s*:\s*\{ day, today, slot: 0, minutes, now: at, countsForStreak: true, detail: "completed by a walk", workoutId \}/.test(fn) &&
+      /if \(input\.asTick\) \{\s*const manual = completableReason\(t, row\) \?\? deferredRefusalOf\(t, at\) \?\? \(read\.decidedNotKept \? DECIDED_NOT_KEPT : null\);/.test(fn) &&
+      (tasks.match(/a\.workoutId \? \{ workoutId: a\.workoutId \} : a\.countedBy \? \{ workoutId: a\.countedBy \} : \{\}/g) ?? []).length === 2
   );
   check(
     "…decides by linkedTickPlanOf on momentumLive(day), then writes through settleCompletion (the lock, the freshness guard) with the walk, after Duty's refusal and the board's rule",

@@ -118,4 +118,35 @@
     .wt-ex-week { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .wt-ex-item-day { flex-basis: 72px; }
   }
+
+  /* ---------- every kind (health-2026-10-27.md D10-D13): the week, the picker, the record form (SessionForm) ----------
+     The kind chips and every new chip group are 44 px (the walk's own angle and Counts as chips stay as they were). */
+  .wt-ex-sum { display: flex; flex-direction: column; gap: 6px; }
+  .wt-ex-sum p { margin: 0; }
+  /* Three cells (no "Strength days" until a lift can be logged): three across, and at 344 px two, the third across the row. */
+  .wt-ex-week.wt-ex-week-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .wt-ex-note { margin: 0; color: var(--ink-1); }
+  .wt-ex-wide { grid-column: 1 / -1; }
+  .wt-ex-kinds, .wt-ex-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .wt-ex-kinds .chip.btn-chip, .wt-ex-opts .chip.btn-chip { min-height: 44px; }
+  /* A long Again or "Counts as" chip (a 40-character game, a long habit title) wraps inside the row, never past it. */
+  .wt-ex-opts .chip.btn-chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; line-height: 18px; padding-block: 6px; }
+  .wt-ex-kinds .chip.btn-chip:focus-visible, .wt-ex-opts .chip.btn-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .wt-ex-kinds .chip.btn-chip:disabled, .wt-ex-opts .chip.btn-chip:disabled { opacity: .45; cursor: not-allowed; }
+  .wt-ex-rpe .chip.btn-chip { min-width: 44px; justify-content: center; padding: 0 8px; white-space: nowrap; }
+  .wt-ex-more { border-top: 1px solid var(--line-1); padding-top: 4px; }
+  .wt-ex-more > summary {
+    display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none;
+    font: 600 13px/18px var(--font-ui); color: var(--ink-1);
+  }
+  .wt-ex-more > summary::-webkit-details-marker { display: none; }
+  .wt-ex-more > summary::before { content: "+"; flex: none; width: 16px; text-align: center; color: var(--ink-2); }
+  .wt-ex-more[open] > summary::before { content: "−"; }
+  .wt-ex-more > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 8px; }
+  .wt-ex-more-body { display: flex; flex-direction: column; gap: 10px; padding: 4px 0 6px; }
+  select.wt-input { cursor: pointer; }
+  @media (max-width: 420px) {
+    .wt-ex-week.wt-ex-week-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .wt-ex-week.wt-ex-week-3 > div:last-child { grid-column: 1 / -1; }
+  }
 }
