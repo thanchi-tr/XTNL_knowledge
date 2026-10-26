@@ -8,10 +8,11 @@
  * it imports nothing from the economy or from anything that reaches Gemini. Every value gets the same receipt, the
  * same words and the same haptic: no colour judgement, no praise or shame, no streak, no count to keep up.
  *
- * INERT UNTIL MIND_LAUNCH_DAY (null in code; outside production XTNL_MIND_LAUNCH_DAY may set it, the rehearsal
- * server): while it is null no check-in is written and no value is read (Body › Mind reads only how many are stored,
- * so "Delete all check-ins" is there for any kept from before). The lead flips it once the rehearsal server shows it
- * working (the user's standing authority covers this feature's own switch).
+ * LIVE FROM MIND_LAUNCH_DAY, 2026-10-27 (outside production XTNL_MIND_LAUNCH_DAY may move it, the rehearsal
+ * server). Before it, or with it set back to null, no check-in is written and no value is read (Body › Mind reads only
+ * how many are stored, so "Delete all check-ins" is there for any kept from before). The lead flipped it on 2026-10-27
+ * under the user's standing authority over this feature, after the migration was applied and an end-to-end run on the
+ * live tables, as a throwaway user, passed and cleaned up after itself.
  *
  * The check-in (D1)
  *   Tap 1      one tap on a 9×9 pleasantness × energy grid (Russell's Affect Grid): valence and energy, −4..+4 each.
@@ -80,7 +81,7 @@ import { LIFE_TZ, addDays, dayKeyOf, daysBetween, monthKeyOf, weekStartKeyOf, we
  * and the check-in surfaces (the card, the sheet, the Today strip) are not drawn. Set in the launch commit only, once
  * the rehearsal server shows it working.
  */
-export const MIND_LAUNCH_DAY = null as DayKey | null;
+export const MIND_LAUNCH_DAY = "2026-10-27" as DayKey | null;
 
 /** Outside production, a valid 'YYYY-MM-DD' here overrides MIND_LAUNCH_DAY (the rehearsal server). */
 export const MIND_LAUNCH_DAY_ENV = "XTNL_MIND_LAUNCH_DAY";

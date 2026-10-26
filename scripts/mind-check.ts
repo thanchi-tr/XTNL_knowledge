@@ -4,7 +4,7 @@
  * (src/app/actions/mind.ts), the sheet, Body › Mind and Today's strip (src/components/mind), the migration and the
  * guards around them:
  *
- *   §1  the switch: MIND_LAUNCH_DAY null in code (the inert pin), XTNL_MIND_LAUNCH_DAY honoured outside production
+ *   §1  the switch: MIND_LAUNCH_DAY 2026-10-27 in code (the launch pin, re-pinned from the inert one), XTNL_MIND_LAUNCH_DAY honoured outside production
  *       only and only as a real day, mindOn from the launch day;
  *   §2  the grid: cellAt snaps a point, moveCell steps it, the four quadrants and the axis lines, their words;
  *   §3  the input: cleanCheckInput's edges (the grid tap, stress, the word, the tags, trigger and via, the clientId,
@@ -230,9 +230,10 @@ const componentSrc = (f: string) => read(`src/components/mind/${f}`);
 
 // ── §1 The switch ─────────────────────────────────────────────────────────
 console.log("— switch");
-// The inert pin: re-pin it (and only it) in the launch commit.
-check("MIND_LAUNCH_DAY is null in code: check-ins ship inert (the lead flips it once the rehearsal server shows them working)", MIND_LAUNCH_DAY === null);
-check("…as the source says it: `export const MIND_LAUNCH_DAY = null as DayKey | null;`", /\nexport const MIND_LAUNCH_DAY = null as DayKey \| null;\n/.test(mindSrc));
+// The launch pin (re-pinned from the inert one in the launch commit, 2026-10-27: the migration applied, the end-to-end
+// run on the live tables passed as a throwaway user and cleaned up; the user's standing authority over this feature).
+check("MIND_LAUNCH_DAY is 2026-10-27 in code: check-ins are live from that life day", MIND_LAUNCH_DAY === "2026-10-27");
+check("…as the source says it: `export const MIND_LAUNCH_DAY = \"2026-10-27\" as DayKey | null;`", /\nexport const MIND_LAUNCH_DAY = "2026-10-27" as DayKey \| null;\n/.test(mindSrc));
 eq("its override is XTNL_MIND_LAUNCH_DAY", MIND_LAUNCH_DAY_ENV, "XTNL_MIND_LAUNCH_DAY");
 eq(
   "the override is honoured outside production only, trimmed, and only as a real day (2026-02-30 is not one)",
