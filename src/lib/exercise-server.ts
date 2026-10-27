@@ -40,8 +40,18 @@
  *                                            alone, since nothing was paid (a walk's delete is deleteExerciseCore's), and
  *                                            a lift's with its movements and sets in one transaction (deleteLiftRows);
  *                                            the view names the habit a record ticked (view.counted), which stays
+ *   importSessionCore(userId, raw, now, { clientId, at })  → { ok, value: ImportedSession } | { ok: false, error }
+ *                                            (health-2026-10-27.md D21; health-ingest-server ingestHealthCore) a Health
+ *                                            Connect session of any record kind, a lift included as its minutes alone:
+ *                                            the ExerciseSession row alone, under its key 'hc:<record id>' (a resend
+ *                                            answers the row it wrote) with its Health Connect minutes. A RECORD with no
+ *                                            "Counts as": no ActivityEvent, no pay, no habit tick; its variant only the
+ *                                            one Health Connect named
+ *   keepMatchedImportKey(userId, key, at)  → boolean: a matched Health Connect session's key, kept as a row of the key
+ *                                            alone (DELETED_IMPORT_KIND), so its resend is a duplicate
  * A lift is written by the set logger (training-server.ts): logSessionCore never writes one, and the view leaves out a
- * lift still open (isListed), which is the logger's until Finish ends it.
+ * lift still open (isListed), which is the logger's until Finish ends it. A lift Health Connect brought in is written
+ * by importSessionCore, closed (both times set), with no movement or set.
  * The added columns (migration 20270104000000_strength_sets) may be missing on a database it has not reached: the
  * view then falls back to the walk-only read (kindsReady false: the card is the walking card it always was), and
  * logSessionCore says so in one plain line (KINDS_NOT_READY). A walk never reads or writes an added column.
@@ -67,12 +77,16 @@ import { activityOp, invalidateActivity, isDuplicateActivity } from "./activity"
 import { HC_WALK_INGESTED, alreadyHereLineOf, importedTwinOf, ingestEventInput, isIngestReceipt, type IngestReceipt, type SameDaySession } from "./health-ingest";
 import { LIFE_TZ, addDays, dateColumn, dayKeyOf, keyOfDateColumn, todayKey, weekKeyOf, type DayKey } from "./life-day";
 import {
+  DELETED_IMPORT_KIND,
+  IMPORTED_CLIENT_ID_PREFIX,
   RECORD_KINDS,
+  SESSION_LIMITS,
   bodyQuestDoneBy,
   cleanSessionInput,
   cleanWalkInput,
   exerciseWeekOf,
   isExerciseKind,
+  isImportedSession,
   isWalkReceipt,
   linkCandidateOf,
   paidFactsOf,
@@ -891,6 +905,9 @@ export async function habitCountedBy(userId: string, s: SessionView): Promise<st
   return rows.find((r) => isDoneStatus(r.status))?.templateId ?? null;
 }
 
+/** linkRecord's answer for a session Health Connect brought in (D21): an import ticks no habit. */
+export const IMPORT_NOT_COUNTED = "A Health Connect session can't count as a habit";
+
 /** completeLinkedCore's refusals are a walk's words (the walk keeps them): a record says its own. Any other as it is. */
 const RECORD_LINK_WORDS: Readonly<Record<string, string>> = {
   [LINKED_NOT_EXERCISE]: "Only an exercise task or habit can be counted",
@@ -909,9 +926,11 @@ export function recordLinkErrorOf(error: string): string {
  * would be (its price, its proof rules with the session's minutes, its streak unit), never SESSION and never a
  * walk's top-up. The same session again (a resend) answers as the first call; a habit ticked already that day
  * writes nothing and says so. Never throws: the session is saved whatever happens here. A lift's Finish takes this path
- * too (training-server finishLiftCore): one "Counts as" for every record kind.
+ * too (training-server finishLiftCore): one "Counts as" for every record kind. A session Health Connect brought in
+ * (D21) never counts as a habit, whoever asks: an import gets no tick.
  */
 export async function linkRecord(userId: string, templateId: string, s: SessionView, now: Date): Promise<SessionLinkOutcome> {
+  if (isImportedSession(s)) return { kind: "NOT_COUNTED", error: IMPORT_NOT_COUNTED };
   try {
     const res = await completeLinkedCore({ userId, templateId, day: s.day, workoutId: s.id, minutes: Math.max(1, Math.round(s.durationMin)), at: now, asTick: true });
     if (!res.ok) return { kind: "NOT_COUNTED", error: recordLinkErrorOf(res.error) };
@@ -1017,15 +1036,141 @@ export async function logSessionMomentsCore(
   });
 }
 
+// ── Health Connect's records (health-2026-10-27.md D21) ────────────────────
+
+/** An imported session (importSessionCore): the row, and whether its key wrote it before (a resend: nothing new written). */
+export interface ImportedSession extends SessionView {
+  replay: boolean;
+}
+
+/** importSessionCore takes a Health Connect key alone ('hc:<record id>', at most 64 characters) and its two instants. */
+export const IMPORT_KEY_REFUSED = "That Health Connect session's key or times aren't valid.";
+/** A resend of a Health Connect session the user deleted on Train › Exercise: its key is kept, so nothing comes back. */
+export const IMPORT_DELETED = "That Health Connect session was deleted here, so it stays deleted.";
+
+/**
+ * A Health Connect session of a record kind (D21; health-ingest-server ingestHealthCore): exercise.ts cleanSessionInput
+ * checks it as any session of its kind (its day, its minutes, a distance where the kind has one, its variant or name;
+ * a lift is its minutes alone, with no movement and no set, as Health Connect carries no load), then one
+ * ExerciseSession row with its Health Connect minutes (startedAt, endedAt) and its key 'hc:<record id>' as the clientId.
+ * A resend, a retried job or a second phone answers the row that key wrote (replay) and writes nothing; one the user
+ * deleted answers IMPORT_DELETED. A RECORD, as every record kind is, and with no "Counts as": no ActivityEvent of any
+ * kind (no WORKOUT, PR or INGEST row), no pay and no habit tick, so nothing for a streak, a quest, a kept week, a skill
+ * hour, a personal best, Vitality, a side quest or calibration. A walk is never one (logWalkCore is its path).
+ */
+export async function importSessionCore(
+  userId: string,
+  raw: RawSessionInput,
+  now: Date,
+  opts: { clientId: string; at: { start: Date; end: Date } }
+): Promise<ExerciseResult<ImportedSession>> {
+  const key = opts?.clientId;
+  const start = opts?.at?.start;
+  const end = opts?.at?.end;
+  if (typeof key !== "string" || !key.startsWith(IMPORTED_CLIENT_ID_PREFIX) || key.length <= IMPORTED_CLIENT_ID_PREFIX.length || key.length > SESSION_LIMITS.CLIENT_ID_MAX) return { ok: false, error: IMPORT_KEY_REFUSED };
+  if (!(start instanceof Date) || !(end instanceof Date) || !(end.getTime() > start.getTime())) return { ok: false, error: IMPORT_KEY_REFUSED };
+  // The key is the import's own ('hc:' is never a typed save's), so the input's clientId is left out of the check.
+  const clean = cleanSessionInput({ ...(raw ?? {}), clientId: undefined }, todayKey(now));
+  if (!clean.ok) return clean;
+  const v = clean.value;
+  if (v.kind === "WALK") return { ok: false, error: SESSION_WALK_ELSEWHERE };
+  try {
+    const row = await prisma.exerciseSession.create({
+      data: {
+        userId,
+        day: dateColumn(v.day),
+        kind: v.kind,
+        angleDeg: v.angleDeg,
+        distanceKm: v.distanceKm,
+        durationMin: v.durationMin,
+        note: v.note,
+        // Only the variant Health Connect named: a kind's fallback (yoga's Hatha) is a typed save's, never guessed here.
+        variant: raw?.variant != null && raw.variant !== "" ? v.variant : null,
+        label: v.label,
+        startedAt: start,
+        endedAt: end,
+        clientId: key,
+      },
+      select: FULL_SELECT,
+    });
+    invalidate("exercise", "training");
+    return { ok: true, value: { ...sessionViewOf(row), replay: false } };
+  } catch (err) {
+    if (isMissingExerciseTable(err)) return { ok: false, error: EXERCISE_NOT_READY };
+    if (isMissingSessionColumns(err)) return { ok: false, error: KINDS_NOT_READY };
+    if (isUniqueViolation(err)) {
+      // The key landed first (a raced resend): that row is the answer. A key with no listed row is a deleted import's.
+      const prior = await sessionByClientId(userId, key).catch(() => null);
+      return prior ? { ok: true, value: { ...prior, replay: true } } : { ok: false, error: IMPORT_DELETED };
+    }
+    console.error("Exercise: a Health Connect session wasn't saved.", err);
+    return { ok: false, error: SAVE_FAILED };
+  }
+}
+
+/**
+ * The delete of a session Health Connect brought in (its key 'hc:<record id>'): the row stays as its key alone, kind
+ * DELETED_IMPORT_KIND, which nothing lists, counts or matches, so the next sync's resend is a duplicate and the session
+ * never comes back (a deleted walk keeps its INGEST row the same way). True when there was one. No ledger row.
+ */
+async function keepImportKey(userId: string, id: string): Promise<boolean> {
+  try {
+    const kept = await prisma.exerciseSession.updateMany({
+      where: { id, userId, kind: { in: [...RECORD_KINDS] }, clientId: { startsWith: IMPORTED_CLIENT_ID_PREFIX } },
+      data: { kind: DELETED_IMPORT_KIND },
+    });
+    if (kept.count > 0) invalidate("exercise", "training");
+    return kept.count > 0;
+  } catch (err) {
+    // Before the strength_sets migration there is no key, so no import either: the plain delete follows.
+    if (isMissingSessionColumns(err)) return false;
+    throw err;
+  }
+}
+
+/**
+ * The key of a Health Connect session that matched one already here (health-ingest-server ingestHealthCore: a session
+ * typed by hand, another app's import, a lift from the set logger), kept as a row of its key alone: kind
+ * DELETED_IMPORT_KIND, which nothing lists, counts or matches, with its life day and its Health Connect minutes. So the
+ * next sync's resend is a duplicate (importedKeys finds it), whatever becomes of its twin, as a matched walk keeps its
+ * INGEST row. False when the key was there already (a raced resend); true otherwise, and before the strength_sets
+ * migration (no key yet, so nothing to keep). No ledger row, no pay, no habit tick.
+ */
+export async function keepMatchedImportKey(userId: string, key: string, at: { start: Date; end: Date }): Promise<boolean> {
+  try {
+    await prisma.exerciseSession.create({
+      data: {
+        userId,
+        day: dateColumn(dayKeyOf(at.start)),
+        kind: DELETED_IMPORT_KIND,
+        angleDeg: 0,
+        distanceKm: 0,
+        durationMin: Math.max(0, (at.end.getTime() - at.start.getTime()) / 60_000),
+        startedAt: at.start,
+        endedAt: at.end,
+        clientId: key,
+      },
+      select: { id: true },
+    });
+    return true;
+  } catch (err) {
+    if (isUniqueViolation(err)) return false;
+    if (isMissingSessionColumns(err)) return true;
+    throw err;
+  }
+}
+
 /**
  * Deletes a record session: the row alone for a kind logSessionCore writes, since a record wrote no ledger row and paid
  * nothing; a lift (the set logger's, training-server.ts) with its movements and sets, in one transaction
  * (deleteLiftRows), since nothing was paid for it either. A habit either counted as stays ticked, as a manual tick does
- * (its own Undo is on Today). A walk is never deleted here (deleteExerciseCore takes its pay back first).
+ * (its own Undo is on Today). A walk is never deleted here (deleteExerciseCore takes its pay back first). A session
+ * Health Connect brought in (D21) keeps its key (keepImportKey), so the next sync never brings it back.
  */
 export async function deleteSessionCore(userId: string, id: string): Promise<ExerciseResult<null>> {
   if (typeof id !== "string" || !ID_RE.test(id)) return { ok: false, error: GONE };
   try {
+    if (await keepImportKey(userId, id)) return { ok: true, value: null };
     const out = await prisma.exerciseSession.deleteMany({ where: { id, userId, kind: { in: [...SESSION_CORE_KINDS] } } });
     invalidate("exercise");
     if (out.count > 0) return { ok: true, value: null };

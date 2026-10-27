@@ -579,4 +579,58 @@ class DemoBoardTest {
         assertEquals(HealthWalkCounts(duplicate = 2), again.walks)
         assertEquals("Health Connect: nothing new.", again.line)
     }
+
+    /** D21: a demo sync records every other kind as the server does: a record, never paid, once per record. */
+    @Test fun aHealthSyncRecordsWorkoutsOnceAndNeverPaysThem() = runTest {
+        val now = Instant.parse("2026-10-21T00:12:00Z")
+        val api = DemoApi(clock = { now })
+        val batch = HealthBatch(
+            since = "2026-10-20T20:00:00Z",
+            walks = listOf(
+                HealthWalk("hc-run", "RUN", "2026-10-20T21:00:00Z", "2026-10-20T21:28:40Z", 5.2, variant = "TREADMILL"),
+                HealthWalk("hc-lift", "LIFT", "2026-10-20T22:00:00Z", "2026-10-20T22:45:00Z"),
+                HealthWalk("hc-row", "ROW", "2026-10-20T23:00:00Z", "2026-10-20T23:20:00Z"),
+            ),
+        )
+        val first = (api.syncHealth(batch, "c-1") as Outcome.Ok).value
+        assertEquals(HealthSessionCounts(added = 2), first.sessions)
+        assertEquals(HealthWalkCounts(), first.walks)
+        assertEquals(listOf(HealthRefusal("session", "hc-row", "A distance in metres, please.")), first.refused)
+        assertEquals("Health Connect: 2 workouts recorded · 1 skipped", first.line)
+        // A refused workout is never kept (the server writes nothing for it), so the resend refuses it again.
+        val again = (api.syncHealth(batch, "c-2") as Outcome.Ok).value
+        assertEquals(HealthSessionCounts(duplicate = 2), again.sessions)
+        assertEquals(listOf(HealthRefusal("session", "hc-row", "A distance in metres, please.")), again.refused)
+        assertEquals("Health Connect: 1 skipped", again.line)
+    }
+
+    /** D21: the demo refuses a workout with no distance in the core's words for its kind, and a walk the same way. */
+    @Test fun aHealthSyncRefusesInTheServersWordsAndARefusalIsNeverKept() = runTest {
+        val now = Instant.parse("2026-10-21T00:12:00Z")
+        val api = DemoApi(clock = { now })
+        val batch = HealthBatch(
+            since = "2026-10-20T20:00:00Z",
+            walks = listOf(
+                HealthWalk("hc-run", "RUN", "2026-10-20T21:00:00Z", "2026-10-20T21:30:00Z"),
+                HealthWalk("hc-ride", "CYCLE", "2026-10-20T21:40:00Z", "2026-10-20T22:10:00Z"),
+                HealthWalk("hc-swim", "SWIM", "2026-10-20T22:20:00Z", "2026-10-20T22:50:00Z"),
+                HealthWalk("hc-walk", "WALK", "2026-10-20T23:10:00Z", "2026-10-20T23:40:00Z"),
+            ),
+        )
+        val first = (api.syncHealth(batch, "c-1") as Outcome.Ok).value
+        assertEquals(
+            listOf(
+                HealthRefusal("session", "hc-run", "A distance, please."),
+                HealthRefusal("session", "hc-ride", "A distance or the average watts, please."),
+                HealthRefusal("session", "hc-swim", "A distance in metres, please."),
+                HealthRefusal("walk", "hc-walk", "A distance between 0.01 and 200 km, please."),
+            ),
+            first.refused,
+        )
+        val again = (api.syncHealth(batch, "c-2") as Outcome.Ok).value
+        assertEquals(first.refused, again.refused)
+        assertEquals(HealthSessionCounts(), again.sessions)
+        assertEquals(HealthWalkCounts(), again.walks)
+        assertEquals("Health Connect: 4 skipped", again.line)
+    }
 }

@@ -1102,18 +1102,24 @@ data class LiftSetResult(
     val lift: OpenLift? = null,
 )
 
-// ── POST /exercise (blueprint P27: Health Connect's walks, hikes and weigh-ins) ──
+// ── POST /exercise (blueprint P27, D21: Health Connect's walks, hikes, workouts and weigh-ins) ──
 
-/** One walking or hiking session as the sync sends it: its Health Connect record id, its instants (ISO), its distance and climb. */
+/**
+ * One exercise session as the sync sends it in `walks`: its Health Connect record id, its kind (core/HealthLine.KINDS),
+ * its instants (ISO), its distance (a walk always has one; a kind with none sends none), a walk's climb, and the
+ * variant or the sport's name its type says. An absent field is left out of the body, so a walk is sent as it always was.
+ */
 @Serializable
 data class HealthWalk(
     val externalId: String,
     val kind: String,
     val start: String,
     val end: String,
-    val distanceKm: Double,
+    val distanceKm: Double? = null,
     val climbM: Double? = null,
     val origin: String? = null,
+    val variant: String? = null,
+    val label: String? = null,
 )
 
 /** One weigh-in as the sync sends it. */
@@ -1135,10 +1141,14 @@ data class HealthWalkCounts(
     val xp: Double = 0.0,
 )
 
+/** D21: every other kind's counts: [added] as a record of its own, [matched] to one already there, [duplicate]s. Never paid. */
+@Serializable
+data class HealthSessionCounts(val added: Int = 0, val matched: Int = 0, val duplicate: Int = 0)
+
 @Serializable
 data class HealthWeightCounts(val added: Int = 0, val kept: Int = 0)
 
-/** An item a core refused, with its own line (the rest of the batch still landed). */
+/** An item a core refused, with its own line (the rest of the batch still landed): a walk, a session or a weigh-in. */
 @Serializable
 data class HealthRefusal(val kind: String = "walk", val externalId: String = "", val error: String = "")
 
@@ -1146,6 +1156,7 @@ data class HealthRefusal(val kind: String = "walk", val externalId: String = "",
 @Serializable
 data class HealthSyncResult(
     val walks: HealthWalkCounts = HealthWalkCounts(),
+    val sessions: HealthSessionCounts = HealthSessionCounts(),
     val weights: HealthWeightCounts = HealthWeightCounts(),
     val refused: List<HealthRefusal> = emptyList(),
     val line: String? = null,

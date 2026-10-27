@@ -782,9 +782,12 @@ class DemoApi(
     private val healthSeen = mutableSetOf<String>()
 
     /**
-     * A sync's batch (P27), as the server answers it: a record seen before is a duplicate; a walk that started before
-     * `since` is the backfill (recorded, never paid); a newer one dated today or yesterday pays about what a walk pays
-     * (B 10 a minute-ish, here 0.4 XP a minute); a weigh-in lands. The line is the server's words (HealthLine.syncLine).
+     * A sync's batch (P27), as the server answers it: a record seen before (or twice in the batch) is a duplicate; a
+     * walk that started before `since` is the backfill (recorded, never paid); a newer one dated today or yesterday pays
+     * about what a walk pays (B 10 a minute-ish, here 0.4 XP a minute); every other kind (D21) is a record, never paid,
+     * once per record (a run, a ride, a swim or a row with no distance is refused in the core's words for its kind,
+     * [noDistanceLine]); a weigh-in lands. A refused record is never kept, so its resend is refused again, as on the
+     * server. The line is the server's words (HealthLine.syncLine).
      */
     override suspend fun syncHealth(batch: HealthBatch, clientId: String): Outcome<HealthSyncResult> {
         pause(200)
@@ -795,12 +798,24 @@ class DemoApi(
                 if (batch.walks.size > HealthLine.SERVER_MAX || batch.weights.size > HealthLine.SERVER_MAX) return@once bad("walks takes at most ${HealthLine.SERVER_MAX} at a time.")
                 val today = TimeLabels.lifeDay(clock())
                 var walks = HealthWalkCounts()
+                var sessions = HealthSessionCounts()
                 val refused = mutableListOf<HealthRefusal>()
+                val inBatch = mutableSetOf<String>()
                 for (w in batch.walks.sortedBy { it.start }) {
                     val start = runCatching { Instant.parse(w.start) }.getOrNull() ?: return@once bad("walks: start must be an ISO instant.")
                     val end = runCatching { Instant.parse(w.end) }.getOrNull() ?: return@once bad("walks: end must be an ISO instant.")
-                    if (!healthSeen.add("w:${w.externalId}")) { walks = walks.copy(duplicate = walks.duplicate + 1); continue }
-                    if (w.distanceKm < 0.01) { refused += HealthRefusal("walk", w.externalId, "A distance between 0.01 and 200 km, please."); continue }
+                    if (w.kind !in HealthLine.WALK_KINDS) {
+                        val key = "s:${w.externalId}"
+                        if (key in healthSeen || !inBatch.add(key)) { sessions = sessions.copy(duplicate = sessions.duplicate + 1); continue }
+                        if (w.kind in HealthLine.DISTANCE_KINDS && (w.distanceKm ?: 0.0) < 0.01) { refused += HealthRefusal("session", w.externalId, noDistanceLine(w.kind)); continue }
+                        healthSeen += key
+                        sessions = sessions.copy(added = sessions.added + 1)
+                        continue
+                    }
+                    val key = "w:${w.externalId}"
+                    if (key in healthSeen || !inBatch.add(key)) { walks = walks.copy(duplicate = walks.duplicate + 1); continue }
+                    if ((w.distanceKm ?: 0.0) < 0.01) { refused += HealthRefusal("walk", w.externalId, "A distance between 0.01 and 200 km, please."); continue }
+                    healthSeen += key
                     val minutes = Duration.between(start, end).toMinutes().toDouble()
                     val day = TimeLabels.lifeDay(start)
                     val pays = !start.isBefore(since) && !day.isBefore(today.minusDays(1)) && minutes >= 5
@@ -813,9 +828,16 @@ class DemoApi(
                     if (x.kg < 20 || x.kg > 400) { refused += HealthRefusal("weight", x.externalId, "A weight between 20 and 400 kg, please."); continue }
                     weights = weights.copy(added = weights.added + 1)
                 }
-                Outcome.Ok(HealthSyncResult(walks, weights, refused, HealthLine.syncLine(walks, weights, refused.size)))
+                Outcome.Ok(HealthSyncResult(walks = walks, sessions = sessions, weights = weights, refused = refused, line = HealthLine.syncLine(walks, sessions, weights, refused.size)))
             }
         }
+    }
+
+    /** exercise.ts cleanSessionInput's words for a workout with no distance: metres for a swim or a row, watts for a ride. */
+    private fun noDistanceLine(kind: String): String = when (kind) {
+        "SWIM", "ROW" -> "A distance in metres, please."
+        "CYCLE" -> "A distance or the average watts, please."
+        else -> "A distance, please."
     }
 
     // ── The check-in (health phase 2; docs/mobile-api.md POST /checkin, /checkin/undo) ──

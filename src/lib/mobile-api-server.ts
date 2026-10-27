@@ -25,7 +25,7 @@
  *   POST /mall/rewards     handleMallRewards    actions/mall addReward (the Add sheet's save; P18)
  *   POST /mall/buy         handleMallBuy        actions/mall buyReward (Buy, then Confirm; P19)
  *   POST /mall/undo        handleMallUndo       actions/mall undoBuy (a purchase undone inside its ten minutes; P19)
- *   POST /exercise         handleExercise       health-ingest-server ingestHealthCore (Health Connect's walks, hikes and weigh-ins; P27)
+ *   POST /exercise         handleExercise       health-ingest-server ingestHealthCore (Health Connect's walks, hikes, workouts and weigh-ins; P27, D21)
  *   POST /checkin          handleCheckin        mind-server logCheckCore (the 5-second check-in; health phase 2)
  *   POST /checkin/undo     handleCheckinUndo    mind-server deleteCheckCore (the receipt's Undo, the check-in's Delete)
  *   POST /lift/set         handleLiftSet        training-server logSetCore (the lift logger's "Set done"; health phase 2)
@@ -320,11 +320,12 @@ export interface MobileDeps {
   /** The skill a template feeds, as it stands (competency-server loadTemplateSkill; null with none): the tick's `competency`. */
   loadTemplateSkill: (userId: string, templateId: string) => Promise<SkillView | null>;
 
-  // POST /exercise (blueprint P27, D22): Health Connect's walks, hikes and weigh-ins.
+  // POST /exercise (blueprint P27, D22; D21): Health Connect's walks, hikes, workouts and weigh-ins.
   /**
    * One sync's batch (health-ingest-server ingestHealthCore): each walk through exercise-server logWalkCore with its
-   * 'ingest:hc:<externalId>' row (the backfill a record only), each weigh-in through weight-server logWeightCore with
-   * source 'import'. Writes only on the live app (lifeWritesEnabled).
+   * 'ingest:hc:<externalId>' row (the backfill a record only), each workout of another kind through exercise-server
+   * importSessionCore (a record under its key 'hc:<externalId>', no ledger row), each weigh-in through weight-server
+   * logWeightCore with source 'import'. Writes only on the live app (lifeWritesEnabled).
    */
   ingestHealth: (userId: string, batch: HcBatch, now: Date) => Promise<IngestResult<IngestSummary & { line: string }>>;
 
@@ -914,7 +915,9 @@ export async function handleTaskUndo(request: Request, deps: MobileDeps): Promis
  * logged by hand that day is the same walk (nothing paid twice), and a walk that started before `since` (the sync
  * switched on) is the backfill, a record only: no pay, no personal best (H17). A newer walk is priced exactly as one
  * logged on Train › Exercise (a live day, today or yesterday, through the knee). A weigh-in is a record with source
- * 'import' that never replaces one typed by hand. Items a core refuses are listed in `refused` with its line; the rest
+ * 'import' that never replaces one typed by hand. Every other kind (D21: a run, a ride, a swim, a lift, …) is a record
+ * of its kind, once per record, never paid, and one already there that day of the same kind is matched; a kind the
+ * server doesn't read is skipped and counted. Items a core refuses are listed in `refused` with its line; the rest
  * lands. On a dev server (writes off) the whole batch is `conflict` with HC_WRITES_OFF. The app never shows the reply
  * as a moment: it is a background sync, and Settings shows its line.
  */

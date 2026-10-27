@@ -9,6 +9,7 @@ import androidx.work.WorkManager
 import com.xtnl.app.core.HealthLine
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.data.AppSettings
+import com.xtnl.app.data.HealthSessionCounts
 import com.xtnl.app.data.HealthWalkCounts
 import com.xtnl.app.data.HealthWeightCounts
 import com.xtnl.app.data.Outcome
@@ -31,9 +32,10 @@ import java.util.concurrent.TimeUnit
  *    (Health Connect's background reads, available and allowed): without them no job is armed, and a run that finds
  *    them taken back since ends quietly (it never writes an error over the last good sync). The app syncs when it is
  *    opened either way ([runIfDue], at most every 15 minutes), and re-arms or cancels the job as the grant now stands;
- *  - each run reads walking and hiking sessions and weigh-ins from where the last one left off (less 48 hours; the first
- *    reads Health Connect's 30 days of history) and posts them to `POST /exercise` 50 at a time. The server writes each
- *    walk once per record, matches one the user typed by hand, and records the backfill (before `since`) without pay.
+ *  - each run reads exercise sessions and weigh-ins from where the last one left off (less 48 hours; the first reads
+ *    Health Connect's 30 days of history) and posts them to `POST /exercise` 50 at a time. The server writes each walk
+ *    once per record, matches one the user typed by hand, and records the backfill (before `since`) without pay; every
+ *    other kind (D21) is a record of its own kind, once per record, never paid, and a lift is its minutes alone.
  *
  * One run at a time (the job and the app never overlap). Settings shows the last run's line or why it didn't land.
  */
@@ -118,12 +120,16 @@ class HealthSync(private val app: Context, private val settings: AppSettings, pr
         } catch (e: Exception) {
             return@withLock failed(now, READ_FAILED, offline = false)
         }
-        val walks = HealthLine.walksOf(read.first)
+        val sessions = HealthLine.sessionsOf(read.first)
         val weights = HealthLine.weightsOf(read.second)
-        // Walks dropped for no distance from their app are said, never silently skipped.
+        // Walks and workouts dropped for no distance from their app, and types it doesn't read, are said, never
+        // silently skipped.
         val noDistance = HealthLine.skippedNoDistance(read.first)
-        val batches = HealthLine.batches(walks, weights, since)
+        val workoutsNoDistance = HealthLine.skippedWorkoutsNoDistance(read.first)
+        val unread = HealthLine.skippedUnread(read.first)
+        val batches = HealthLine.batches(sessions, weights, since)
         var walked = HealthWalkCounts()
+        var worked = HealthSessionCounts()
         var weighed = HealthWeightCounts()
         var refused = 0
         var line: String? = null
@@ -131,6 +137,7 @@ class HealthSync(private val app: Context, private val settings: AppSettings, pr
             when (val r = api().syncHealth(b, UUID.randomUUID().toString())) {
                 is Outcome.Ok -> {
                     walked = HealthLine.sum(walked, r.value.walks)
+                    worked = HealthLine.sum(worked, r.value.sessions)
                     weighed = HealthLine.sum(weighed, r.value.weights)
                     refused += r.value.refused.size
                     line = r.value.line
@@ -139,8 +146,8 @@ class HealthSync(private val app: Context, private val settings: AppSettings, pr
                 is Outcome.Err -> return@withLock failed(now, r.message, r.offline)
             }
         }
-        // One batch: the server's own line; several: the same words over their sum; then any walk with no distance.
-        val said = HealthLine.withSkipped(if (batches.size == 1 && line != null) line else HealthLine.syncLine(walked, weighed, refused), noDistance)
+        // One batch: the server's own line; several: the same words over their sum; then what was skipped here.
+        val said = HealthLine.withSkipped(if (batches.size == 1 && line != null) line else HealthLine.syncLine(walked, worked, weighed, refused), noDistance, workoutsNoDistance, unread)
         settings.setHealthSynced(now, said)
         Run.Done(said)
     }

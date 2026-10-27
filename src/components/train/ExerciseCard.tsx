@@ -16,7 +16,8 @@
  *            angle goes over as the run's incline, and a run's incline back as the walk's angle)
  *   log      the incline angle in degrees (with quick chips and its treadmill grade), the distance, the duration and
  *            the day; a live line reads the speed, the pace and the climb before you save
- *   history  the last 90 days, newest first, each kind with its name and figures; Delete asks twice (a walk's takes
+ *   history  the last 90 days, newest first, each kind with its name and figures (and "from Health Connect" on a
+ *            record it brought in, D21: a lift from there is its minutes alone); Delete asks twice (a walk's takes
  *            its pay back the day it was logged; a record's paid nothing, and a habit it counted as stays ticked:
  *            its Sure? step and its delete line say so, from view.counted)
  *
@@ -41,6 +42,7 @@ import {
   ANGLE_MAX,
   EXERCISE_KINDS,
   EXERCISE_LABEL,
+  IMPORTED_FROM,
   KIND_SPECS,
   SESSION_RECORD_COPY,
   againDraftOf,
@@ -49,6 +51,7 @@ import {
   distanceLabelOf,
   durationLabel,
   factsPartsOf,
+  isImportedSession,
   kindOfferOf,
   paceLabel,
   recordDeleteNote,
@@ -125,7 +128,10 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const num = (s: string): number => (s.trim() === "" ? Number.NaN : Number(s.replace(",", ".")));
 const km = (v: number): string => `${v.toFixed(v < 10 ? 2 : 1).replace(/\.?0+$/, "")} km`;
 
-/** A record session's row: its name (the user's, a sport's or a yoga style's, else the kind), then its figures. */
+/**
+ * A record session's row: its name (the user's, a sport's or a yoga style's, else the kind), then its figures, and
+ * "from Health Connect" for one it brought in (D21: a lift from there is its minutes alone).
+ */
 function recordRowOf(s: SessionView): { name: string; main: string; sub: string } {
   const option = variantOptionOf(s.kind, s.variant);
   const named = s.label ?? (s.kind === "SPORT" || s.kind === "YOGA" ? (option?.label ?? null) : null);
@@ -137,6 +143,7 @@ function recordRowOf(s: SessionView): { name: string; main: string; sub: string 
     s.avgHr != null ? `avg HR ${s.avgHr}` : null,
     s.maxHr != null ? `max HR ${s.maxHr}` : null,
     s.sessionRpe != null ? `felt ${s.sessionRpe}/10` : null,
+    isImportedSession(s) ? IMPORTED_FROM : null,
   ].filter((x): x is string => x != null);
   // Each figure stays whole on a narrow row ("2:08 /100 m", "avg HR 152"): lines break only between the parts.
   const whole = (x: string) => x.replace(/ /g, "\u00a0");

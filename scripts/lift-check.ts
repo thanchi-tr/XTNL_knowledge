@@ -1118,6 +1118,9 @@ function matches(row: Row, where: Where | undefined): boolean {
         if (!((x as number) < (y as number))) return false;
       } else if (op === "gt") {
         if (!((x as number) > (y as number))) return false;
+      } else if (op === "startsWith") {
+        // D21: a Health Connect import's key ('hc:<id>'), as exercise-server keepImportKey asks for it on a delete.
+        if (!(typeof x === "string" && x.startsWith(String(y)))) return false;
       } else throw new Error(`lift-check: no operator ${op}`);
     }
   }

@@ -23,14 +23,51 @@
  *   8. The wiring: logWalkCore's ingest path is one transaction (the session and its key), Train › Exercise passes
  *      neither ingest nor recordOnly, no other file writes an INGEST row, no migration (no new column or table), and
  *      the phone's sync is off until the user turns it on.
+ *   9. D21 (health-2026-10-27.md): every other kind is a record. Each reaches importSessionCore as recordInputOf says
+ *      (cleanSessionInput takes it: the kind's own bounds, no distance for a kind with none, a lift as its minutes
+ *      alone) under its key 'hc:<externalId>'; no new kind writes an ActivityEvent of any kind (no INGEST row, no
+ *      match row, no pay, no habit tick); a replay, a raced key and a deleted import are duplicates; a kind the server
+ *      doesn't read is skipped and counted; the twin rule kind by kind (a walk never twins a run), a matched session's
+ *      key kept (its resend a duplicate, after its twin is deleted too), two apps' copies of a hand-typed session both
+ *      matched; one record id is one session whatever kind it is sent as (a run then a walk, or a walk then a run).
+ *   10. The walk path is HEAD cf13f9e's byte for byte: the walk's declarations in health-ingest.ts, its loop (with the
+ *      one check for a record id already here as a workout taken out) and store reads in health-ingest-server.ts, and
+ *      importedWalksOn (digests; training-check pins logWalkCore and its pay).
+ *   11. The phone maps Health Connect's exercise types by the SDK's named constants (never an integer) and asks for no
+ *      new permission.
  */
 import "./_no-model";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { dayKeyOf, type DayKey } from "../src/lib/life-day";
-import { cleanWalkInput, walkFactsOf } from "../src/lib/exercise";
 import {
+  DELETED_IMPORT_KIND,
+  EXERCISE_KINDS,
+  IMPORTED_CLIENT_ID_PREFIX,
+  IMPORTED_FROM,
+  KIND_SPECS,
+  RECORD_KINDS,
+  cleanSessionInput,
+  cleanWalkInput,
+  isImportedSession,
+  walkFactsOf,
+  type RawSessionInput,
+} from "../src/lib/exercise";
+import {
+  HC_ID_TOO_LONG,
   HC_KINDS,
+  HC_KIND_UNREAD,
+  HC_RECORD_KINDS,
+  HC_WALK_KINDS,
+  isHcRecordKind,
+  isHcWalkKind,
+  recordInputOf,
+  recordMatchOf,
+  recordNoteOf,
+  sessionClientIdOf,
+  type HcSession,
+  type SameKindSession,
   HC_WALK_INGESTED,
   HC_WRITES_OFF,
   INGEST_KEY_PREFIX,
@@ -62,12 +99,13 @@ import { importReplaces } from "../src/lib/weight";
 import { DEFAULT_SINK, activityData } from "../src/lib/activity";
 import { NEVER_STREAK_SOURCES, STREAK_SOURCES, countsForStreakOf, streakUnitsOf } from "../src/lib/streak-curve";
 import type { ActivityInput } from "../src/lib/life-types";
-import type { LogWalkOptions } from "../src/lib/exercise-server";
+import { IMPORT_DELETED, IMPORT_KEY_REFUSED, SESSION_WALK_ELSEWHERE, importSessionCore, type LogWalkOptions } from "../src/lib/exercise-server";
 
 const ROOT = join(__dirname, "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8").replace(/\r\n/g, "\n");
 /** Source without comments, so a word in a doc comment never passes for code. */
-const code = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+const codeOfSrc = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+const code = (rel: string) => codeOfSrc(read(rel));
 
 let failures = 0;
 let passes = 0;
@@ -119,7 +157,11 @@ section("1. a walk as logWalkCore takes it");
   check("cleanWalkInput takes it as it stands (logWalkCore checks it again)", clean.ok && same(clean.value, { day: w.day, angleDeg: w.angleDeg, distanceKm: w.distanceKm, durationMin: w.durationMin, note: w.note }), JSON.stringify(clean));
   const none = cleanWalkInput(walkInputOf(walk({ distanceKm: 0 })), TODAY);
   check("a session with no distance is refused by the core's own rule (its line), never saved", !none.ok && /distance/.test(none.ok ? "" : none.error));
-  check("Health Connect's kinds are walking and hiking only", same(HC_KINDS, ["WALK", "HIKE"]));
+  // Re-pinned on purpose (health-2026-10-27.md D21): the kinds widen from walking and hiking to every record kind too.
+  check(
+    "Health Connect's kinds: walking and hiking as walks, then every record kind (exercise.ts RECORD_KINDS, in order) as records",
+    same(HC_WALK_KINDS, ["WALK", "HIKE"]) && same(HC_RECORD_KINDS, RECORD_KINDS) && same(HC_KINDS, [...HC_WALK_KINDS, ...RECORD_KINDS]) && isHcWalkKind("HIKE") && !isHcWalkKind("RUN") && isHcRecordKind("LIFT") && !isHcRecordKind("WALK") && !isHcRecordKind("HIKE")
+  );
   check("durationOf is end − start in minutes", durationOf(walk()) === 30);
 }
 
@@ -159,11 +201,48 @@ interface Fake {
   matches: ActivityInput[];
   weights: { kg: number; day: DayKey; measuredAt: string; source: string }[];
   reads: string[];
+  /** D21: the sessions' own keys ('hc:<id>' clientIds), and each importSessionCore call. */
+  clientIds: Set<string>;
+  records: { clientId: string; raw: RawSessionInput; start: string; end: string }[];
+  /** D21: the imports' own sessions (recordSessionsOn lists them, as the real store does), and each matched key kept. */
+  imports: SameKindSession[];
+  matchedKeys: string[];
+  /** deleteSessionCore on an import: the row stays as its key alone (kind DELETED), so nothing lists or matches it. */
+  drop: (clientId: string) => void;
 }
 
-/** A fake store: a ledger of keys, the day's sessions, a logWalk that prices a walk as PAID unless recordOnly. */
-function fakeStore(sessions: SameDaySession[] = [], opts: { refuse?: Record<string, string>; weightKept?: (kg: number) => boolean; raced?: string[] } = {}): Fake {
-  const f: Fake = { keys: new Set(), walks: [], matches: [], weights: [], reads: [], store: null as unknown as IngestStore };
+interface FakeOpts {
+  refuse?: Record<string, string>;
+  weightKept?: (kg: number) => boolean;
+  raced?: string[];
+  /** D21: the record kinds' sessions already there, the keys a raced resend wrote first, and deleted imports' keys. */
+  kept?: SameKindSession[];
+  racedRecords?: string[];
+  /** Deleted imports: their kept key (importedKeys finds it), and one deleted while the batch ran (importSessionCore says so). */
+  deleted?: string[];
+  deletedRaced?: string[];
+}
+
+/**
+ * A fake store: a ledger of keys, the day's sessions, a logWalk that prices a walk as PAID unless recordOnly, and (D21) a
+ * logRecord that checks its input with cleanSessionInput, as importSessionCore does, and keeps its key.
+ */
+function fakeStore(sessions: SameDaySession[] = [], opts: FakeOpts = {}): Fake {
+  const f: Fake = {
+    keys: new Set(),
+    walks: [],
+    matches: [],
+    weights: [],
+    reads: [],
+    clientIds: new Set(opts.deleted ?? []),
+    records: [],
+    imports: [],
+    matchedKeys: [],
+    drop: (clientId) => {
+      f.imports = f.imports.filter((x) => x.id !== `s-${clientId}`);
+    },
+    store: null as unknown as IngestStore,
+  };
   f.store = {
     ingested: async (_u, ks) => {
       f.reads.push("ingested");
@@ -193,6 +272,31 @@ function fakeStore(sessions: SameDaySession[] = [], opts: { refuse?: Record<stri
       f.weights.push({ kg, day: o.day, measuredAt: o.measuredAt.toISOString(), source: o.source });
       if (kg > 400) return { ok: false, error: "A weight between 20 and 400 kg, please." };
       return { ok: true, value: { day: o.day, replaced: false, ...(opts.weightKept?.(kg) ? { kept: true } : {}) } };
+    },
+    importedKeys: async (_u, ks) => {
+      f.reads.push("importedKeys");
+      return new Set(ks.filter((k) => f.clientIds.has(k) && !opts.racedRecords?.includes(k)));
+    },
+    recordSessionsOn: async (_u, days) => {
+      f.reads.push(`recordSessionsOn:${days.join(",")}`);
+      return [...(opts.kept ?? []), ...f.imports].filter((s) => days.includes(s.day)).map((s) => ({ ...s }));
+    },
+    logRecord: async (_u, raw, now, o) => {
+      if (opts.deletedRaced?.includes(o.clientId)) return { ok: false, error: IMPORT_DELETED };
+      const clean = cleanSessionInput({ ...raw, clientId: undefined }, dayKeyOf(now));
+      if (!clean.ok) return clean;
+      const view = { id: `s-${o.clientId}`, ...clean.value, startedAt: o.at.start.toISOString(), endedAt: o.at.end.toISOString(), clientId: o.clientId };
+      if (opts.racedRecords?.includes(o.clientId)) return { ok: true, value: { ...view, replay: true } };
+      f.clientIds.add(o.clientId);
+      f.records.push({ clientId: o.clientId, raw, start: view.startedAt, end: view.endedAt });
+      f.imports.push({ id: view.id, kind: view.kind, day: view.day, durationMin: view.durationMin, distanceKm: view.distanceKm, at: { start: o.at.start, end: o.at.end }, imported: true });
+      return { ok: true, value: { ...view, replay: false } };
+    },
+    keepMatchedKey: async (_u, key) => {
+      if (f.clientIds.has(key)) return false;
+      f.clientIds.add(key);
+      f.matchedKeys.push(key);
+      return true;
     },
   };
   return f;
@@ -269,7 +373,7 @@ const run = (f: Fake, batch: Partial<HcBatch>, env: Record<string, string> = LIV
       res.ok && f.walks.some((w) => w.externalId === "second") && same(res.value.walks, { added: 2, paid: 2, recorded: 0, matched: 1, duplicate: 0, xp: 24.5 }),
       JSON.stringify(res.ok ? res.value.walks : res)
     );
-    check("the day's sessions are read once, for the batch's days", same(f.reads, ["ingested", `sessionsOn:${TODAY}`]));
+    check("the keys, the record ids (D21: one already a workout is a duplicate) and the day's sessions are read once each, for the batch's days", same(f.reads, ["ingested", "importedKeys", `sessionsOn:${TODAY}`]), JSON.stringify(f.reads));
   }
   {
     // Two apps wrote the same walk (Samsung Health and a watch app): half of the shorter one's minutes in common.
@@ -365,7 +469,10 @@ const run = (f: Fake, batch: Partial<HcBatch>, env: Record<string, string> = LIV
       "logWeightCore: an import reads the day's source and measuredAt and keeps it as it is (nothing written) unless importReplaces says so; a raced first log keeps what landed",
       /select: \{ id: true, source: true, measuredAt: true \}/.test(ws) && /if \(source === "import" && !importReplaces\(existing, measuredAt\)\) return kept;/.test(ws) && /if \(source === "import"\) return kept;/.test(ws)
     );
-    check("nothing new reads as 'Health Connect: nothing new.'", ingestLineOf({ walks: { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 4, xp: 0 }, weights: { added: 0, kept: 2 }, refused: [] }) === "Health Connect: nothing new.");
+    check(
+      "nothing new reads as 'Health Connect: nothing new.' (a workout's resend too)",
+      ingestLineOf({ walks: { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 4, xp: 0 }, sessions: { added: 0, matched: 0, duplicate: 3 }, weights: { added: 0, kept: 2 }, refused: [] }) === "Health Connect: nothing new."
+    );
   }
 
   // ── 8. The wiring ─────────────────────────────────────────────────────────
@@ -450,6 +557,403 @@ const run = (f: Fake, batch: Partial<HcBatch>, env: Record<string, string> = LIV
   );
   check("the phone's worker exists and posts to /exercise", existsSync(join(ROOT, "android/app/src/main/java/com/xtnl/app/health/HealthSyncWorker.kt")) && /call\("\/exercise"/.test(read("android/app/src/main/java/com/xtnl/app/data/HttpApi.kt")));
   check("TODAY is the life day of NOW", dayKeyOf(NOW) === TODAY);
+
+  // ── 9. D21: every other kind, a record ────────────────────────────────────
+  section("9. D21: every other kind is a record (no ledger row, no pay), once per record, its twin kind by kind");
+  // 08:00 to 08:28:40 in Sydney on the 21st (a run from a watch app), and the other kinds around it.
+  const hcs = (over: Partial<HcSession> = {}): HcSession => ({
+    externalId: "hc-r1",
+    kind: "RUN",
+    variant: null,
+    label: null,
+    start: at("2026-10-20T21:00:00.000Z"),
+    end: at("2026-10-20T21:28:40.000Z"),
+    distanceKm: 5.2,
+    origin: "com.strava",
+    ...over,
+  });
+  const lift = (over: Partial<HcSession> = {}) => hcs({ externalId: "hc-l1", kind: "LIFT", start: at("2026-10-20T22:00:00.000Z"), end: at("2026-10-20T22:45:00.000Z"), distanceKm: null, ...over });
+  {
+    const run = recordInputOf(hcs({ variant: "TREADMILL" }));
+    const clean = cleanSessionInput(run, TODAY);
+    check(
+      "a run as importSessionCore takes it: its life day, its minutes to the second (28:40), its distance, the treadmill variant its type named, its note 'Run · Health Connect'; cleanSessionInput takes it",
+      run.kind === "RUN" && run.day === TODAY && run.distanceKm === 5.2 && run.variant === "TREADMILL" && run.note === "Run · Health Connect" && !("startedAt" in run) &&
+        clean.ok && clean.value.durationMin === 1720 / 60 && clean.value.distanceKm === 5.2 && clean.value.variant === "TREADMILL" && clean.value.clientId === null,
+      JSON.stringify({ run, clean })
+    );
+    const l = recordInputOf(lift({ distanceKm: 3 }));
+    const lc = cleanSessionInput(l, TODAY);
+    check(
+      "a lift is its minutes alone: no distance (even one sent), no movement and no set, its wall clock; cleanSessionInput takes it (45 min, 0 km)",
+      same(Object.keys(l).sort(), ["day", "durationMin", "endedAt", "kind", "note", "startedAt"]) && l.note === "Lift · Health Connect" &&
+        lc.ok && lc.value.kind === "LIFT" && lc.value.durationMin === 45 && lc.value.distanceKm === 0 && lc.value.startedAt === "2026-10-20T22:00:00.000Z" && lc.value.endedAt === "2026-10-20T22:45:00.000Z",
+      JSON.stringify({ l, lc })
+    );
+    const hiit = cleanSessionInput(recordInputOf(hcs({ kind: "HIIT", distanceKm: null })), TODAY);
+    const mobility = cleanSessionInput(recordInputOf(hcs({ kind: "MOBILITY", distanceKm: 1.2 })), TODAY);
+    const noRun = cleanSessionInput(recordInputOf(hcs({ distanceKm: null })), TODAY);
+    const sport = cleanSessionInput(recordInputOf(hcs({ kind: "SPORT", variant: "OTHER", label: "Rugby", distanceKm: null })), TODAY);
+    const noSport = cleanSessionInput(recordInputOf(hcs({ kind: "SPORT", distanceKm: null })), TODAY);
+    check(
+      "a kind with no distance needs none (HIIT, mobility: 0 km, whatever was sent); a run still needs one, a game its sport ('OTHER' with its name), in the core's own words",
+      hiit.ok && hiit.value.distanceKm === 0 && mobility.ok && mobility.value.distanceKm === 0 && !noRun.ok && noRun.error === "A distance, please." &&
+        sport.ok && sport.value.variant === "OTHER" && sport.value.label === "Rugby" && !noSport.ok && noSport.error === "Pick a sport.",
+      JSON.stringify({ hiit, noRun, noSport })
+    );
+    const tooShort = cleanSessionInput(recordInputOf(hcs({ kind: "YOGA", distanceKm: null, end: at("2026-10-20T21:00:40.000Z") })), TODAY);
+    const yoga = cleanSessionInput(recordInputOf(hcs({ kind: "YOGA", distanceKm: null })), TODAY);
+    const farRun = cleanSessionInput(recordInputOf(hcs({ distanceKm: 300 })), TODAY);
+    const farRide = cleanSessionInput(recordInputOf(hcs({ kind: "CYCLE", distanceKm: 300 })), TODAY);
+    check(
+      "each kind's own bounds (KIND_SPECS through cleanSessionInput): under a minute refused, a run of 300 km past its 250 while a ride's 1,000 takes it; yoga with no style is Hatha, the core's own fallback (importSessionCore stores none for an import: section 9's wiring, training-check's stub)",
+      !tooShort.ok && tooShort.error === "A duration between 1 and 1440 minutes, please." && !farRun.ok && farRun.error === `A distance between 0.01 and ${KIND_SPECS.RUN.distanceMaxKm} km, please.` && farRide.ok && yoga.ok && yoga.value.variant === "HATHA",
+      JSON.stringify({ tooShort, farRun })
+    );
+    check(
+      "every record kind has its note ('Ride · Health Connect', 'Game · Health Connect', 'HIIT session · Health Connect')",
+      HC_RECORD_KINDS.every((k) => recordNoteOf(k) === `${KIND_SPECS[k].noun.charAt(0).toUpperCase()}${KIND_SPECS[k].noun.slice(1)} · Health Connect`) && recordNoteOf("CYCLE") === "Ride · Health Connect" && recordNoteOf("SPORT") === "Game · Health Connect" && recordNoteOf("HIIT") === "HIIT session · Health Connect"
+    );
+    const typed = cleanSessionInput({ kind: "RUN", distanceKm: 5, durationMin: 27, clientId: "hc:hc-r1" }, TODAY);
+    check(
+      "its key is 'hc:<externalId>' (the session's clientId, never a ledger row), and no save typed on the web or the phone can take it (its key has no ':')",
+      sessionClientIdOf("hc-r1") === "hc:hc-r1" && IMPORTED_CLIENT_ID_PREFIX === "hc:" && isImportedSession({ clientId: "hc:hc-r1" }) && !isImportedSession({ clientId: "hc:" }) && !isImportedSession({ clientId: "c-1" }) && !isImportedSession({ clientId: null }) &&
+        !typed.ok && IMPORTED_FROM === "from Health Connect" && !(EXERCISE_KINDS as readonly string[]).includes(DELETED_IMPORT_KIND)
+    );
+  }
+  {
+    // The core: a walk, a run, a lift and yoga on the 21st, and a kind this server doesn't read.
+    const f = fakeStore();
+    const batch = {
+      walks: [walk({ externalId: "w-1", start: at("2026-10-20T23:20:00.000Z"), end: at("2026-10-20T23:50:00.000Z") })],
+      sessions: [hcs(), lift(), hcs({ externalId: "hc-y1", kind: "YOGA", variant: "VINYASA", distanceKm: null, start: at("2026-10-21T06:00:00.000Z"), end: at("2026-10-21T06:45:00.000Z") })],
+      unread: [{ externalId: "hc-x1", kind: "SKYDIVING" }],
+    };
+    const res = await run(f, batch);
+    check(
+      "a batch: the walk through logWalkCore as always (its INGEST key), the run, the lift and the yoga through importSessionCore under 'hc:<id>', oldest first; the kind it doesn't read skipped and counted",
+      res.ok && same(f.walks.map((w) => w.externalId), ["w-1"]) && same(f.records.map((r) => r.clientId), ["hc:hc-r1", "hc:hc-l1", "hc:hc-y1"]) &&
+        same(res.value.sessions, { added: 3, matched: 0, duplicate: 0 }) && same(res.value.walks, { added: 1, paid: 1, recorded: 0, matched: 0, duplicate: 0, xp: 12.25 }) &&
+        same(res.value.refused, [{ kind: "session", externalId: "hc-x1", error: HC_KIND_UNREAD }]) &&
+        res.value.line === "Health Connect: 1 walk in (1 paid 12.3 XP) · 3 workouts recorded · 1 skipped",
+      JSON.stringify(res)
+    );
+    check(
+      "no new kind writes an ActivityEvent of any kind: the ledger holds the walk's INGEST key alone, no match row, nothing priced for a workout (the summary's XP is the walk's)",
+      same([...f.keys], ["ingest:hc:w-1"]) && f.matches.length === 0 && res.ok && res.value.walks.xp === 12.25
+    );
+    check(
+      "each workout reaches importSessionCore as recordInputOf says, with its Health Connect minutes as the session's start and end",
+      same(f.records.map((r) => r.raw), batch.sessions.map(recordInputOf)) && f.records[0].start === "2026-10-20T21:00:00.000Z" && f.records[0].end === "2026-10-20T21:28:40.000Z" && f.records[1].start === "2026-10-20T22:00:00.000Z"
+    );
+    check("the record kinds' keys and sessions are read once each, for the batch's days", same(f.reads.slice(-2), ["importedKeys", `recordSessionsOn:${TODAY}`]), JSON.stringify(f.reads));
+    const again = await run(f, batch);
+    check(
+      "a replay is all duplicates: the walk by its INGEST key, each workout by its own key; nothing is written again (the unread kind is said again)",
+      again.ok && same(again.value.sessions, { added: 0, matched: 0, duplicate: 3 }) && again.value.walks.duplicate === 1 && f.records.length === 3 && f.walks.length === 1 && again.value.line === "Health Connect: 1 skipped",
+      JSON.stringify(again)
+    );
+  }
+  {
+    const f = fakeStore([], { racedRecords: ["hc:raced"], deleted: ["hc:gone"], deletedRaced: ["hc:gone-raced"] });
+    const res = await run(f, {
+      sessions: [
+        hcs({ externalId: "twice" }),
+        hcs({ externalId: "twice" }),
+        hcs({ externalId: "raced", start: at("2026-10-21T01:00:00.000Z"), end: at("2026-10-21T01:30:00.000Z") }),
+        hcs({ externalId: "gone", start: at("2026-10-21T02:00:00.000Z"), end: at("2026-10-21T02:30:00.000Z") }),
+        hcs({ externalId: "gone-raced", start: at("2026-10-21T02:40:00.000Z"), end: at("2026-10-21T02:55:00.000Z") }),
+        hcs({ externalId: "no-km", distanceKm: null, start: at("2026-10-21T03:00:00.000Z"), end: at("2026-10-21T03:30:00.000Z") }),
+        hcs({ externalId: "x".repeat(62), start: at("2026-10-21T04:00:00.000Z"), end: at("2026-10-21T04:30:00.000Z") }),
+      ],
+    });
+    check(
+      "once per record: twice in one batch, a key raced in (importSessionCore's replay) and a workout deleted here (its key kept, or deleted as the batch ran: IMPORT_DELETED) are duplicates; a run with no distance is skipped with the core's line, an id too long for its key with HC_ID_TOO_LONG",
+      res.ok && same(res.value.sessions, { added: 1, matched: 0, duplicate: 4 }) &&
+        same(res.value.refused, [{ kind: "session", externalId: "no-km", error: "A distance, please." }, { kind: "session", externalId: "x".repeat(62), error: HC_ID_TOO_LONG }]) && same(f.records.map((r) => r.clientId), ["hc:twice"]),
+      JSON.stringify(res)
+    );
+  }
+  {
+    // The twin rule, kind by kind.
+    const kept = (id: string, kind: SameKindSession["kind"], durationMin: number, distanceKm: number, o: Partial<SameKindSession> = {}): SameKindSession => ({ id, kind, day: TODAY, durationMin, distanceKm, at: null, imported: false, ...o });
+    const r = hcs({ end: at("2026-10-20T21:31:00.000Z"), distanceKm: 5.1 });
+    check(
+      "a run typed by hand that day (30 min, 5 km against 31 and 5.1) is this run; 8 km, 45 min, another day or one already taken is not",
+      recordMatchOf(r, [kept("hand", "RUN", 30, 5)], new Set())?.id === "hand" &&
+        recordMatchOf(r, [kept("hand", "RUN", 30, 8)], new Set()) === null &&
+        recordMatchOf(r, [kept("hand", "RUN", 45, 5)], new Set()) === null &&
+        recordMatchOf(r, [kept("hand", "RUN", 30, 5, { day: "2026-10-20" })], new Set()) === null &&
+        recordMatchOf(r, [kept("hand", "RUN", 30, 5)], new Set(["hand"])) === null
+    );
+    check(
+      "only the same kind: a hand-typed walk never twins a run, nor a run a walk's Health Connect session (sessionsOn reads walks alone), nor yoga a HIIT session",
+      recordMatchOf(r, [kept("walk", "WALK", 31, 5.1)], new Set()) === null &&
+        recordMatchOf(hcs({ kind: "HIIT", distanceKm: null, end: at("2026-10-20T21:45:00.000Z") }), [kept("yoga", "YOGA", 45, 0)], new Set()) === null &&
+        recordMatchOf(hcs({ kind: "YOGA", distanceKm: null, end: at("2026-10-20T21:45:00.000Z") }), [kept("yoga", "YOGA", 44, 0)], new Set())?.id === "yoga"
+    );
+    const logger = kept("logged", "LIFT", 50, 0, { at: { start: at("2026-10-20T21:55:00.000Z"), end: at("2026-10-20T22:45:00.000Z") } });
+    check(
+      "a lift from the set logger (its wall clock) is the Health Connect lift that shares half its minutes; a lift that evening is not; another app's import of the run (its minutes) is the run",
+      recordMatchOf(lift(), [logger], new Set())?.id === "logged" &&
+        recordMatchOf(lift({ start: at("2026-10-21T08:00:00.000Z"), end: at("2026-10-21T08:45:00.000Z") }), [logger], new Set()) === null &&
+        recordMatchOf(r, [kept("other-app", "RUN", 28, 5.2, { at: { start: at("2026-10-20T21:02:00.000Z"), end: at("2026-10-20T21:30:00.000Z") }, imported: true })], new Set())?.id === "other-app"
+    );
+    const morning = kept("hc-morning", "RUN", 30, 5, { at: { start: at("2026-10-20T20:00:00.000Z"), end: at("2026-10-20T20:30:00.000Z") }, imported: true });
+    check(
+      "a run typed by hand after the same one came in (the import's copy) absorbs no other: an evening run of the same length lands as its own",
+      recordMatchOf(hcs({ start: at("2026-10-21T06:00:00.000Z"), end: at("2026-10-21T06:30:00.000Z"), distanceKm: 5 }), [morning, kept("copy", "RUN", 30, 5)], new Set()) === null
+    );
+    const f = fakeStore([], { kept: [kept("hand", "RUN", 30, 5), kept("hand-2", "RUN", 30, 5, { day: "2026-10-20" })] });
+    const res = await run(f, { sessions: [r, hcs({ externalId: "hc-r2", start: at("2026-10-21T06:00:00.000Z"), end: at("2026-10-21T06:31:00.000Z"), distanceKm: 5 })] });
+    check(
+      "through the core: the run typed by hand is matched (nothing written for it), and it absorbs one run at most, so the second that day lands as its own",
+      res.ok && same(res.value.sessions, { added: 1, matched: 1, duplicate: 0 }) && same(f.records.map((x) => x.clientId), ["hc:hc-r2"]) && f.matches.length === 0 && f.keys.size === 0 && res.value.line === "Health Connect: 1 workout recorded · 1 already logged",
+      JSON.stringify(res)
+    );
+    check("…and the matched run keeps its key alone (a row nothing lists), never a ledger row", same(f.matchedKeys, ["hc:hc-r1"]) && f.keys.size === 0, JSON.stringify(f.matchedKeys));
+    const resend = await run(f, { sessions: [r, hcs({ externalId: "hc-r2", start: at("2026-10-21T06:00:00.000Z"), end: at("2026-10-21T06:31:00.000Z"), distanceKm: 5 })] });
+    check(
+      "a resend within the overlap is all duplicates: the matched run by its kept key, though the evening run's import now looks like the hand-typed one (so the hand-typed run is no twin any more), and nothing lands twice",
+      resend.ok && same(resend.value.sessions, { added: 0, matched: 0, duplicate: 2 }) && same(f.records.map((x) => x.clientId), ["hc:hc-r2"]) && same(f.matchedKeys, ["hc:hc-r1"]) && resend.value.line === "Health Connect: nothing new.",
+      JSON.stringify(resend)
+    );
+  }
+  {
+    // Two apps' copies of one run (Samsung Health 07:00-07:30, 5 km; Strava 07:01-07:31, 5.05 km), then the import deleted.
+    const f = fakeStore();
+    const s1 = hcs({ externalId: "S1", start: at("2026-10-20T20:00:00.000Z"), end: at("2026-10-20T20:30:00.000Z"), distanceKm: 5, origin: "com.sec.android.app.shealth" });
+    const s2 = hcs({ externalId: "S2", start: at("2026-10-20T20:01:00.000Z"), end: at("2026-10-20T20:31:00.000Z"), distanceKm: 5.05 });
+    const first = await run(f, { sessions: [s1, s2] });
+    f.drop("hc:S1");
+    const again = await run(f, { sessions: [s1, s2] });
+    check(
+      "two apps' copies of one run: the first lands, the second is matched to it and keeps its key; once the import is deleted on Train › Exercise, the resend is 2 duplicates and nothing comes back",
+      first.ok && same(first.value.sessions, { added: 1, matched: 1, duplicate: 0 }) && same(f.matchedKeys, ["hc:S2"]) &&
+        again.ok && same(again.value.sessions, { added: 0, matched: 0, duplicate: 2 }) && same(f.records.map((x) => x.clientId), ["hc:S1"]) && f.keys.size === 0,
+      JSON.stringify({ first, again })
+    );
+  }
+  {
+    // A hand-typed yoga session (30 min, no times) that two apps both wrote: G1 07:00:00-07:30:00, G2 07:00:30-07:30:30.
+    const kept = (id: string, kind: SameKindSession["kind"], durationMin: number): SameKindSession => ({ id, kind, day: TODAY, durationMin, distanceKm: 0, at: null, imported: false });
+    const f = fakeStore([], { kept: [kept("hand-yoga", "YOGA", 30)] });
+    const g1 = hcs({ externalId: "G1", kind: "YOGA", distanceKm: null, start: at("2026-10-20T20:00:00.000Z"), end: at("2026-10-20T20:30:00.000Z") });
+    const g2 = hcs({ externalId: "G2", kind: "YOGA", distanceKm: null, start: at("2026-10-20T20:00:30.000Z"), end: at("2026-10-20T20:30:30.000Z") });
+    const res = await run(f, { sessions: [g1, g2] });
+    check(
+      "a hand-typed session two apps both wrote is matched twice in one sync: the first by its duration, the second by the first's minutes (half in common); nothing is written but the two keys",
+      res.ok && same(res.value.sessions, { added: 0, matched: 2, duplicate: 0 }) && f.records.length === 0 && same(f.matchedKeys, ["hc:G1", "hc:G2"]) && res.value.line === "Health Connect: 2 already logged",
+      JSON.stringify(res)
+    );
+  }
+  {
+    // One record id sent as two kinds (a type corrected in place in Samsung Health): the first kind stays.
+    const when = { start: at("2026-10-20T23:20:00.000Z"), end: at("2026-10-21T00:00:00.000Z") };
+    const asRun = (externalId: string) => hcs({ externalId, ...when, distanceKm: 4 });
+    const asWalk = (externalId: string) => walk({ externalId, ...when, distanceKm: 4 });
+    const runFirst = fakeStore();
+    const r1 = await run(runFirst, { sessions: [asRun("X1")] });
+    const w1 = await run(runFirst, { walks: [asWalk("X1")] });
+    check(
+      "a run sent again as a walk under the same id is a duplicate: one RUN row, no walk written, nothing paid",
+      r1.ok && r1.value.sessions.added === 1 && w1.ok && same(w1.value.walks, { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 1, xp: 0 }) && runFirst.walks.length === 0 && runFirst.keys.size === 0 && same(runFirst.records.map((x) => x.clientId), ["hc:X1"]),
+      JSON.stringify({ r1, w1 })
+    );
+    const walkFirst = fakeStore();
+    const w2 = await run(walkFirst, { walks: [asWalk("X2")] });
+    const r2 = await run(walkFirst, { sessions: [asRun("X2")] });
+    check(
+      "a walk sent again as a run under the same id is a duplicate: one walk, paid once, and no RUN record",
+      w2.ok && w2.value.walks.paid === 1 && r2.ok && same(r2.value.sessions, { added: 0, matched: 0, duplicate: 1 }) && walkFirst.records.length === 0 && same(walkFirst.walks.map((x) => x.externalId), ["X2"]),
+      JSON.stringify({ w2, r2 })
+    );
+    const oneBatch = fakeStore();
+    const both = await run(oneBatch, { walks: [asWalk("X3")], sessions: [asRun("X3")] });
+    check(
+      "…and in one batch the walk lands (as always) and the same id as a run is a duplicate",
+      both.ok && both.value.walks.added === 1 && same(both.value.sessions, { added: 0, matched: 0, duplicate: 1 }) && oneBatch.records.length === 0,
+      JSON.stringify(both)
+    );
+  }
+  {
+    // importSessionCore refuses before it reads or writes anything: a key that is not an import's, bad times, a walk.
+    const when = { start: at("2026-10-20T21:00:00.000Z"), end: at("2026-10-20T21:30:00.000Z") };
+    const typedKey = await importSessionCore("u1", { kind: "RUN", distanceKm: 5, durationMin: 30 }, NOW, { clientId: "c-1", at: when });
+    const longKey = await importSessionCore("u1", { kind: "RUN", distanceKm: 5, durationMin: 30 }, NOW, { clientId: `hc:${"x".repeat(62)}`, at: when });
+    const backwards = await importSessionCore("u1", { kind: "RUN", distanceKm: 5, durationMin: 30 }, NOW, { clientId: "hc:a", at: { start: when.end, end: when.start } });
+    const aWalk = await importSessionCore("u1", { kind: "WALK", distanceKm: 3, durationMin: 30 }, NOW, { clientId: "hc:a", at: when });
+    check(
+      "importSessionCore takes only an import's key ('hc:', at most 64) and two instants in order, and never a walk (logWalkCore is its one path)",
+      same([typedKey, longKey, backwards], [{ ok: false, error: IMPORT_KEY_REFUSED }, { ok: false, error: IMPORT_KEY_REFUSED }, { ok: false, error: IMPORT_KEY_REFUSED }]) && same(aWalk, { ok: false, error: SESSION_WALK_ELSEWHERE })
+    );
+  }
+  {
+    // The wiring of the record path, as source.
+    const srvSrc = code("src/lib/health-ingest-server.ts");
+    const loop = srvSrc.slice(srvSrc.indexOf("for (const u of batch.unread ?? [])"), srvSrc.indexOf("const weights = [...batch.weights]"));
+    // The record loop reads the ledger's walk keys to skip a record id already here as a walk, and nothing else of it.
+    const LEDGER_KEY_READS = /const asWalk = await store\.ingested\(userId, records\.map\(\(s\) => ingestKeyOf\(s\.externalId\)\)\);|asWalk\.has\(ingestKeyOf\(s\.externalId\)\)|inBatch\.has\(ingestKeyOf\(s\.externalId\)\)/g;
+    check(
+      "ingestHealthCore's record loop: importSessionCore with recordInputOf and the session's own key and minutes; never a match row, an INGEST key, a walk's core or a price",
+      loop.length > 200 && /store\.logRecord\(userId, recordInputOf\(s\), now, \{ clientId: key, at: \{ start: s\.start, end: s\.end \} \}\)/.test(loop) && /const match = recordMatchOf\(s, kept, claimed\);/.test(loop) &&
+        !/recordMatch\(|ingestEventInput|ingestKeyOf|ingestReceiptOf|logWalk|activity|xp|pay/i.test(loop.replace(/recordMatchOf/g, "").replace(LEDGER_KEY_READS, "")) &&
+        /logRecord: \(userId, raw, now, opts\) => importSessionCore\(userId, raw, now, opts\),/.test(srvSrc) &&
+        /where: \{ userId, day: \{ in: days\.map\(dateColumn\) \}, kind: \{ in: \[\.\.\.HC_RECORD_KINDS\] \} \}/.test(srvSrc) && /where: \{ userId, clientId: \{ in: \[\.\.\.keys\] \} \}/.test(srvSrc)
+    );
+    check(
+      "a record id is one session whatever kind it is sent as: the walks skip a key a session holds, the records a key the ledger holds or this batch's walks took (a duplicate, the first kind stays)",
+      /const asRecord = await store\.importedKeys\(userId, walks\.map\(\(w\) => sessionClientIdOf\(w\.externalId\)\)\);/.test(srvSrc) &&
+        /if \(seen\.has\(key\) \|\| inBatch\.has\(key\) \|\| asRecord\.has\(sessionClientIdOf\(w\.externalId\)\)\) \{\s*out\.walks\.duplicate\+\+;/.test(srvSrc) &&
+        /if \(here\.has\(key\) \|\| landed\.has\(key\) \|\| asWalk\.has\(ingestKeyOf\(s\.externalId\)\) \|\| inBatch\.has\(ingestKeyOf\(s\.externalId\)\)\) \{\s*out\.sessions\.duplicate\+\+;/.test(loop)
+    );
+    check(
+      "a match keeps its key (store.keepMatchedKey before it is counted), and one typed without times lends the rest of the batch this session's minutes under its own id",
+      /if \(match\.at == null\) \{\s*claimed\.add\(match\.id\);\s*kept\.push\(\{ \.\.\.match, at: \{ start: s\.start, end: s\.end \} \}\);\s*\}\s*if \(await store\.keepMatchedKey\(userId, key, s\)\) out\.sessions\.matched\+\+;\s*else out\.sessions\.duplicate\+\+;\s*continue;/.test(loop) &&
+        /keepMatchedKey: \(userId, key, s\) => keepMatchedImportKey\(userId, key, \{ start: s\.start, end: s\.end \}\),/.test(srvSrc)
+    );
+    const exSrc = read("src/lib/exercise-server.ts");
+    const matchedAt = exSrc.indexOf("export async function keepMatchedImportKey(");
+    const matched = matchedAt < 0 ? "" : exSrc.slice(matchedAt, exSrc.indexOf("\n}\n", matchedAt) + 3);
+    check(
+      "keepMatchedImportKey writes one ExerciseSession row of the key alone (kind DELETED_IMPORT_KIND, its day and minutes, no distance) and nothing else; a key there already is false",
+      (matched.match(/prisma\.\w+\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/g) ?? []).length === 1 && /prisma\.exerciseSession\.create\(/.test(matched) &&
+        /kind: DELETED_IMPORT_KIND,/.test(matched) && /clientId: key,/.test(matched) && /distanceKm: 0,/.test(matched) && /if \(isUniqueViolation\(err\)\) return false;/.test(matched) &&
+        !/\b(activityOp|activityData|activityEvent|linkRecord|completeLinkedCore|priceWalk|\$transaction|\$executeRaw|\$queryRaw)\b/.test(codeOfSrc(matched))
+    );
+    const fnAt = exSrc.indexOf("export async function importSessionCore(");
+    const imp = fnAt < 0 ? "" : exSrc.slice(fnAt, exSrc.indexOf("\n}\n", fnAt) + 3);
+    const keepAt = exSrc.indexOf("async function keepImportKey(");
+    const keep = keepAt < 0 ? "" : exSrc.slice(keepAt, exSrc.indexOf("\n}\n", keepAt) + 3);
+    check(
+      "importSessionCore writes one ExerciseSession row (its kind, its key as the clientId, its Health Connect minutes, the variant Health Connect named or none: never yoga's Hatha guessed) and nothing else: no ActivityEvent, no transaction, no price, no habit tick, no moments",
+      imp.length > 500 && (imp.match(/prisma\.\w+\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/g) ?? []).length === 1 && /prisma\.exerciseSession\.create\(/.test(imp) &&
+        /clientId: key,/.test(imp) && /startedAt: start,\s*endedAt: end,/.test(imp) && /kind: v\.kind,/.test(imp) &&
+        /variant: raw\?\.variant != null && raw\.variant !== "" \? v\.variant : null,/.test(imp) &&
+        !/\b(activityOp|activityData|activityEvent|recordActivity|ingestEventInput|walkEventInput|prEventInput|priceWalk|payWalkCore|payOnce|linkRecord|completeLinkedCore|withMoments|captureSnapshot|lifeLockOp|\$transaction|\$executeRaw|\$queryRaw)\b/.test(codeOfSrc(imp))
+    );
+    check(
+      "a deleted import keeps its key: deleteSessionCore first keeps the row as DELETED_IMPORT_KIND (an import's key only, the record kinds only), so a resend is a duplicate; no ledger row",
+      /if \(await keepImportKey\(userId, id\)\) return \{ ok: true, value: null \};/.test(exSrc) && /where: \{ id, userId, kind: \{ in: \[\.\.\.RECORD_KINDS\] \}, clientId: \{ startsWith: IMPORTED_CLIENT_ID_PREFIX \} \},\s*data: \{ kind: DELETED_IMPORT_KIND \},/.test(keep) &&
+        !/\b(activityOp|activityData|activityEvent|\$transaction)\b/.test(keep) && DELETED_IMPORT_KIND === "DELETED"
+    );
+    const keyers = (() => {
+      const out: string[] = [];
+      const walkDir = (d: string) => {
+        for (const e of readdirSync(join(ROOT, d), { withFileTypes: true })) {
+          const rel = `${d}/${e.name}`;
+          if (e.isDirectory()) walkDir(rel);
+          else if (/\.(ts|tsx)$/.test(e.name) && /\bsessionClientIdOf\(/.test(code(rel))) out.push(rel);
+        }
+      };
+      walkDir("src");
+      return out.sort();
+    })();
+    check("an import's key is built by health-ingest.ts sessionClientIdOf alone, called by health-ingest-server only", same(keyers, ["src/lib/health-ingest-server.ts", "src/lib/health-ingest.ts"]), keyers.join(", "));
+  }
+
+  // ── 10. The walk path, byte for byte ──────────────────────────────────────
+  section("10. the walk path is HEAD cf13f9e's byte for byte");
+  {
+    const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16);
+    const DECL = /^(?:export\s+)?(?:async\s+)?(?:function\s+(\w+)|const\s+(\w+)|let\s+(\w+)|type\s+(\w+)|interface\s+(\w+))/;
+    const declsOf = (src: string): Map<string, string> => {
+      const out = new Map<string, string>();
+      let cur: { name: string; body: string[] } | null = null;
+      for (const l of src.split("\n")) {
+        const m = DECL.exec(l);
+        if (m) {
+          if (cur) out.set(cur.name, cur.body.join("\n").trimEnd());
+          cur = { name: m.slice(1).find(Boolean)!, body: [l] };
+          continue;
+        }
+        if (cur && /^[A-Za-z/@]/.test(l)) {
+          out.set(cur.name, cur.body.join("\n").trimEnd());
+          cur = null;
+          continue;
+        }
+        if (cur) cur.body.push(l);
+      }
+      if (cur) out.set(cur.name, cur.body.join("\n").trimEnd());
+      return out;
+    };
+    // Each digest is the sha256 (first 16 hex) of the declaration's LF text on HEAD cf13f9e (before D21). Re-pin one
+    // only when a Health Connect walk is meant to change.
+    const WALK_DECLS: Record<string, Record<string, string>> = {
+      "src/lib/health-ingest.ts": {
+        INGEST_KEY_PREFIX: "12f95a697c8d2b62",
+        ingestKeyOf: "28b9cea0d865fc2d",
+        isIngestKey: "0fdf716141779ffd",
+        round: "7811c2c80f568b12",
+        angleOfClimb: "bcbe76ab10212040",
+        durationOf: "3189a9cdcf5b7b07",
+        walkInputOf: "89442d27657dd4b0",
+        isBackfill: "ac54c059fb37e52a",
+        SameDaySession: "82277b3181c60e27",
+        overlapShare: "0beb3e165132c242",
+        MATCH_OVERLAP: "dabe41c25207a9b6",
+        MATCH_MINUTES: "6dd14513066c4a24",
+        MATCH_KM: "ec4286b6cdc5bbdc",
+        near: "b9a8d2dbfbda5179",
+        matchOf: "69872d4fa1730d07",
+        importedTwinOf: "2e325b6f8219dedb",
+        HC_ALREADY_HERE_PREFIX: "39351ac71bfe13bd",
+        alreadyHereLineOf: "9bb0dcfd8078b609",
+        INGEST_RECEIPT_V: "f27b6a932dff6b51",
+        ingestReceiptOf: "3b3fef3fc2c6a7bf",
+        isIngestReceipt: "8532c651792cc421",
+        ingestEventInput: "81ec809a20373568",
+        HC_WRITES_OFF: "b736c65de4690474",
+        HC_WALK_INGESTED: "57817f442437fd8c",
+      },
+      "src/lib/exercise-server.ts": { importedWalksOn: "ec164b6a7ac2637d" },
+    };
+    const moved = Object.entries(WALK_DECLS).flatMap(([f, ds]) => {
+      const d = declsOf(read(f));
+      return Object.entries(ds).flatMap(([n, h]) => (d.has(n) && sha(d.get(n)!) === h ? [] : [`${f} ${n}`]));
+    });
+    check(`the walk's rules, its key, its match and its INGEST row are HEAD's byte for byte (${Object.values(WALK_DECLS).reduce((n, d) => n + Object.keys(d).length, 0)} digests)`, moved.length === 0, moved.join(", "));
+    const srv = read("src/lib/health-ingest-server.ts");
+    const slice = (a: string, b: string) => {
+      const i = srv.indexOf(a);
+      const j = i < 0 ? -1 : srv.indexOf(b, i);
+      return i < 0 || j < 0 ? "" : srv.slice(i, j);
+    };
+    // D21's one addition to the walk loop (a record id a session holds is a duplicate) taken out, the loop is HEAD's.
+    const loop = slice("  // The walks, oldest first", "\n\n  // D21: every other kind")
+      .replace(
+        "  // A record id a session holds already (sent before as another kind, a run since corrected to a walk) is that session.\n  const asRecord = await store.importedKeys(userId, walks.map((w) => sessionClientIdOf(w.externalId)));\n",
+        ""
+      )
+      .replace(" || asRecord.has(sessionClientIdOf(w.externalId))", "");
+    const weighLoop = slice("  // The weigh-ins", "\n  return { ok: true");
+    const store = slice("  sessionsOn: async (userId, days) => {", "  logWalk: (userId, raw, now, opts) => logWalkCore(userId, raw, now, opts),");
+    check(
+      "ingestHealthCore's walk loop (the keys, the match, logWalkCore, the counts; D21's record-id check taken out), its weigh-in loop and the store's walk reads (sessionsOn, recordMatch) are HEAD's byte for byte, and the walks still come first",
+      sha(loop) === "7bbb167a9850bd2a" && sha(weighLoop) === "79d54452f77ad564" && sha(store) === "a16204ebf5aaab63" && srv.indexOf("// The walks, oldest first") < srv.indexOf("// D21: every other kind") && srv.indexOf("// D21: every other kind") < srv.indexOf("// The weigh-ins"),
+      `${sha(loop)} ${sha(weighLoop)} ${sha(store)}`
+    );
+  }
+
+  // ── 11. The phone: named constants, no new permission ─────────────────────
+  section("11. the phone maps Health Connect's types by name, and asks for nothing new");
+  {
+    const line = read("android/app/src/main/java/com/xtnl/app/core/HealthLine.kt");
+    const at0 = line.indexOf("val KINDS: Map<Int, Kind> = mapOf(");
+    const block = at0 < 0 ? "" : line.slice(at0, line.indexOf("\n    )", at0));
+    const entries = block.split("\n").slice(1).filter((l) => l.trim() !== "" && !l.trim().startsWith("//"));
+    const odd = entries.filter((l) => !/^\s+ExerciseSessionRecord\.EXERCISE_TYPE_[A-Z_]+ to Kind\("[A-Z]+"(, (variant|label) = "[^"]+")*\),$/.test(l));
+    const kinds = new Set(entries.map((l) => /Kind\("([A-Z]+)"/.exec(l)?.[1]));
+    check(
+      "HealthLine.KINDS maps each Health Connect exercise type by the SDK's named constant (ExerciseSessionRecord.EXERCISE_TYPE_*), never an integer, to a kind the server takes",
+      entries.length >= 30 && odd.length === 0 && !/\d/.test(block.replace(/EXERCISE_TYPE_\w+/g, "")) && [...kinds].every((k) => (HC_KINDS as readonly string[]).includes(k ?? "")) && kinds.size === HC_KINDS.length &&
+        /fun kindOf\(type: Int\): String\? = KINDS\[type\]\?\.kind/.test(line) && !/const val TYPE_\w+ = \d+/.test(line),
+      odd.join(" | ")
+    );
+    const manifest = read("android/app/src/main/AndroidManifest.xml");
+    const declared = [...manifest.matchAll(/android\.permission\.health\.(\w+)/g)].map((m) => m[1]).sort();
+    check("no new permission: the manifest's Health Connect reads are the five it had (exercise covers every type)", same([...new Set(declared)], ["READ_DISTANCE", "READ_ELEVATION_GAINED", "READ_EXERCISE", "READ_HEALTH_DATA_IN_BACKGROUND", "READ_WEIGHT"]), declared.join(", "));
+  }
 
   console.log(`\nhealth-ingest-check: ${passes} passed, ${failures} failed`);
   if (failures) process.exitCode = 1;

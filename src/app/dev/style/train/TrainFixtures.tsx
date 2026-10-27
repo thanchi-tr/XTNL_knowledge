@@ -21,7 +21,8 @@
  * as a walk, a swim with pool lengths, a sport, yoga, long names on the
  * chips, a ride counted as the habit, that ride on its Sure? step, a
  * refusal, the record-only line, a walk offered as a run, Lift's "arrives
- * next", and walking only before the migration). Log answers
+ * next", walking only before the migration, and a run and a lift Health
+ * Connect brought in, D21: records saying "from Health Connect"). Log answers
  * with the line the server would give for what was typed (cleanSessionInput,
  * sessionRefusalOf, and "Counts as" as counted) and saves nothing.
  *

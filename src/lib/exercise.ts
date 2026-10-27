@@ -51,6 +51,9 @@
  *              sessionLoggedLineOf(session, refusal, link) (the card's line once a record is saved)
  *              sessionDeleteLineOf(kind, counted?) ('Run deleted.', 'Run deleted · Cardio 30 min stays ticked')
  *              recordDeleteNote(title) (a counted record's Sure? step) · sessionNounOf(kind, n) ('2 runs')
+ *   Imported   IMPORTED_CLIENT_ID_PREFIX · isImportedSession(s) · IMPORTED_FROM · DELETED_IMPORT_KIND (D21: a session
+ *              Health Connect brought in is a record of its kind under the key 'hc:<record id>', its row says "from
+ *              Health Connect", and once deleted its row is kept as the key alone, so it never comes back)
  */
 import { addDays, dayKeyOf, weekKeyOf, weekStartKeyOf, weekdayOf, type DayKey } from "./life-day";
 import { kneePay, roundTo } from "./life-grade";
@@ -1814,3 +1817,26 @@ export function sessionDeleteLineOf(kind: ExerciseKind, counted?: string | null)
 export function recordDeleteNote(title: string): string {
   return `${title} stays ticked · undo it on Today`;
 }
+
+// ── Imported from Health Connect (D21) ──────────────────────────────────────
+
+/**
+ * The clientId a Health Connect session of a record kind is saved under: 'hc:<its record id>' (health-ingest.ts
+ * sessionClientIdOf builds it; exercise-server importSessionCore writes it), so a resend answers the row it wrote. A
+ * save typed on the web or the phone never has one: cleanSessionInput's key takes no ':'.
+ */
+export const IMPORTED_CLIENT_ID_PREFIX = "hc:";
+
+/** A session Health Connect brought in (its key is 'hc:<record id>'): a record that pays nothing, whatever its kind. */
+export function isImportedSession(s: Pick<SessionInput, "clientId">): boolean {
+  return typeof s.clientId === "string" && s.clientId.startsWith(IMPORTED_CLIENT_ID_PREFIX) && s.clientId.length > IMPORTED_CLIENT_ID_PREFIX.length;
+}
+
+/** The card's words on an imported session's row. A lift from Health Connect is its minutes alone (no movement, no set). */
+export const IMPORTED_FROM = "from Health Connect";
+
+/**
+ * The kind a deleted import's row is kept under (exercise-server deleteSessionCore): its key alone, so the next sync's
+ * resend is a duplicate and the session never comes back. Not an exercise kind: nothing lists, counts or matches it.
+ */
+export const DELETED_IMPORT_KIND = "DELETED";

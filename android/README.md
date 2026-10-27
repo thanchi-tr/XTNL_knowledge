@@ -80,7 +80,7 @@ panes on the main one, also at `xtnl://app/mall`). Then Settings and
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.20 (versionCode 32), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.21 (versionCode 33), so
 it installs over the v1 WebView shell in place.
 
 On **Check**, a long press on any open task opens its **minutes sheet** (blueprint
@@ -120,15 +120,21 @@ same sheet at its **page chips** (30, 45, 60 pages, the day's target picked), an
 Done reads "Done · 30 pages". The server refuses fewer than the target ("Log the
 pages"); the pages are recorded, never priced, and its minimum needs none.
 
-**Health Connect** (blueprint P27, decision D22: Settings › Health Connect ›
-Walks, hikes and weight) reads walking and hiking sessions (their distance and,
-for a hike, the climb) and weigh-ins from Health Connect, so they arrive without
-being logged by hand. It is **off until you turn it on**: the switch first shows
+**Health Connect** (blueprint P27, decision D22, widened by health D21 in 2.21:
+Settings › Health Connect › Walks, workouts and weight) reads exercise sessions
+(walks and hikes with their distance and, for a hike, the climb; runs, rides,
+swims, rows, elliptical, HIIT and circuit sessions, games, yoga, mobility and
+lifts) and weigh-ins from Health Connect, so they arrive without being logged by
+hand. Each Health Connect exercise type is mapped by the SDK's named constant
+(`core/HealthLine.kt` KINDS), never a number; a type it doesn't map is skipped and
+counted. It is **off until you turn it on**: the switch first shows
 the rationale (what is read and what the server does with it; Health Connect
 opens the same screen from its own settings), then Health Connect's permission
-dialog, and the sync starts only once walks, distance and weight are allowed.
-Nothing else is read (no steps, heart rate, sleep or other workouts) and nothing
-is written to Health Connect. Where Android allows reads while the app is
+dialog, and the sync starts only once exercise, distance and weight are allowed
+(no new permission: the exercise read covers every type). Nothing else is read
+(no steps, heart rate or sleep) and nothing is written to Health Connect. Every
+workout other than a walk is a record on Train › Exercise, never paid, once per
+record, and a lift comes in as its minutes only. Where Android allows reads while the app is
 closed (Android 15+, asked separately) a WorkManager job syncs about every 6
 hours; without that no job is armed and it syncs when the app opens, posting to
 `POST /exercise` 50 at a time. Walks from before the switch-on (the first sync
@@ -137,8 +143,8 @@ personal best; a newer walk is priced as one logged on Train › Exercise, once 
 record. One you already logged by hand is matched, and the same walk typed on
 Train › Exercise after it came in is refused there: never paid twice. A weigh-in
 never replaces one you typed. The line under the switch says when it last synced
-and what came in, and how many walks were skipped because their app recorded no
-distance.
+and what came in, and how many walks or workouts were skipped because their app
+recorded no distance or their kind isn't one it reads.
 
 ## The check-in and the open lift (health phase 2)
 
@@ -331,9 +337,13 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
   words as the web's ("Done · 30 pages", "log 30 pages"), the demo refusing a
   full tick below the day's target ("Log the pages") and pricing the pages at
   nothing, and its minimum still one tap;
-- Health Connect (P27): only walking and hiking sessions are sent, with their
-  distance, climb and app, never one the server can't log (no distance, over a
-  day, a bad id); weigh-ins of 20 to 400 kg; oldest first, 50 at a time with
+- Health Connect (P27; D21 in 2.21): each exercise type the sync reads mapped by
+  the SDK's named constant to its kind (and the variant or sport it names), a
+  source scan that no number stands in for a type, and any other type skipped
+  and counted; walks and hikes sent as before, with their distance, climb and
+  app, a run, ride, swim or row with its distance, every other kind with none (a
+  lift its minutes only), never one the server can't log (no distance where the
+  kind needs one, over a day, a bad id); weigh-ins of 20 to 400 kg; oldest first, 50 at a time with
   the switch-on instant; the first sync reads 30 days, each later one from the
   last less 48 hours; the app's own sync at most every 15 minutes; Settings'
   lines; the server's words for a batch; the demo recording the backfill,

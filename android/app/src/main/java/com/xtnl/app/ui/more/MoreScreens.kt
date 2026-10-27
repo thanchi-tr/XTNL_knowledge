@@ -275,7 +275,8 @@ fun SettingsScreen(graph: AppGraph, systemStill: Boolean, onBack: () -> Unit) {
             WeekAuditReminder(graph, prefs.auditReminder, prefs.auditLive)
         }
 
-        // Blueprint P27 (D22): walks, hikes and weight from Health Connect. Off until the user turns it on here.
+        // Blueprint P27 (D22, widened by health D21): walks, workouts and weight from Health Connect. Off until the
+        // user turns it on here.
         Section(HealthLine.TITLE) {
             HealthConnectSettings(graph) { title, sub, on, onChange -> Toggle(title, sub, on, onChange) }
         }

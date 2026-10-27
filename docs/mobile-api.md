@@ -90,7 +90,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 | POST | /mall/rewards | `addReward` (actions/mall.ts), the Add sheet's save |
 | POST | /mall/buy | `buyReward` (actions/mall.ts), Buy's Confirm |
 | POST | /mall/undo | `undoBuy` (actions/mall.ts), a purchase's Undo |
-| POST | /exercise | `ingestHealthCore` (health-ingest-server.ts): Health Connect's walks, hikes and weigh-ins, through `logWalkCore` and `logWeightCore` |
+| POST | /exercise | `ingestHealthCore` (health-ingest-server.ts): Health Connect's walks, hikes, workouts and weigh-ins, through `logWalkCore`, `importSessionCore` (a workout, a record) and `logWeightCore` |
 | POST | /checkin | `logCheckCore` (mind-server.ts), the 5-second check-in (actions/mind.ts `logCheck`'s core) |
 | POST | /checkin/undo | `deleteCheckCore` (mind-server.ts), the receipt's Undo (actions/mind.ts `deleteCheck`'s core) |
 | POST | /lift/set | `logSetCore` (training-server.ts), the lift logger's "Set done" (actions/training.ts `logLiftSet`'s core) |
@@ -1060,26 +1060,57 @@ Undoes a purchase inside its ten minutes, as Undo in the web's purchases does (`
   device) is answered by the server with `duplicate: true` and `credits.delta` 0. A purchase is given back once.
 - The credits come back as they were spent; an undo plays no celebration.
 
-## POST /exercise: Health Connect's walks, hikes and weigh-ins
+## POST /exercise: Health Connect's walks, hikes, workouts and weigh-ins
 
-Blueprint 5.1d (P27; decision D22): the app's Health Connect sync, a WorkManager job that is **off until the user turns
-it on** in the app's Settings (Settings › Health Connect), after the permission rationale screen and Health Connect's
-own permission dialog. It reads walking and hiking sessions (with their distance and, for a hike, the climb) and
-weigh-ins, and posts them here 50 at a time. Walks and weight only: no steps, heart rate, sleep or other workouts, and
-no new pay rule.
+Blueprint 5.1d (P27; decision D22, widened by D21 of `docs/life-plan/health-2026-10-27.md`): the app's Health Connect
+sync, a WorkManager job that is **off until the user turns it on** in the app's Settings (Settings › Health Connect),
+after the permission rationale screen and Health Connect's own permission dialog. It reads exercise sessions (with
+their distance where the kind has one and, for a hike, the climb) and weigh-ins, and posts them here 50 at a time.
+Walks, workouts and weight only: no steps, heart rate or sleep, and no new pay rule. Walks pay as walks always have;
+every other kind is a record. No new permission: Health Connect's exercise read covers every type.
 
 ```json
 { "since": "2026-10-20T08:00:00.000Z",
   "walks": [ { "externalId": "a1b2c3d4-…", "kind": "WALK" | "HIKE", "start": "2026-10-21T06:40:00.000Z",
-    "end": "2026-10-21T07:25:00.000Z", "distanceKm": 4.1, "climbM"?: 120, "origin"?: "com.sec.android.app.shealth" } ],
+    "end": "2026-10-21T07:25:00.000Z", "distanceKm": 4.1, "climbM"?: 120, "origin"?: "com.sec.android.app.shealth" },
+    { "externalId": "…", "kind": "RUN" | "CYCLE" | "SWIM" | "ROW" | "ELLIPTICAL" | "HIIT" | "CIRCUIT" | "SPORT" | "YOGA" | "MOBILITY" | "LIFT",
+      "start": "…", "end": "…", "distanceKm"?: 5.2, "variant"?: "TREADMILL", "label"?: "Rugby", "origin"?: "…" } ],
   "weights": [ { "externalId": "…", "at": "2026-10-21T20:05:00.000Z", "kg": 82.4 } ],
   "clientId"?: "…" }
 → { "ok": true, "data": {
     "walks": { "added": 2, "paid": 1, "recorded": 1, "matched": 1, "duplicate": 3, "xp": 18.4 },
+    "sessions": { "added": 2, "matched": 0, "duplicate": 1 },
     "weights": { "added": 1, "kept": 0 },
-    "refused": [ { "kind": "walk" | "weight", "externalId": "…", "error": "A distance between 0.01 and 200 km, please." } ],
-    "line": "Health Connect: 2 walks in (1 paid 18.4 XP, 1 recorded) · 1 already logged · 1 weigh-in" } }
+    "refused": [ { "kind": "walk" | "session" | "weight", "externalId": "…", "error": "A distance between 0.01 and 200 km, please." } ],
+    "line": "Health Connect: 2 walks in (1 paid 18.4 XP, 1 recorded) · 2 workouts recorded · 1 already logged · 1 weigh-in" } }
 ```
+
+- **Workouts** (D21; the phone's 2.21): `walks` also carries every other kind, mapped on the phone from Health
+  Connect's own named exercise types (core/HealthLine.kt; never a bare number): a run (a treadmill run's `variant`
+  `TREADMILL`), a ride (a stationary bike's `STATIONARY`), a pool or open-water swim, a row (on the water or a
+  machine), an elliptical, HIIT or circuit session (boot camp, calisthenics), a game (`SPORT` with its sport as the
+  `variant`, or `OTHER` with its name as the `label`), yoga (pilates is its `PILATES` style), mobility (stretching)
+  or a lift (strength training, weightlifting). Each is `importSessionCore` (exercise-server.ts): a **record** of its
+  kind, checked as any session of the kind (cleanSessionInput, so its own bounds hold; a kind with no distance needs
+  none). It writes **no ledger row of any kind** (no `WORKOUT`, `PR` or `INGEST` row), pays nothing and ticks no
+  habit, so it feeds no streak, quest, kept week, skill hour or personal best. A lift is its minutes alone: Health
+  Connect carries no load, so it has no movement and no set. Train › Exercise lists each one with "from Health
+  Connect" on its row.
+- **One workout lands once:** its key is `hc:<externalId>`, the session's own `clientId` (no ledger row), with its
+  Health Connect minutes as the session's start and end. A resend, a retried job or a second phone is a `duplicate`.
+  A workout deleted on Train › Exercise stays deleted: its row is kept as the key alone (kind `DELETED`, which nothing
+  lists or counts), so the next sync's resend is a duplicate. One record id is one session whatever kind it is sent
+  as: a workout whose id is already here as a walk (its `ingest:hc:` key), or a walk whose id is already here as a
+  workout, is a `duplicate`, so the first kind stays and nothing is paid or written again.
+- **Its twin, kind by kind:** a session of the same kind already there that day is that session and nothing is
+  written but its key (`sessions.matched`): another app's record or a lift from the set logger with half of the
+  shorter one's minutes in common, or one typed by hand within the walks' tolerances (its minutes, and its distance
+  when both have one). A hand-typed session absorbs one at most, and another app's copy of the same workout in the
+  same sync (half of its minutes in common) is matched to it too. A matched workout's key is kept as well (a row of
+  the key alone, kind `DELETED`), so its resend is a `duplicate`, even after its twin is deleted. A walk is never a
+  run's twin, nor a run a walk's.
+- A kind this server doesn't read (a newer phone's) is skipped and listed in `refused` ("Not a kind XTNL reads from
+  Health Connect yet."), never taken for another kind.
 
 - `since`: when the sync was switched on. **The backfill is record-only** (H17): a walk that started before `since`
   is saved as a record (Train › Exercise lists it, its minutes count toward an exercise skill's hours) and never paid,

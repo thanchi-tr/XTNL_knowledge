@@ -16,8 +16,8 @@ android {
         applicationId "com.xtnl.app"
         minSdk 26
         targetSdk 35
-        versionCode 32
-        versionName "2.20"
+        versionCode 33
+        versionName "2.21"
         buildConfigField "String", "DEFAULT_SERVER", "\"${defaultServer}\""
     }
 
@@ -89,8 +89,8 @@ dependencies {
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
-    // Blueprint P27 (D22): walks, hikes and weight read from Health Connect, synced by a WorkManager job (off until
-    // the user turns it on in Settings).
+    // Blueprint P27 (D22, widened by health D21): walks, workouts and weight read from Health Connect, synced by a
+    // WorkManager job (off until the user turns it on in Settings).
     implementation "androidx.health.connect:connect-client:1.1.0-alpha10"
     // Blueprint P8 (D34) uses the same WorkManager: the offline queue's job (data/SendWorker) replays a waiting tick, line
     // or Done once the phone is online, with backoff.

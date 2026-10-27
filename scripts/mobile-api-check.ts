@@ -50,7 +50,7 @@
  *      clientId required, the Big jump in plain words with the web's link, the lift after it, through training-server
  *      logSetCore and loadLiftView over an in-memory client: one set per clientId on any instance, the jump against the
  *      core's own baseline, gone for a movement not in the lift); their own cores (no paying core); the queue's kinds
- *      (TICK, LOG, WORK_DONE, CHECKIN, SET) and versionCode 32 (2.20);
+ *      (TICK, LOG, WORK_DONE, CHECKIN, SET) and versionCode 33 (2.21: Health Connect's workouts, D21);
  *   3. the wiring: each route file hands its request to its handler with the real deps and exports only its method
  *      and dynamic; mobile-api-cores binds each dep to the web's own core (no refresh), and mall-mobile-cores the
  *      Mall's two (the Mall's routes never hold a paying core); the pure modules import no core; the web pages' formulas the app mirrors (pinned in their source); the failure lines the codes key on;
@@ -123,7 +123,8 @@ import { FATIGUE_ANSWERS, FATIGUE_LAUNCH_DAY, FATIGUE_LAUNCH_DAY_ENV, fatigueUnt
 import { PAGES_QTY_MAX, PAGES_REFUSAL_PREFIX, PROOF_MINUTES_REFUSAL, TIMER_CLIENT_ID, TIMER_GONE, TIMER_OFF, TIMER_OTHER_DAY, pagesRefusalOf } from "../src/lib/proof";
 import type { WalletDays } from "../src/lib/credits-server";
 // Blueprint P27: Health Connect's walks and weigh-ins, through the real core over a fake store.
-import { HC_WALK_INGESTED, HC_WRITES_OFF, HC_WALKS_MAX, ingestKeyOf, type HcBatch } from "../src/lib/health-ingest";
+import { HC_KINDS, HC_KIND_UNREAD, HC_WALK_INGESTED, HC_WRITES_OFF, HC_WALKS_MAX, ingestKeyOf, type HcBatch } from "../src/lib/health-ingest";
+import type { ExerciseKind, RawSessionInput } from "../src/lib/exercise";
 import { ingestHealthCore, type IngestStore } from "../src/lib/health-ingest-server";
 import {
   AUTH_LINE,
@@ -859,7 +860,7 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
     // P27: a sync that brought nothing new (the core's own empty summary and line).
     ingestHealth: async () => ({
       ok: true,
-      value: { walks: { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 0, xp: 0 }, weights: { added: 0, kept: 0 }, refused: [], line: "Health Connect: nothing new." },
+      value: { walks: { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 0, xp: 0 }, sessions: { added: 0, matched: 0, duplicate: 0 }, weights: { added: 0, kept: 0 }, refused: [], line: "Health Connect: nothing new." },
     }),
     // Health phase 2: Mind's read as it answers off the switch (nothing read: not live), and no lift open.
     loadCheckin: async () => ({ live: false, ready: false, paused: false, todayCount: 0, lastAt: null }),
@@ -2022,7 +2023,7 @@ async function routes() {
         same(batch.walks.map((w) => ({ ...w, start: w.start.toISOString(), end: w.end.toISOString() })), [{ externalId: "hc-w2", kind: "WALK", start: "2026-10-20T23:20:00.000Z", end: "2026-10-20T23:50:00.000Z", distanceKm: 2.6, climbM: 40, origin: "com.sec.android.app.shealth" }]) &&
         same(batch.weights.map((w) => ({ ...w, at: w.at.toISOString() })), [weight])
     );
-    eq("the reply: walks, weights, refused and the line, as the core summed them", data(ok), { walks: { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 0, xp: 0 }, weights: { added: 0, kept: 0 }, refused: [], line: "Health Connect: nothing new." });
+    eq("the reply: walks, sessions (D21), weights, refused and the line, as the core summed them", data(ok), { walks: { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 0, xp: 0 }, sessions: { added: 0, matched: 0, duplicate: 0 }, weights: { added: 0, kept: 0 }, refused: [], line: "Health Connect: nothing new." });
     const again = await got(handleExercise(post("/exercise", { since, walks: [walk({ climbM: 40, origin: "com.sec.android.app.shealth" })], weights: [weight], clientId: UUID }), deps));
     check("a resend with the same clientId replays the first reply, the core runs once", (calls.ingestHealth ?? []).length === 1 && again.raw === ok.raw);
     const bads = [
@@ -2030,7 +2031,14 @@ async function routes() {
       { since: "yesterday" },
       { since, walks: {} },
       { since, walks: [walk({ steps: 4000 })] },
-      { since, walks: [walk({ kind: "RUN" })] },
+      // Re-pinned for D21: RUN is a kind now; a kind not written as one (lower case, a number) is still a wrong shape.
+      { since, walks: [walk({ kind: "run" })] },
+      { since, walks: [walk({ kind: 56 })] },
+      { since, walks: [walk({ kind: "RUN", climbM: 30 })] },
+      { since, walks: [walk({ kind: "RUN", variant: "treadmill" })] },
+      { since, walks: [walk({ kind: "SPORT", variant: "OTHER", label: "x".repeat(41) })] },
+      { since, walks: [walk({ kind: "LIFT", distanceKm: -1 })] },
+      { since, walks: [walk({ kind: "LIFT", sets: 3 })] },
       { since, walks: [walk({ end: "2026-10-20T23:10:00.000Z" })] },
       { since, walks: [walk({ start: "2026-10-21T00:40:00.000Z", end: "2026-10-21T01:10:00.000Z" })] },
       { since, walks: [walk({ distanceKm: -1 })] },
@@ -2044,7 +2052,7 @@ async function routes() {
     ];
     const badReplies = await Promise.all(bads.map((b) => got(handleExercise(post("/exercise", b), deps))));
     check(
-      "a wrong shape is 400 and never reaches the core: no since, a bad instant, a list that isn't one, an unknown key, a kind other than WALK or HIKE, an end before its start, a start in the future, a negative or string number, a bad record id or package, more than 100, a weigh-in ahead of time",
+      "a wrong shape is 400 and never reaches the core: no since, a bad instant, a list that isn't one, an unknown key (a workout's climb, a lift's sets), a kind not written in capitals, a variant not a key, a sport's name over 40, an end before its start, a start in the future, a negative or string number, a bad record id or package, more than 100, a weigh-in ahead of time",
       badReplies.every((r) => isFail(r, "bad")) && (calls.ingestHealth ?? []).length === 1,
       badReplies.filter((r) => !isFail(r, "bad")).map((r) => r.raw.slice(0, 80)).join(" | ")
     );
@@ -2056,6 +2064,26 @@ async function routes() {
     // a second sync of the same records is all duplicates.
     const keys = new Set<string>();
     const walkCalls: { externalId: string; recordOnly: boolean }[] = [];
+    const recordCalls: string[] = [];
+    const recordView = (raw: RawSessionInput, o: { clientId: string; at: { start: Date; end: Date } }) => ({
+      id: `s-${o.clientId}`,
+      kind: raw.kind as ExerciseKind,
+      day: String(raw.day),
+      angleDeg: 0,
+      distanceKm: typeof raw.distanceKm === "number" ? raw.distanceKm : 0,
+      durationMin: Number(raw.durationMin),
+      note: typeof raw.note === "string" ? raw.note : null,
+      variant: typeof raw.variant === "string" ? raw.variant : null,
+      label: typeof raw.label === "string" ? raw.label : null,
+      poolM: null,
+      avgWatts: null,
+      avgHr: null,
+      maxHr: null,
+      sessionRpe: null,
+      startedAt: o.at.start.toISOString(),
+      endedAt: o.at.end.toISOString(),
+      clientId: o.clientId,
+    });
     const store: IngestStore = {
       ingested: async (_u, ks) => new Set(ks.filter((k) => keys.has(k))),
       sessionsOn: async () => [{ id: "s-hand", day: TODAY, durationMin: 31, distanceKm: 2.5, at: null, claimed: false }],
@@ -2073,6 +2101,20 @@ async function routes() {
         return { ok: true, value: opts.recordOnly ? session : { ...session, pay: { kind: "PAID", xp: 18.36, raw: 18.36, intensity: "MODERATE", effortMinutes: 45, crit: false, prs: 0, topUp: null, linkError: null } } };
       },
       logWeight: async (_u, _kg, o) => ({ ok: true, value: { day: o.day, replaced: false } }),
+      // D21: the workouts' own keys and importSessionCore, as health-ingest-check drives them.
+      importedKeys: async (_u, ks) => new Set(ks.filter((k) => keys.has(k))),
+      recordSessionsOn: async () => [],
+      logRecord: async (_u, raw, _now, o) => {
+        if (keys.has(o.clientId)) return { ok: true, value: { ...recordView(raw, o), replay: true } };
+        keys.add(o.clientId);
+        recordCalls.push(o.clientId);
+        return { ok: true, value: { ...recordView(raw, o), replay: false } };
+      },
+      keepMatchedKey: async (_u, key) => {
+        if (keys.has(key)) return false;
+        keys.add(key);
+        return true;
+      },
     };
     const real = fakes({ ingestHealth: (u, b, n) => ingestHealthCore(u, b, { store, now: () => n, env: { NODE_ENV: "development", XTNL_LIFE_JUDGE: "1" } }) });
     const body = {
@@ -2096,6 +2138,42 @@ async function routes() {
       first.raw.slice(0, 300)
     );
     check("a second sync of the same records writes no walk: all three are duplicates", second.status === 200 && walkCalls.length === 2 && same(data(second).walks, { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 3, xp: 0 }));
+
+    // D21: the workouts. A run, a lift with no distance, a game by its own name and a kind this server doesn't read.
+    const workouts = {
+      since,
+      walks: [
+        walk({ externalId: "hc-r1", kind: "RUN", variant: "TREADMILL", start: "2026-10-20T21:00:00.000Z", end: "2026-10-20T21:28:40.000Z", distanceKm: 5.2, origin: "com.strava" }),
+        { externalId: "hc-l1", kind: "LIFT", start: "2026-10-20T22:00:00.000Z", end: "2026-10-20T22:45:00.000Z" },
+        { externalId: "hc-g1", kind: "SPORT", variant: "OTHER", label: "Rugby", start: "2026-10-20T22:50:00.000Z", end: "2026-10-20T23:10:00.000Z" },
+        { externalId: "hc-x1", kind: "SKYDIVING", start: "2026-10-20T23:15:00.000Z", end: "2026-10-20T23:20:00.000Z" },
+      ],
+    };
+    const parsed = fakes();
+    const p = await got(handleExercise(post("/exercise", workouts), parsed.deps));
+    const [[, pb]] = parsed.calls.ingestHealth as [string, HcBatch, Date][];
+    check(
+      "D21: POST /exercise takes every record kind in `walks` (the phone's 2.21): a run with its variant and distance, a lift with none, a game by its name; a kind this server doesn't read is skipped and counted, never guessed or refused whole",
+      p.status === 200 && pb.walks.length === 0 &&
+        same((pb.sessions ?? []).map((s) => [s.externalId, s.kind, s.variant, s.label, s.distanceKm, s.start.toISOString()]), [
+          ["hc-r1", "RUN", "TREADMILL", null, 5.2, "2026-10-20T21:00:00.000Z"],
+          ["hc-l1", "LIFT", null, null, null, "2026-10-20T22:00:00.000Z"],
+          ["hc-g1", "SPORT", "OTHER", "Rugby", null, "2026-10-20T22:50:00.000Z"],
+        ]) &&
+        same(pb.unread, [{ externalId: "hc-x1", kind: "SKYDIVING" }]) &&
+        same(HC_KINDS, ["WALK", "HIKE", "RUN", "CYCLE", "SWIM", "ROW", "ELLIPTICAL", "HIIT", "CIRCUIT", "SPORT", "YOGA", "MOBILITY", "LIFT"]),
+      p.raw.slice(0, 300)
+    );
+    const w1 = await got(handleExercise(post("/exercise", workouts), real.deps));
+    const w2 = await got(handleExercise(post("/exercise", workouts), real.deps));
+    check(
+      "through ingestHealthCore: each workout is a record under its own key ('hc:<id>'), never through the walk's core; the unread kind is listed in `refused`; a second sync is all duplicates",
+      w1.status === 200 && same(recordCalls, ["hc:hc-r1", "hc:hc-l1", "hc:hc-g1"]) && walkCalls.length === 2 &&
+        same(data(w1).sessions, { added: 3, matched: 0, duplicate: 0 }) && same(data(w1).refused, [{ kind: "session", externalId: "hc-x1", error: HC_KIND_UNREAD }]) &&
+        data(w1).line === "Health Connect: 3 workouts recorded · 1 skipped" &&
+        w2.status === 200 && same(data(w2).sessions, { added: 0, matched: 0, duplicate: 3 }) && recordCalls.length === 3,
+      `${w1.raw.slice(0, 300)} | ${w2.raw.slice(0, 200)}`
+    );
     const dev = await got(handleExercise(post("/exercise", body), fakes({ ingestHealth: (u, b, n) => ingestHealthCore(u, b, { store, now: () => n, env: { NODE_ENV: "development" } }) }).deps));
     check("through ingestHealthCore on a dev server: nothing is written, 409 with HC_WRITES_OFF", isFail(dev, "conflict") && dev.json.error === HC_WRITES_OFF && walkCalls.length === 2);
   }
@@ -4457,6 +4535,15 @@ function wiring() {
     Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 32 && Number(/versionName "2\.(\d+)"/.exec(gradle)?.[1] ?? 0) >= 20,
     `${/versionCode (\d+)\b/.exec(gradle)?.[1]} / ${/versionName "([^"]+)"/.exec(gradle)?.[1]}`
   );
+  // Health D21: Health Connect's workouts (every record kind, by the SDK's named constants), no new permission.
+  check(
+    "Android: versionCode 33 (2.21) for Health Connect's workouts (D21: HealthLine.KINDS by named constants, a session's variant and name on the wire, the workouts' counts in the reply)",
+    /versionCode 33\b/.test(gradle) && /versionName "2\.21"/.test(gradle) &&
+      /val KINDS: Map<Int, Kind> = mapOf\(/.test(read("android/app/src/main/java/com/xtnl/app/core/HealthLine.kt")) &&
+      /val variant: String\? = null,\s*val label: String\? = null,/.test(read("android/app/src/main/java/com/xtnl/app/data/Models.kt")) &&
+      /val sessions: HealthSessionCounts = HealthSessionCounts\(\),/.test(read("android/app/src/main/java/com/xtnl/app/data/Models.kt")),
+    `${/versionCode (\d+)\b/.exec(gradle)?.[1]} / ${/versionName "([^"]+)"/.exec(gradle)?.[1]}`
+  );
 }
 
 // ═══ 4. The doc and the package ══════════════════════════════════════════
@@ -4528,16 +4615,18 @@ function docs() {
     "Health Connect (P27; D22) is in the doc: off until the user turns it on, walks and weight only, the backfill record-only (H17), one walk once per record ('ingest:hc:<externalId>'), a hand-logged walk matched (one session, one payment), an import never replacing a typed weigh-in, writes on the live app only",
     (() => {
       const flat = doc.replace(/\s+/g, " ");
-      return /## POST \/exercise: Health Connect's walks, hikes and weigh-ins/.test(doc) &&
+      // Re-pinned for D21: the heading and the scope line name the workouts; every other kind a record.
+      return /## POST \/exercise: Health Connect's walks, hikes, workouts and weigh-ins/.test(doc) &&
         /\*\*off until the user turns it on\*\*/.test(flat) &&
-        /Walks and weight only: no steps, heart rate, sleep or other workouts, and no new pay rule/.test(flat) &&
+        /Walks, workouts and weight only: no steps, heart rate or sleep, and no new pay rule\. Walks pay as walks always have; every other kind is a record\. No new permission/.test(flat) &&
+        /It writes \*\*no ledger row of any kind\*\*/.test(flat) && /`hc:<externalId>`/.test(flat) && /A lift is its minutes alone/.test(flat) && /A walk is never a run's twin/.test(flat) && flat.includes(HC_KIND_UNREAD) &&
         /\*\*The backfill is record-only\*\* \(H17\): a walk that started before `since` is saved as a record/.test(flat) &&
         /and it is never a personal best, whatever its day/.test(flat) &&
         /`ingest:hc:<externalId>`/.test(flat) &&
         /\*\*One session, one payment:\*\* a walk the user already logged by hand that day/.test(flat) &&
         /an import never replaces one typed on the phone or the web/.test(flat) &&
         flat.includes(HC_WRITES_OFF) &&
-        ["since", "walks", "weights", "externalId", "start", "end", "distanceKm", "climbM", "origin", "at", "kg"].every((k) => doc.includes(`"${k}"`));
+        ["since", "walks", "weights", "externalId", "start", "end", "distanceKm", "climbM", "origin", "at", "kg", "variant", "label", "sessions"].every((k) => doc.includes(`"${k}"`));
     })()
   );
   check(

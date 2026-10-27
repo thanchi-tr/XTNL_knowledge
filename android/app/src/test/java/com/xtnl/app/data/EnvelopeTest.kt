@@ -380,6 +380,11 @@ class EnvelopeTest {
             "line":"Health Connect: 2 walks in (1 paid 18.4 XP, 1 recorded) · 1 already logged · 1 weigh-in"}}""", HealthSyncResult.serializer()) as Outcome.Ok).value
         assertEquals(HealthWalkCounts(2, 1, 1, 1, 3, 18.4), r.walks)
         assertEquals(HealthWeightCounts(1, 0), r.weights)
+        // An older server sends no `sessions`: none. D21's reply carries them.
+        assertEquals(HealthSessionCounts(), r.sessions)
+        val withWorkouts = (HttpApi.parse(200, """{"ok":true,"data":{"walks":{"added":0,"paid":0,"recorded":0,"matched":0,"duplicate":0,"xp":0},
+            "sessions":{"added":2,"matched":1,"duplicate":0},"weights":{"added":0,"kept":0},"refused":[],"line":"Health Connect: 2 workouts recorded · 1 already logged"}}""", HealthSyncResult.serializer()) as Outcome.Ok).value
+        assertEquals(HealthSessionCounts(2, 1, 0), withWorkouts.sessions)
         assertEquals(listOf(HealthRefusal("walk", "hc-9", "A distance between 0.01 and 200 km, please.")), r.refused)
         assertTrue(r.line!!.startsWith("Health Connect: 2 walks in"))
         val off = HttpApi.parse(409, """{"ok":false,"error":"Health Connect imports are recorded by the live app only (this server writes nothing).","code":"conflict"}""", HealthSyncResult.serializer()) as Outcome.Err

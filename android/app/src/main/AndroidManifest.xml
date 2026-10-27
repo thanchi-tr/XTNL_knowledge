@@ -11,10 +11,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <!-- Health Connect (blueprint P27, D22): walks, hikes and weight, read only, and only once the user turns the sync
-         on in Settings and allows each one in Health Connect's own dialog. Walking and hiking sessions, their distance
-         and climb, weigh-ins, and (Android 15+, asked separately) reads while the app is closed. Nothing else is read
-         and nothing is written to Health Connect (health/HealthReader, core/HealthLine). -->
+    <!-- Health Connect (blueprint P27, D22, widened by health D21): walks, workouts and weight, read only, and only
+         once the user turns the sync on in Settings and allows each one in Health Connect's own dialog. Exercise
+         sessions of the mapped types (walks and hikes with their distance and climb; runs, rides, swims and rows with
+         their distance; other workouts as minutes), weigh-ins, and (Android 15+, asked separately) reads while the app
+         is closed. Nothing is written to Health Connect (health/HealthReader, core/HealthLine). -->
     <uses-permission android:name="android.permission.health.READ_EXERCISE" />
     <uses-permission android:name="android.permission.health.READ_DISTANCE" />
     <uses-permission android:name="android.permission.health.READ_ELEVATION_GAINED" />

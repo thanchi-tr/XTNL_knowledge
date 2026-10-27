@@ -15,10 +15,11 @@ import com.xtnl.app.core.HealthLine
 import java.time.Instant
 
 /**
- * Health Connect, read only (blueprint P27): walking and hiking sessions with the distance and climb their own app
- * recorded inside them, and weigh-ins. Nothing is ever written to Health Connect, and nothing else is read. Every call
- * needs Health Connect on the phone ([availability]) and its permission ([granted]); a missing one throws
- * SecurityException, which HealthSync turns into Settings' line.
+ * Health Connect, read only (blueprint P27; D21): exercise sessions with the distance (and a hike's climb) their own
+ * app recorded inside them, and weigh-ins. Nothing is ever written to Health Connect, and nothing else is read: the
+ * sessions are ExerciseSessionRecord (READ_EXERCISE covers every type), their distance and climb the records walks
+ * always read. Every call needs Health Connect on the phone ([availability]) and its permission ([granted]); a missing
+ * one throws SecurityException, which HealthSync turns into Settings' line.
  */
 class HealthReader(private val context: Context) {
 
@@ -39,8 +40,10 @@ class HealthReader(private val context: Context) {
     }.getOrDefault(false)
 
     /**
-     * The walking and hiking sessions that started in [from, to), each with the distance (and, when allowed, the climb)
-     * that its own app recorded inside it, so another app's steps or a car journey never add to it.
+     * The exercise sessions that started in [from, to). A walk, a hike, a run, a ride, a swim or a row comes with the
+     * distance (and a walk or a hike, when allowed, with the climb) that its own app recorded inside it, so another
+     * app's steps or a car journey never add to it. Any other kind needs no distance, so nothing more is read for it,
+     * and a type the sync doesn't map comes back bare, only to be counted (HealthLine.skippedUnread), never sent.
      */
     suspend fun sessions(from: Instant, to: Instant, climb: Boolean): List<HealthLine.Session> {
         val out = mutableListOf<HealthLine.Session>()
@@ -48,11 +51,14 @@ class HealthReader(private val context: Context) {
         do {
             val res = client().readRecords(ReadRecordsRequest(ExerciseSessionRecord::class, TimeRangeFilter.between(from, to), pageToken = page))
             for (r in res.records) {
-                if (HealthLine.kindOf(r.exerciseType) == null) continue
+                if (!HealthLine.readsDistance(r.exerciseType)) {
+                    out += HealthLine.Session(r.metadata.id, r.exerciseType, r.startTime, r.endTime, null, null, r.metadata.dataOrigin.packageName)
+                    continue
+                }
                 val within = TimeRangeFilter.between(r.startTime, r.endTime)
                 val origin = setOf(r.metadata.dataOrigin)
                 val distance = client().aggregate(AggregateRequest(setOf(DistanceRecord.DISTANCE_TOTAL), within, origin))[DistanceRecord.DISTANCE_TOTAL]
-                val gained = if (climb) {
+                val gained = if (climb && HealthLine.readsClimb(r.exerciseType)) {
                     runCatching { client().aggregate(AggregateRequest(setOf(ElevationGainedRecord.ELEVATION_GAINED_TOTAL), within, origin))[ElevationGainedRecord.ELEVATION_GAINED_TOTAL] }.getOrNull()
                 } else null
                 out += HealthLine.Session(

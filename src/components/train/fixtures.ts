@@ -23,9 +23,10 @@
  * at a walking pace: "Log it as a walk?"), swim (a 25 m pool, 60 lengths), sport, yoga, longNames (a 40-character game
  * on the Again chip and a 60-character habit on Counts as, wrapping inside the card), counted (a ride counted as the
  * habit), countedDelete (that ride on its Sure? step: the habit stays ticked), refused (a run faster than 25 km/h),
- * recordOnly (no habit due: the record-only line), walkOffer ("Log it as a run?"), lift (the set logger arrives next)
- * and walkOnly (before the strength_sets migration). The saved lines are sessionLoggedLineOf's own, so they read as
- * the server's would.
+ * recordOnly (no habit due: the record-only line), walkOffer ("Log it as a run?"), lift (the set logger arrives next),
+ * walkOnly (before the strength_sets migration), and (D21) importedRun and importedLift (a run and a lift Health
+ * Connect brought in: records, the lift its minutes alone, each row saying "from Health Connect"). The saved lines are
+ * sessionLoggedLineOf's own, so they read as the server's would.
  *
  * Fixture LiftViews for Train › Exercise, Lift mode (health-2026-10-27.md D12, D14-D19; phase 4): LIFT_FIXTURES on
  * twelve made-up finished lifts (Push day, Legs and Pull day, a week apart each, over four weeks: LIFT_FIXTURE_HISTORY),
@@ -345,6 +346,34 @@ const LONG_GAME = sessionOf("ex-long", 1, { kind: "SPORT", variant: "OTHER", lab
 /** A 60-character habit title on "Counts as". */
 const LONG_LINK = { templateId: "t-long", title: "Cardio intervals on the bike, the rower or the treadmill 30m" };
 
+/** An instant `ago` days back at hh:mm in the life zone (ISO): a Health Connect session's minutes. */
+function exAt(ago: number, hh: number, mm: number): string {
+  const [y, m, d] = addDays(EXERCISE_FIXTURE_TODAY, -ago).split("-").map(Number);
+  return new Date(zonedToInstant(y, m, d, hh).getTime() + mm * 60_000).toISOString();
+}
+/**
+ * D21: sessions Health Connect brought in, as importSessionCore writes them: the key 'hc:<record id>', the minutes as
+ * startedAt and endedAt, the note. A run with its distance (5.2 km in 28:40), and a lift as its minutes alone (no
+ * movement, no set: Health Connect carries no load).
+ */
+const HC_RUN = sessionOf("ex-hc-run", 0, {
+  kind: "RUN",
+  distanceKm: 5.2,
+  durationMin: 28 + 40 / 60,
+  startedAt: exAt(0, 7, 5),
+  endedAt: exAt(0, 7, 33 + 40 / 60),
+  clientId: "hc:5b1f0c2e-8d4a-4f0e-9a71-2c6d3e8f1a90",
+  note: "Run · Health Connect",
+});
+const HC_LIFT = sessionOf("ex-hc-lift", 0, {
+  kind: "LIFT",
+  durationMin: 45,
+  startedAt: exAt(0, 18, 10),
+  endedAt: exAt(0, 18, 55),
+  clientId: "hc:0e7a4d91-3c2b-4b6f-8e15-7d9a2f4c6b38",
+  note: "Lift · Health Connect",
+});
+
 export type ExerciseFixtureName =
   | "kinds"
   | "empty"
@@ -362,7 +391,9 @@ export type ExerciseFixtureName =
   | "recordOnly"
   | "walkOffer"
   | "lift"
-  | "walkOnly";
+  | "walkOnly"
+  | "importedRun"
+  | "importedLift";
 
 export interface ExerciseFixture {
   label: string;
@@ -433,6 +464,15 @@ export const EXERCISE_FIXTURES: Record<ExerciseFixtureName, ExerciseFixture> = {
       EXERCISE_SESSIONS.filter((s) => s.kind === "WALK"),
       { kindsReady: false }
     ),
+  },
+  importedRun: {
+    label: "Exercise · a run from Health Connect: a record with its distance, 'from Health Connect' on its row",
+    view: exerciseViewOf([HC_RUN, ...EXERCISE_SESSIONS]),
+    initial: { kind: "RUN" },
+  },
+  importedLift: {
+    label: "Exercise · a lift from Health Connect: its minutes alone (no movements or sets), 'from Health Connect'",
+    view: exerciseViewOf([HC_LIFT, ...EXERCISE_SESSIONS]),
   },
 };
 

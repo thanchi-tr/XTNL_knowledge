@@ -43,10 +43,10 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 
 /**
- * Settings › Health Connect (blueprint 5.1d, P27, decision D22): walks, hikes and weight read from Health Connect.
- * **Off until the user turns it on.** Turning it on shows the rationale first ([HealthRationale]: what is read, and
- * what the server does with it), then Health Connect's own permission dialog; the sync starts only once walks,
- * distance and weight are allowed. A refusal leaves it off. Under the toggle: the last sync's line (or why it didn't
+ * Settings › Health Connect (blueprint 5.1d, P27, decision D22, widened by health D21): walks, workouts and weight
+ * read from Health Connect. **Off until the user turns it on.** Turning it on shows the rationale first
+ * ([HealthRationale]: what is read, and what the server does with it), then Health Connect's own permission dialog;
+ * the sync starts only once exercise, distance and weight are allowed. A refusal leaves it off. Under the toggle: the last sync's line (or why it didn't
  * land), Sync now, and the background line (Android 15+ asks separately for reads while the app is closed).
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -91,7 +91,7 @@ fun HealthConnectSettings(graph: AppGraph, toggle: @Composable (title: String, s
             if (!prefs.healthSync) graph.healthSync.setEnabled(true)
             syncNow()
         } else if (!prefs.healthSync) {
-            note = "Health Connect didn't allow walks, distance and weight, so it stays off."
+            note = "Health Connect didn't allow exercise, distance and weight, so it stays off."
         }
     }
 

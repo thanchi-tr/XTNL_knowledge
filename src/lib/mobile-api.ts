@@ -95,13 +95,17 @@ import { PAGES_QTY_MAX, TIMER_GONE, pagesLabelOf, timerMinutesOf, type TickProof
 import {
   HC_EXTERNAL_ID_RE,
   HC_FUTURE_SLACK_MS,
-  HC_KINDS,
   HC_ORIGIN_RE,
   HC_WALKS_MAX,
+  HC_WALK_KINDS,
   HC_WEIGHTS_MAX,
+  isHcRecordKind,
+  isHcWalkKind,
   type HcBatch,
-  type HcKind,
+  type HcSession,
+  type HcUnread,
   type HcWalk,
+  type HcWalkKind,
   type HcWeight,
   type IngestSummary,
 } from "./health-ingest";
@@ -1401,11 +1405,15 @@ export function mallUndoLineOf(v: { title: string; price: number; duplicate: boo
   return v.duplicate ? `${v.title} was already undone.` : undoneLine(v.title, v.price);
 }
 
-// ── POST /exercise (Health Connect: walks, hikes and weight; P27) ───────────
+// ── POST /exercise (Health Connect: walks, hikes, workouts and weight; P27, D21) ─
 
 /** POST /exercise's fields (and clientId). */
 export const EXERCISE_KEYS = ["since", "walks", "weights"] as const;
 const HC_WALK_KEYS = ["externalId", "kind", "start", "end", "distanceKm", "climbM", "origin"] as const;
+/** D21: a session of another kind in `walks`: no climb (a run's incline is never guessed from one), a variant and a sport's name. */
+const HC_SESSION_KEYS = ["externalId", "kind", "start", "end", "distanceKm", "origin", "variant", "label"] as const;
+/** A kind as the phone writes one (upper case, as exercise.ts EXERCISE_KINDS are); a variant as ExerciseSession_variant_check takes it. */
+const HC_KIND_SHAPE = /^[A-Z][A-Z_]{0,23}$/;
 const HC_WEIGHT_KEYS = ["externalId", "at", "kg"] as const;
 
 /** An ISO instant ('2026-10-21T07:30:00Z' or with an offset), or BadInput. */
@@ -1438,34 +1446,79 @@ function externalIdOf(v: unknown, field: string): string {
 }
 
 /**
- * POST /exercise's body (blueprint P27, D22): `since`, when the sync was switched on (a walk that started before it is
- * the backfill, a record only); up to HC_WALKS_MAX walking or hiking sessions and HC_WEIGHTS_MAX weigh-ins, each with
- * its Health Connect record id. The shape is checked here (a wrong one is 400); a value a core refuses (a walk with no
- * distance, a weight out of range) skips that item with the core's own line, and the rest lands.
+ * D21: a session of a record kind in `walks` (a run, a ride, a swim, a row, an elliptical, HIIT or circuit session, a
+ * game, yoga, mobility or a lift): its instants as a walk's, its distance only when sent (a kind with none needs
+ * none), its variant in the shape ExerciseSession_variant_check takes, a sport's name of 1 to 40 characters. Whether
+ * the variant is the kind's own, and every range, is the core's (cleanSessionInput): a value it refuses skips the item.
+ */
+function hcSessionOf(o: Record<string, unknown>, f: string, latest: number): HcSession {
+  onlyKeys(o, HC_SESSION_KEYS);
+  const start = instantOf(o.start, `${f}.start`);
+  const end = instantOf(o.end, `${f}.end`);
+  if (end.getTime() <= start.getTime()) bad(`${f}.end must be after its start.`);
+  if (start.getTime() > latest) bad(`${f}.start is in the future.`);
+  const origin = o.origin;
+  if (!absent(origin) && (typeof origin !== "string" || !HC_ORIGIN_RE.test(origin))) bad(`${f}.origin must be an app's package name.`);
+  const variant = o.variant;
+  if (!absent(variant) && (typeof variant !== "string" || !HC_KIND_SHAPE.test(variant))) bad(`${f}.variant must be a variant's key, such as 'TREADMILL'.`);
+  const label = o.label;
+  if (!absent(label) && (typeof label !== "string" || label.trim() === "" || [...label].length > 40)) bad(`${f}.label must be a name of 1 to 40 characters.`);
+  return {
+    externalId: externalIdOf(o.externalId, `${f}.externalId`),
+    kind: o.kind as HcSession["kind"],
+    variant: absent(variant) ? null : (variant as string),
+    label: absent(label) ? null : (label as string),
+    start,
+    end,
+    distanceKm: absent(o.distanceKm) ? null : numberOf(o.distanceKm, `${f}.distanceKm`),
+    origin: absent(origin) ? null : (origin as string),
+  };
+}
+
+/**
+ * POST /exercise's body (blueprint P27, D22; D21): `since`, when the sync was switched on (a walk that started before
+ * it is the backfill, a record only); up to HC_WALKS_MAX exercise sessions in `walks` (walking and hiking ones, and,
+ * from the phone's 2.21, every record kind: hcSessionOf) and HC_WEIGHTS_MAX weigh-ins, each with its Health Connect
+ * record id. The shape is checked here (a wrong one is 400); a kind in the shape of one that this server doesn't read
+ * is skipped and counted (`unread`), never guessed; a value a core refuses (a walk with no distance, a weight out of
+ * range) skips that item with the core's own line, and the rest lands.
  */
 export function exerciseRequestOf(body: Record<string, unknown>, now: Date): HcBatch {
   const since = instantOf(body.since, "since");
   const latest = now.getTime() + HC_FUTURE_SLACK_MS;
-  const walks: HcWalk[] = listOf(body.walks, "walks", HC_WALKS_MAX).map((o, i) => {
-    onlyKeys(o, HC_WALK_KEYS);
+  const sessions: HcSession[] = [];
+  const unread: HcUnread[] = [];
+  const walks: HcWalk[] = listOf(body.walks, "walks", HC_WALKS_MAX).flatMap((o, i): HcWalk[] => {
     const f = `walks[${i}]`;
+    if (isHcRecordKind(o.kind)) {
+      sessions.push(hcSessionOf(o, f, latest));
+      return [];
+    }
+    if (typeof o.kind === "string" && !isHcWalkKind(o.kind) && HC_KIND_SHAPE.test(o.kind)) {
+      onlyKeys(o, [...HC_SESSION_KEYS, "climbM"]);
+      unread.push({ externalId: externalIdOf(o.externalId, `${f}.externalId`), kind: o.kind });
+      return [];
+    }
+    onlyKeys(o, HC_WALK_KEYS);
     const kind = o.kind;
-    if (typeof kind !== "string" || !(HC_KINDS as readonly string[]).includes(kind)) bad(`${f}.kind must be 'WALK' or 'HIKE'.`);
+    if (typeof kind !== "string" || !(HC_WALK_KINDS as readonly string[]).includes(kind)) bad(`${f}.kind must be a kind of exercise in capitals, such as 'WALK' or 'RUN'.`);
     const start = instantOf(o.start, `${f}.start`);
     const end = instantOf(o.end, `${f}.end`);
     if (end.getTime() <= start.getTime()) bad(`${f}.end must be after its start.`);
     if (start.getTime() > latest) bad(`${f}.start is in the future.`);
     const origin = o.origin;
     if (!absent(origin) && (typeof origin !== "string" || !HC_ORIGIN_RE.test(origin))) bad(`${f}.origin must be an app's package name.`);
-    return {
-      externalId: externalIdOf(o.externalId, `${f}.externalId`),
-      kind: kind as HcKind,
-      start,
-      end,
-      distanceKm: numberOf(o.distanceKm, `${f}.distanceKm`),
-      climbM: absent(o.climbM) ? null : numberOf(o.climbM, `${f}.climbM`),
-      origin: absent(origin) ? null : (origin as string),
-    };
+    return [
+      {
+        externalId: externalIdOf(o.externalId, `${f}.externalId`),
+        kind: kind as HcWalkKind,
+        start,
+        end,
+        distanceKm: numberOf(o.distanceKm, `${f}.distanceKm`),
+        climbM: absent(o.climbM) ? null : numberOf(o.climbM, `${f}.climbM`),
+        origin: absent(origin) ? null : (origin as string),
+      },
+    ];
   });
   const weights: HcWeight[] = listOf(body.weights, "weights", HC_WEIGHTS_MAX).map((o, i) => {
     onlyKeys(o, HC_WEIGHT_KEYS);
@@ -1474,13 +1527,14 @@ export function exerciseRequestOf(body: Record<string, unknown>, now: Date): HcB
     if (at.getTime() > latest) bad(`${f}.at is in the future.`);
     return { externalId: externalIdOf(o.externalId, `${f}.externalId`), at, kg: numberOf(o.kg, `${f}.kg`) };
   });
-  return { since, walks, weights };
+  return { since, walks, sessions, unread, weights };
 }
 
 /** The reply's counts, as the core summed them (health-ingest.ts IngestSummary), and its line. */
 export function exerciseReplyOf(s: IngestSummary & { line: string }) {
   return {
     walks: { ...s.walks, xp: round1(s.walks.xp) },
+    sessions: { ...s.sessions },
     weights: { ...s.weights },
     refused: s.refused.map((r) => ({ kind: r.kind, externalId: r.externalId, error: r.error })),
     line: s.line,

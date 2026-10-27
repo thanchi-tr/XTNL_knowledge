@@ -49,7 +49,8 @@
  *                                             movements' lifts whole, with the answers the call carries, so the summary
  *                                             and each movement's records agree). A Finish of a finished lift is a
  *                                             replay: no write, the summary again (the summary's Confirm), "Counts as"
- *                                             on the habit the first Finish ticked (habitCountedBy)
+ *                                             on the habit the first Finish ticked (habitCountedBy). A lift Health
+ *                                             Connect brought in (D21) is never finished here: NO_LIFT
  *   finishLiftMomentsCore(…)                → finishLiftCore, and for a "Counts as" tick on a live day the moments a
  *                                             manual tick returns (exercise-server logSessionMomentsCore's rule)
  *   discardLiftCore(userId, sessionId)      → the open lift and its movements and sets, gone (a finished one is deleted
@@ -86,7 +87,7 @@ import { cached, invalidate } from "./cache";
 import { addDays, dateColumn, dayStartOf, keyOfDateColumn, todayKey, weekStartKeyOf, type DayKey } from "./life-day";
 import { roundKg, type WeightUnit } from "./weight";
 import { isMissingTable as isMissingWeightTable, loadWeightGoal } from "./weight-server";
-import { SESSION_LIMITS, againLineOf, sessionLoggedLineOf, sessionRefusalOf, type SessionLinkOutcome, type SessionRefusal, type SessionView } from "./exercise";
+import { SESSION_LIMITS, againLineOf, isImportedSession, sessionLoggedLineOf, sessionRefusalOf, type SessionLinkOutcome, type SessionRefusal, type SessionView } from "./exercise";
 import { habitCountedBy, isMissingSessionColumns, linkRecord } from "./exercise-server";
 import { momentumLive } from "./momentum";
 import { captureSnapshot, detectCelebrations } from "./celebrations";
@@ -1784,6 +1785,8 @@ export async function finishLiftCore(userId: string, raw: RawFinishInput, now: D
       loadWeightGoal(userId),
     ]);
     if (!row || row.kind !== "LIFT" || !row.startedAt) return fail(LIFT_COPY.NO_LIFT);
+    // A lift Health Connect brought in (D21) has no open lift to finish, and is never a replay that could tick a habit.
+    if (isImportedSession(row)) return fail(LIFT_COPY.NO_LIFT);
     let replay = row.endedAt != null;
     if (!replay && sets.length === 0) return fail(LIFT_COPY.NO_SETS);
     let by: FinishBound | null = null;

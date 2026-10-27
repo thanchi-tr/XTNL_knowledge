@@ -166,11 +166,15 @@ import { prisma } from "../src/lib/prisma";
 import { invalidateAll } from "../src/lib/cache";
 import {
   EXERCISE_NOT_READY,
+  IMPORT_DELETED,
+  IMPORT_NOT_COUNTED,
   KINDS_NOT_READY,
   LIFT_NOT_YET,
   SESSION_WALK_ELSEWHERE,
   deleteSessionCore,
+  importSessionCore,
   isMissingSessionColumns,
+  linkRecord,
   loadExerciseView,
   logSessionCore,
   logSessionMomentsCore,
@@ -179,6 +183,9 @@ import {
 } from "../src/lib/exercise-server";
 import { LINKED_KIND_REFUSAL, LINKED_NOT_EXERCISE, LINKED_NOT_LIVE, LINKED_STUDY_REFUSAL, LINKED_WORK_REFUSAL, linkedTickPlanOf } from "../src/lib/today-board";
 import { prismaIngestStore } from "../src/lib/health-ingest-server";
+import { LIFT_COPY, finishLiftCore } from "../src/lib/training-server";
+import { HC_KINDS, HC_RECORD_KINDS } from "../src/lib/health-ingest";
+import { IMPORTED_FROM } from "../src/lib/exercise";
 import { ExerciseCard, type ExerciseActions } from "../src/components/train/ExerciseCard";
 import { SessionForm, draftOfSession, minutesOf, type FormKind, type LogSessionAction } from "../src/components/train/SessionForm";
 import { SessionWeekSummary, todaySessionsLine } from "../src/components/train/ExerciseWeek";
@@ -1339,7 +1346,25 @@ function walkRegionOf(src: string): string {
   const decls = declsOf(serverSrc);
   const writing = [...decls].filter(([, b]) => LEDGER_WRITES.test(codeOf(b))).map(([n]) => n);
   eq("exercise-server's ledger writes sit in the walk's three places only: the Health Connect walk (createIngested), the walk's pay (payOnce) and its same-day reversal (deleteExerciseCore)", writing, ["createIngested", "payOnce", "deleteExerciseCore"]);
-  const RECORD = ["SESSION_CORE_KINDS", "LogSessionOptions", "sessionByClientId", "habitCountedBy", "RECORD_LINK_WORDS", "recordLinkErrorOf", "linkRecord", "logSessionCore", "deleteSessionCore", "recordTicksOf"];
+  // Re-pinned for D21 (health-2026-10-27.md): Health Connect's record path (importSessionCore, a deleted import's kept
+  // key) joins the record path, and writes no ledger row either.
+  const RECORD = [
+    "SESSION_CORE_KINDS",
+    "LogSessionOptions",
+    "sessionByClientId",
+    "habitCountedBy",
+    "RECORD_LINK_WORDS",
+    "recordLinkErrorOf",
+    "linkRecord",
+    "logSessionCore",
+    "deleteSessionCore",
+    "recordTicksOf",
+    "ImportedSession",
+    "IMPORT_KEY_REFUSED",
+    "IMPORT_DELETED",
+    "importSessionCore",
+    "keepImportKey",
+  ];
   const PAYS = /\b(activityOp|activityData|recordActivity|activityEvent|ingestEventInput|walkEventInput|prEventInput|reversalInputOf|priceWalk|payWalkCore|payOnce|walkReceiptOf|withMoments|detectCelebrations|captureSnapshot|momentumRoll|lifeLockOp|freshnessGuardOp|settledDayGuardOp|invalidateActivity|\$transaction|\$executeRaw|\$queryRaw)\b/;
   const leaks = RECORD.filter((n) => !decls.has(n) || PAYS.test(codeOf(decls.get(n)!)));
   check("the record path (logSessionCore, linkRecord, sessionByClientId, habitCountedBy, the refusal words, deleteSessionCore, the view's recordTicksOf) writes no ledger row: no ActivityEvent, no price, no receipt, no moments, no lock, no raw SQL", leaks.length === 0, leaks.join(", "));
@@ -1410,8 +1435,20 @@ function walkRegionOf(src: string): string {
   check("a WORKOUT or PR row is still built by the walk's walkEventInput and prEventInput alone (exercise.ts) and written by payOnce alone", json(builders) === json(["src/lib/exercise.ts"]) && json(rowCalls) === json(["src/lib/exercise-server.ts"]) && (codeOf(decls.get("payOnce") ?? "").match(/\b(walkEventInput|prEventInput)\(/g) ?? []).length === 2);
   const sessionReceipt = srcFiles().filter((f) => /["'`]session-1["'`]/.test(readCode(f)));
   check("no 'session-1' receipt yet (phase 5): readLiveWalks reads 'walk-1' alone and a record has no row for it to read", sessionReceipt.length === 0 && /if \(!isWalkReceipt\(r\.receipt\)\) continue;/.test(decls.get("readLiveWalks") ?? ""), sessionReceipt.join(", "));
-  const ingestKinds = /export const HC_KINDS = \[([^\]]*)\]/.exec(code("src/lib/health-ingest.ts"))?.[1] ?? "";
-  check("Health Connect still brings walks and hikes only (D21 is phase 5): HC_KINDS is WALK and HIKE", ingestKinds.replace(/\s/g, "") === '"WALK","HIKE"', ingestKinds);
+  // Re-pinned on purpose for D21 (phase 5): Health Connect brings walks and hikes as walks, and every record kind as a
+  // record (health-ingest-check holds the rest: no ledger row, once per record, the twin rule kind by kind).
+  check(
+    "Health Connect brings walks and hikes as walks, and every record kind as a record (D21): HC_KINDS is WALK, HIKE and RECORD_KINDS in order",
+    json(HC_KINDS) === json(["WALK", "HIKE", ...RECORD_KINDS]) && json(HC_RECORD_KINDS) === json(RECORD_KINDS),
+    json(HC_KINDS)
+  );
+  const imp = codeOf(decls.get("importSessionCore") ?? "");
+  check(
+    "importSessionCore (D21): cleanSessionInput, a walk refused, then one ExerciseSession create under the import's key with its Health Connect minutes; no habit tick, no ledger row",
+    /const clean = cleanSessionInput\(\{ \.\.\.\(raw \?\? \{\}\), clientId: undefined \}, todayKey\(now\)\);/.test(imp) && imp.indexOf('if (v.kind === "WALK") return { ok: false, error: SESSION_WALK_ELSEWHERE };') > 0 &&
+      imp.indexOf("prisma.exerciseSession.create(") > imp.indexOf("SESSION_WALK_ELSEWHERE") && (imp.match(/prisma\.\w+\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/g) ?? []).length === 1 &&
+      /clientId: key,/.test(imp) && /startedAt: start,\s*endedAt: end,/.test(imp) && !/linkRecord|completeLinkedCore|countsAs/.test(imp)
+  );
 }
 {
   // The walk's pay path, byte for byte as on HEAD cf4d297 (before this phase). Each digest is the sha256 (first 16 hex) of
@@ -1542,23 +1579,27 @@ console.log("— readers");
   const reads = srcFiles().flatMap((f) =>
     [...readCode(f).matchAll(/exerciseSession\.(findMany|findFirst|findUnique|findFirstOrThrow|findUniqueOrThrow|count|aggregate|groupBy)\(([\s\S]{0,240})/g)].map((m) => ({ f, what: m[2].replace(/\s+/g, " ") }))
   );
+  // Re-pinned for D21: Health Connect's record path reads the record kinds alone ('records': kind in HC_RECORD_KINDS,
+  // never a walk) and the import keys it holds ('by clientId', a list of 'hc:' keys).
   const kindOf = (w: string) =>
     /kind: "WALK"/.test(w)
       ? "walks"
       : /kind: "LIFT"/.test(w)
         ? "lifts"
-        : /\bid: \{ in: \w+ \}|where: \{ id(?:: [\w.]+)?, userId \}/.test(w)
-          ? "by id"
-          : /where: \{ userId, clientId \}/.test(w)
-            ? "by clientId"
-            : /^\{ where, orderBy, select: FULL_SELECT \}/.test(w)
-              ? "the view"
-              : /^\{ where, orderBy: \[\{ day: "desc" \}, \{ createdAt: "desc" \}\], select: HEADER_SELECT \}/.test(w)
-                ? "Repeat's source"
-                : "OTHER";
+        : /kind: \{ in: \[\.\.\.HC_RECORD_KINDS\] \}/.test(w)
+          ? "records"
+          : /\bid: \{ in: \w+ \}|where: \{ id(?:: [\w.]+)?, userId \}/.test(w)
+            ? "by id"
+            : /where: \{ userId, clientId(?:: \{ in: \[\.\.\.\w+\] \})? \}/.test(w)
+              ? "by clientId"
+              : /^\{ where, orderBy, select: FULL_SELECT \}/.test(w)
+                ? "the view"
+                : /^\{ where, orderBy: \[\{ day: "desc" \}, \{ createdAt: "desc" \}\], select: HEADER_SELECT \}/.test(w)
+                  ? "Repeat's source"
+                  : "OTHER";
   const odd = reads.filter((r) => kindOf(r.what) === "OTHER");
   eq(
-    "every ExerciseSession read in src is walks only, lifts only, keyed by id or clientId, Repeat's source, or the view's own (none reads a run as a walk, nor a lift as one)",
+    "every ExerciseSession read in src is walks only, lifts only, the record kinds only, keyed by id or clientId, Repeat's source, or the view's own (none reads a run as a walk, nor a lift as one)",
     reads.map((r) => `${r.f}: ${kindOf(r.what)}`),
     [
       "src/lib/exercise-server.ts: the view",
@@ -1568,6 +1609,8 @@ console.log("— readers");
       "src/lib/exercise-server.ts: by id",
       "src/lib/exercise-server.ts: by clientId",
       "src/lib/health-ingest-server.ts: walks",
+      "src/lib/health-ingest-server.ts: by clientId",
+      "src/lib/health-ingest-server.ts: records",
       "src/lib/momentum-server.ts: by id",
       "src/lib/training-server.ts: lifts",
       // refusalOf: a stale lift's guard reads it again by id once closeStaleCore closed nothing (another request did).
@@ -1725,6 +1768,92 @@ async function serverChecks() {
   await prismaIngestStore.sessionsOn("u-hc", [T]);
   check("Health Connect's sessionsOn asks for walks only", (argsOf.get("exerciseSession.findMany")?.[0] as { where: Record<string, unknown> }).where.kind === "WALK");
 
+  // D21: Health Connect's record path. Its match reads the record kinds only (never a walk), with each session's minutes.
+  answer({
+    "exerciseSession.findMany": () => [
+      fullRow("hand", T, { kind: "RUN", distanceKm: 5, durationMin: 30 }),
+      fullRow("imp", T, { kind: "RUN", distanceKm: 5, durationMin: 28, clientId: "hc:a1", startedAt: new Date("2026-10-28T20:00:00.000Z"), endedAt: new Date("2026-10-28T20:28:00.000Z") }),
+      fullRow("open", T, { kind: "LIFT", distanceKm: 0, durationMin: 0, clientId: "k-lift", startedAt: new Date("2026-10-28T21:00:00.000Z"), endedAt: null }),
+      fullRow("gone", T, { kind: "DELETED", distanceKm: 5, durationMin: 30, clientId: "hc:a0" }),
+    ],
+  });
+  const kept = await prismaIngestStore.recordSessionsOn("u-hc", [T], NOW);
+  const keptWhere = (argsOf.get("exerciseSession.findMany")?.[0] as { where: { kind: { in: string[] } } }).where;
+  eq(
+    "Health Connect's recordSessionsOn asks for the record kinds only (never WALK); each with its minutes (an import's, an open lift's up to now), whether it was imported, and a deleted import's row never among them",
+    [keptWhere.kind.in, kept.map((s) => [s.id, s.kind, s.imported, s.at ? [s.at.start.toISOString(), s.at.end.toISOString()] : null])],
+    [
+      RECORD_KINDS,
+      [
+        ["hand", "RUN", false, null],
+        ["imp", "RUN", true, ["2026-10-28T20:00:00.000Z", "2026-10-28T20:28:00.000Z"]],
+        ["open", "LIFT", false, ["2026-10-28T21:00:00.000Z", NOW.toISOString()]],
+      ],
+    ]
+  );
+  answer({ "exerciseSession.findMany": () => [{ clientId: "hc:a1" }] });
+  const keys = await prismaIngestStore.importedKeys("u-hc", ["hc:a1", "hc:a2"]);
+  check("…and importedKeys asks by the import keys alone (a deleted import's kept key among them)", json([...keys]) === json(["hc:a1"]) && json((argsOf.get("exerciseSession.findMany")?.[0] as { where: unknown }).where) === json({ userId: "u-hc", clientId: { in: ["hc:a1", "hc:a2"] } }));
+  answer({ "exerciseSession.findMany": () => Promise.reject(known("P2022")) });
+  const beforeColumns = [await prismaIngestStore.recordSessionsOn("u-hc", [T], NOW), [...(await prismaIngestStore.importedKeys("u-hc", ["hc:a1"]))]];
+  check("…both read nothing before the strength_sets migration (P2022: no key, no import yet), never a throw", json(beforeColumns) === json([[], []]));
+
+  // importSessionCore: one ExerciseSession create under the import's key, with its Health Connect minutes; nothing else.
+  const hcAt = { start: new Date("2026-10-28T20:00:00.000Z"), end: new Date("2026-10-28T20:45:00.000Z") };
+  answer({ "exerciseSession.create": (a) => created(a) });
+  const imported = await importSessionCore("u1", { kind: "LIFT", day: T, durationMin: 45, startedAt: hcAt.start.toISOString(), endedAt: hcAt.end.toISOString(), note: "Lift · Health Connect", clientId: "c-ignored" }, NOW, { clientId: "hc:l1", at: hcAt });
+  const impData = (argsOf.get("exerciseSession.create")?.[0] as { data: Record<string, unknown> } | undefined)?.data ?? {};
+  eq(
+    "importSessionCore: a lift from Health Connect is one ExerciseSession create (kind LIFT, 45 min, no distance, its minutes as startedAt and endedAt, the import's key as the clientId), and nothing else: no movement, no set, no ActivityEvent, no habit",
+    [calls, impData.kind, impData.durationMin, impData.distanceKm, impData.clientId, (impData.startedAt as Date).toISOString(), (impData.endedAt as Date).toISOString(), imported.ok && [imported.value.kind, imported.value.replay, imported.value.clientId]],
+    [["exerciseSession.create"], "LIFT", 45, 0, "hc:l1", hcAt.start.toISOString(), hcAt.end.toISOString(), ["LIFT", false, "hc:l1"]]
+  );
+  answer({ "exerciseSession.create": () => Promise.reject(known("P2002")), "exerciseSession.findFirst": () => fullRow("ex_first", T, { kind: "RUN", distanceKm: 5, durationMin: 45, clientId: "hc:r1" }) });
+  const replayed = await importSessionCore("u1", { kind: "RUN", day: T, distanceKm: 5, durationMin: 45 }, NOW, { clientId: "hc:r1", at: hcAt });
+  check("…a raced resend (P2002): the row its key wrote first, flagged a replay, nothing new written", replayed.ok && replayed.value.id === "ex_first" && replayed.value.replay && json(writes()) === json(["exerciseSession.create"]));
+  answer({ "exerciseSession.create": () => Promise.reject(known("P2002")), "exerciseSession.findFirst": () => fullRow("ex_gone", T, { kind: "DELETED", clientId: "hc:r1" }) });
+  const deletedHere = await importSessionCore("u1", { kind: "RUN", day: T, distanceKm: 5, durationMin: 45 }, NOW, { clientId: "hc:r1", at: hcAt });
+  answer({ "exerciseSession.create": () => Promise.reject(known("P2022")) });
+  const noColumns = await importSessionCore("u1", { kind: "RUN", day: T, distanceKm: 5, durationMin: 45 }, NOW, { clientId: "hc:r1", at: hcAt });
+  answer({});
+  const noDistance = await importSessionCore("u1", { kind: "RUN", day: T, durationMin: 45 }, NOW, { clientId: "hc:r1", at: hcAt });
+  eq(
+    "…a key whose row was deleted here answers IMPORT_DELETED (it stays deleted); the missing columns KINDS_NOT_READY; a run with no distance the core's own line, before any call",
+    [deletedHere, noColumns, noDistance, calls.length],
+    [{ ok: false, error: IMPORT_DELETED }, { ok: false, error: KINDS_NOT_READY }, { ok: false, error: "A distance, please." }, 0]
+  );
+  // An import's stored variant is the one Health Connect named, or none: a kind's fallback (yoga's Hatha) is never guessed.
+  answer({ "exerciseSession.create": (a) => created(a) });
+  await importSessionCore("u1", { kind: "YOGA", day: T, durationMin: 45 }, NOW, { clientId: "hc:y1", at: hcAt });
+  await importSessionCore("u1", { kind: "YOGA", day: T, durationMin: 45, variant: "PILATES" }, NOW, { clientId: "hc:p1", at: hcAt });
+  eq(
+    "…a yoga session from Health Connect with no style is stored with none (its row says Yoga, never a guessed Hatha); pilates keeps the PILATES its type named",
+    (argsOf.get("exerciseSession.create") ?? []).map((a) => (a as { data: { variant: unknown } }).data.variant),
+    [null, "PILATES"]
+  );
+  // An import never counts as a habit, whoever asks: linkRecord refuses it before any read or write.
+  answer({});
+  const hcLink = imported.ok ? await linkRecord("u1", "tpl_gym", imported.value, NOW) : null;
+  eq(
+    "linkRecord: a session Health Connect brought in counts as no habit, whoever asks (no tick, no TASK row), before any read or write",
+    [hcLink, calls],
+    [{ kind: "NOT_COUNTED", error: IMPORT_NOT_COUNTED }, []]
+  );
+  // A hand-made Finish of a lift Health Connect brought in, with "Counts as": refused, never a replay that ticks a habit.
+  answer({
+    "exerciseSession.findFirst": () => fullRow("ex_hc_lift", T, { kind: "LIFT", distanceKm: 0, durationMin: 45, clientId: "hc:abc", startedAt: hcAt.start, endedAt: hcAt.end }),
+    "exerciseEntry.findMany": () => [],
+    "exerciseSet.findMany": () => [],
+    "userMovement.findMany": () => [],
+    "weightGoal.findUnique": () => null,
+  });
+  const hcFinish = await finishLiftCore("u1", { sessionId: "ex_hc_lift" }, NOW, { countsAs: "tpl_gym" });
+  eq(
+    "finishLiftCore on a lift Health Connect brought in, with a 'Counts as': NO_LIFT, no write, and the habit never read or ticked (completeLinkedCore never reached)",
+    [hcFinish, writes(), calls.filter((c) => /^task|^activityEvent/.test(c))],
+    [{ ok: false, error: LIFT_COPY.NO_LIFT }, [], []]
+  );
+
   // logSessionCore: walks and lifts never; one create and nothing else.
   answer({});
   const walk = await logSessionCore("u1", { distanceKm: 3, durationMin: 45 }, NOW);
@@ -1819,19 +1948,22 @@ async function serverChecks() {
   );
   // deleteSessionCore. Re-pinned for the lift logger (phase 4): a record kind's row alone, as before; an id that is not
   // one (a lift, a walk, one gone) then tries the lift branch, one transaction of the lift's sets, its movements and the
-  // LIFT row (exercise-server deleteLiftRows), which deletes nothing for a walk.
+  // LIFT row (exercise-server deleteLiftRows), which deletes nothing for a walk. Re-pinned for D21: first the import's
+  // kept key (keepImportKey, one updateMany that matches only a record kind's import), which touches nothing else.
+  const noImport = { "exerciseSession.updateMany": () => ({ count: 0 }) };
   answer({});
   const gone = await deleteSessionCore("u1", "bad id");
-  answer({ "exerciseSession.deleteMany": () => ({ count: 1 }) });
+  answer({ ...noImport, "exerciseSession.deleteMany": () => ({ count: 1 }) });
   const del = await deleteSessionCore("u1", "ex_1");
   const where = (argsOf.get("exerciseSession.deleteMany")?.[0] as { where: { id: string; userId: string; kind: { in: string[] } } }).where;
   const recordCalls = [...calls];
   const inOrder = (a: unknown) => Promise.all(a as Promise<unknown>[]);
-  answer({ "exerciseSession.deleteMany": () => ({ count: 0 }), "exerciseSet.deleteMany": () => ({ count: 0 }), "exerciseEntry.deleteMany": () => ({ count: 0 }), $transaction: inOrder });
+  answer({ ...noImport, "exerciseSession.deleteMany": () => ({ count: 0 }), "exerciseSet.deleteMany": () => ({ count: 0 }), "exerciseEntry.deleteMany": () => ({ count: 0 }), $transaction: inOrder });
   const walkDel = await deleteSessionCore("u1", "a_walk");
   const liftWhere = (argsOf.get("exerciseSession.deleteMany")?.[1] as { where: Record<string, unknown> } | undefined)?.where;
   const walkCalls = [...calls];
   answer({
+    ...noImport,
     "exerciseSession.deleteMany": (a) => ({ count: (a as { where: { kind: unknown } }).where.kind === "LIFT" ? 1 : 0 }),
     "exerciseSet.deleteMany": () => ({ count: 4 }),
     "exerciseEntry.deleteMany": () => ({ count: 2 }),
@@ -1839,7 +1971,7 @@ async function serverChecks() {
   });
   const liftDel = await deleteSessionCore("u1", "a_lift");
   eq(
-    "deleteSessionCore: a bad id is gone with no call; a record kind's id one deleteMany of that row, for the record kinds only (never WALK, never LIFT there); a walk's id then the lift branch's one transaction (its sets, movements and the LIFT row only), which deletes nothing; a lift's id deletes it with its sets and movements",
+    "deleteSessionCore: a bad id is gone with no call; a record kind's id (no import's) one deleteMany of that row, for the record kinds only (never WALK, never LIFT there); a walk's id then the lift branch's one transaction (its sets, movements and the LIFT row only), which deletes nothing; a lift's id deletes it with its sets and movements",
     [gone, del, where.id, where.userId, where.kind.in, recordCalls, walkDel, walkCalls, liftWhere, liftDel],
     [
       { ok: false, error: "That session is no longer here." },
@@ -1847,12 +1979,21 @@ async function serverChecks() {
       "ex_1",
       "u1",
       RECORD_KINDS.filter((k) => k !== "LIFT"),
-      ["exerciseSession.deleteMany"],
+      ["exerciseSession.updateMany", "exerciseSession.deleteMany"],
       { ok: false, error: "That session is no longer here." },
-      ["exerciseSession.deleteMany", "exerciseSet.deleteMany", "exerciseEntry.deleteMany", "exerciseSession.deleteMany", "$transaction"],
+      ["exerciseSession.updateMany", "exerciseSession.deleteMany", "exerciseSet.deleteMany", "exerciseEntry.deleteMany", "exerciseSession.deleteMany", "$transaction"],
       { id: "a_walk", userId: "u1", kind: "LIFT" },
       { ok: true, value: null },
     ]
+  );
+  // D21: an import's delete keeps its key: one updateMany (kind DELETED, the import's key and the record kinds only), no delete.
+  answer({ "exerciseSession.updateMany": () => ({ count: 1 }) });
+  const importDel = await deleteSessionCore("u1", "ex_hc");
+  const keepArgs = argsOf.get("exerciseSession.updateMany")?.[0] as { where: unknown; data: unknown } | undefined;
+  eq(
+    "…a session Health Connect brought in keeps its key on delete (kind DELETED, so the next sync's resend is a duplicate and it never comes back): one updateMany, for an import's key and the record kinds only, and no row deleted",
+    [importDel, calls, keepArgs?.where, keepArgs?.data],
+    [{ ok: true, value: null }, ["exerciseSession.updateMany"], { id: "ex_hc", userId: "u1", kind: { in: RECORD_KINDS }, clientId: { startsWith: "hc:" } }, { kind: "DELETED" }]
   );
   check("…no call ever reached a database (every one was a recorder)", inPlace());
 }
@@ -1983,6 +2124,18 @@ function uiChecks() {
     "before the migration: the walking card it always was ('Walking', its four totals, 'Recent walks'), with no picker, no every-kind week, no Again, no record row",
     /class="t-eyebrow wt-eyebrow">Walking<\/h2>/.test(html.walkOnly) && text("walkOnly").includes(`Walks ${EXERCISE_FIXTURES.walkOnly.view.week.sessions} Distance`) && text("walkOnly").includes("Recent walks") &&
       !/wt-ex-kinds|wt-ex-sum|Recent sessions|Again:|Log it as/.test(html.walkOnly) && !/Running|Swimming/.test(text("walkOnly"))
+  );
+  // D21: what Health Connect brought in says so on its row; a lift from there is its minutes alone.
+  check(
+    "a run from Health Connect: its row reads 'Running · 5.2 km · 28:40' and 'from Health Connect' after its figures; no other row says so",
+    text("importedRun").includes("Running · 5.2 km · 28:40") && text("importedRun").includes(`5:31 /km · 10.9 km/h · ${IMPORTED_FROM}`) && (text("importedRun").match(/from Health Connect/g) ?? []).length === 1,
+    text("importedRun").slice(0, 400)
+  );
+  check(
+    "a lift from Health Connect: 'Lifting · 45 min', its minutes alone (no movement or set), 'from Health Connect', and its Delete; no fixture without an import says it",
+    text("importedLift").includes(`Lifting · 45 min ${IMPORTED_FROM}`) && /aria-label="Delete this lift"/.test(html.importedLift) && (text("importedLift").match(/from Health Connect/g) ?? []).length === 1 &&
+      (Object.keys(html) as ExerciseFixtureName[]).filter((k) => k !== "importedRun" && k !== "importedLift").every((k) => !text(k).includes(IMPORTED_FROM)),
+    text("importedLift").slice(0, 400)
   );
 
   // SessionForm, kind by kind: the fields its spec asks for and no other.

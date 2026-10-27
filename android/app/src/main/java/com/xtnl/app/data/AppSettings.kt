@@ -41,7 +41,7 @@ data class Prefs(
     val auditLive: Boolean = false,
     /** The notification permission (Android 13+) was asked for once; the app never asks again by itself. */
     val notifyAsked: Boolean = false,
-    /** Settings › Health Connect (blueprint P27, D22): walks, hikes and weight read from Health Connect. Off until the user turns it on. */
+    /** Settings › Health Connect (blueprint P27, D22, widened by health D21): walks, workouts and weight read from Health Connect. Off until the user turns it on. */
     val healthSync: Boolean = false,
     /** When it was switched on (ISO): a walk that started before it is the backfill, recorded on the server, never paid. */
     val healthSince: String? = null,
