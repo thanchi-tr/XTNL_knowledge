@@ -600,7 +600,12 @@ void (async () => {
     );
   const noTimerRow = { ...row("thesis"), proof: { timer: null } } as BoardRow;
   const proofHtml = html(noTimerRow, true);
+  // The running chip reads Date.now() (TimerChip); render it on the fixture's clock (NOW, the timer started 20 min
+  // before), not the wall clock, or the label reads hours once the real day passes NOW (a time bomb, 2026-10-27).
+  const realNow = Date.now;
+  Date.now = () => NOW.getTime();
   const runningHtml = html(row("thesis"), true);
+  Date.now = realNow;
   const choreHtml = html(row("dishes"), true);
   const choreOff = html(off.find((r) => r.template.id === "dishes")!, false);
   check("a proof row draws 'Start timer' and says 'log the minutes'", /Start timer/.test(proofHtml) && /log the minutes/.test(proofHtml) && /class="r-act r-timer"/.test(proofHtml));

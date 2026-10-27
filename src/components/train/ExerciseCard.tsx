@@ -7,8 +7,11 @@
  *
  *   week     walking only: this week's walks, distance, time and climb. Every kind: the sessions, the time, the WHO
  *            effort minutes and strength days, and the kinds logged (ExerciseWeek.tsx), a record of the week
- *   kinds    a chip per kind (44 px); the walk form is the one it always was, LIFT says the set logger is next, and
- *            every other kind takes SessionForm (a record: it pays nothing, and says so). An "Again" chip fills the
+ *   kinds    a chip per kind (44 px); the walk form is the one it always was, LIFT is the set logger (LiftLogger:
+ *            a record, D12, D14) once the lift tables are there (lift.ready; before them it says the logger is next,
+ *            and a failed read says so), and every other kind takes SessionForm (a record: it pays nothing, and says
+ *            so). An open lift opens the card on Lift; the logger stays mounted (hidden) while another kind is
+ *            picked, so its rest timer, rows and Keep answers survive the switch. An "Again" chip fills the
  *            last session of the kind on today's date; a walk faster than a walk offers "Log it as a run?" (its
  *            angle goes over as the run's incline, and a run's incline back as the walk's angle)
  *   log      the incline angle in degrees (with quick chips and its treadmill grade), the distance, the duration and
@@ -24,7 +27,9 @@
  * XP, and Delete says whether it takes the pay back (logged today) or the pay stays.
  *
  * `actions` are the server actions (page) or fakes (fixtures); `initial` opens a fixture on a kind, a draft, a saved
- * line, More open or a row's Sure? step. Only the walk marks its paid XP; a record kind never marks, chimes or enqueues.
+ * line, More open or a row's Sure? step (and `initial.lift` the logger on a state). `lift` and `liftActions` are the
+ * lift view and its actions (actions/training.ts), or fakes. Only the walk marks its paid XP; a record kind never
+ * marks, chimes or enqueues, and neither does the lift logger.
  */
 import { useId, useMemo, useState, useTransition, type FormEvent } from "react";
 import { addDays, type DayKey } from "@/lib/life-day";
@@ -63,8 +68,11 @@ import {
   type WalkPay,
 } from "@/lib/exercise";
 import type { ExerciseView } from "@/lib/exercise-server";
+import type { LiftView } from "@/lib/training-server";
 import { SessionWeekSummary } from "./ExerciseWeek";
 import { SessionForm, type FormKind, type LogSessionAction, type SessionDraft } from "./SessionForm";
+import { LiftLogger, type LiftLoggerInitial } from "./LiftLogger";
+import { LIFT_COPY, type LiftActions } from "./lift-model";
 
 export interface ExerciseActions {
   logWalk: (input: {
@@ -90,6 +98,8 @@ export interface ExerciseCardInitial {
   more?: boolean;
   /** A listed session's id: its Delete opens on "Sure?". */
   confirm?: string;
+  /** The lift logger's opening state. */
+  lift?: LiftLoggerInitial;
 }
 
 /** The picker's words: one short word a kind. */
@@ -141,12 +151,26 @@ function dayWords(day: DayKey, today: DayKey): string {
   return `${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d} ${MONTHS[m - 1]}`;
 }
 
-export function ExerciseCard({ view, actions, initial }: { view: ExerciseView; actions: ExerciseActions; initial?: ExerciseCardInitial }) {
+export function ExerciseCard({
+  view,
+  actions,
+  initial,
+  lift = null,
+  liftActions,
+}: {
+  view: ExerciseView;
+  actions: ExerciseActions;
+  initial?: ExerciseCardInitial;
+  /** The lift logger's view (training-server loadLiftView); null or absent: Lift says the logger is next. */
+  lift?: LiftView | null;
+  liftActions?: LiftActions;
+}) {
   const id = useId();
   const today = view.today;
   const kinds = view.kindsReady === true;
+  const liftReady = kinds && lift != null && lift.ready && liftActions != null;
   const walkFirst = !initial?.kind || initial.kind === "WALK";
-  const [kind, setKind] = useState<ExerciseKind>(kinds ? (initial?.kind ?? "WALK") : "WALK");
+  const [kind, setKind] = useState<ExerciseKind>(kinds ? (initial?.kind ?? (liftReady && lift?.open ? "LIFT" : "WALK")) : "WALK");
   // The record form's draft and a counter that remounts it (a new kind picked, a draft carried over).
   const [seed, setSeed] = useState<{ n: number; draft?: SessionDraft; saved?: string }>({ n: 0, draft: initial?.draft, saved: initial?.saved });
   const [angle, setAngle] = useState(walkFirst && initial?.draft?.angle ? initial.draft.angle : "0");
@@ -377,7 +401,7 @@ export function ExerciseCard({ view, actions, initial }: { view: ExerciseView; a
       {kind === "WALK" ? (
         walkForm
       ) : kind === "LIFT" ? (
-        <p className="t-meta wt-ex-note">{SESSION_RECORD_COPY.LIFT_NEXT}</p>
+        liftReady ? null : <p className="t-meta wt-ex-note">{lift?.failed ? LIFT_COPY.NOT_LOADED : SESSION_RECORD_COPY.LIFT_NEXT}</p>
       ) : (
         <SessionForm
           key={`${kind}:${seed.n}`}
@@ -392,6 +416,11 @@ export function ExerciseCard({ view, actions, initial }: { view: ExerciseView; a
           disabled={pending}
           more={seed.n === 0 && initial?.more === true}
         />
+      )}
+      {liftReady && lift && liftActions && (
+        <div hidden={kind !== "LIFT"}>
+          <LiftLogger view={lift} today={today} link={view.live ? (view.link ?? null) : null} actions={liftActions} initial={initial?.lift} />
+        </div>
       )}
       {kind !== "WALK" && error && (
         <p className="t-meta wt-msg" role="alert">

@@ -24,27 +24,61 @@
  * next", and walking only before the migration). Log answers
  * with the line the server would give for what was typed (cleanSessionInput,
  * sessionRefusalOf, and "Counts as" as counted) and saves nothing.
+ *
+ * Lift (health-2026-10-27.md phase 4): the card on Lift in each LIFT_FIXTURES
+ * state (data-state="lift-<name>": Repeat, the ghosts, a warm-up, plate math
+ * with the steppers, a drop chain, the rest timer, the Big jump question,
+ * bodyweight movements with and without a weigh-in, the kind menu, Records,
+ * the movement search, the user's own movement and the new-movement form,
+ * Finish, the summary with a new best, a held 2x set, not ready, failed).
+ * The fakes save nothing: each fixture keeps its lift in memory for as long
+ * as the page is open and answers as the server would (training.ts
+ * cleanSetInput, bigJumpOf against the fixture history, restAfterOf,
+ * liftMomentsOf at Finish), so the logger can be clicked through.
  */
+import { useMemo } from "react";
 import { WeightCard } from "@/components/train/WeightCard";
 import {
   EXERCISE_FIXTURES,
   EXERCISE_FIXTURE_TODAY,
   FIXTURE_TODAY,
+  LIFT_FIXTURES,
+  LIFT_FIXTURE_HISTORY,
   MIND_DRAFT,
   MIND_FIXTURES,
   MIND_FIXTURE_TODAY,
   WEIGHT_FIXTURES,
   type ExerciseFixtureName,
+  type LiftFixture,
+  type LiftFixtureName,
   type MindFixture,
   type MindFixtureName,
   type WeightFixtureName,
 } from "@/components/train/fixtures";
 import type { WeightActions } from "@/components/train/types";
 import { ExerciseCard, type ExerciseActions } from "@/components/train/ExerciseCard";
+import { liftResolverOf, nowMs, type LiftActions } from "@/components/train/lift-model";
+import { cleanUserMovementInput, normNameOf, userMovementKey } from "@/lib/training-library";
+import {
+  bigJumpLineOf,
+  bigJumpOf,
+  chainHeadOf,
+  cleanSetInput,
+  finishMinutesOf,
+  jumpBaselineOf,
+  liftMomentsOf,
+  repsOnlyOf,
+  restAfterOf,
+  sessionSummaryOf,
+  summaryLinesOf,
+  type JumpAnswer,
+  type LiftSet,
+} from "@/lib/training";
+import type { FinishedLift, LiftEntryView, LiftSessionView, LiftSetView, UserMovementView } from "@/lib/training-server";
 import { MonthDoneCard } from "@/components/task-style/MonthDoneCard";
 import { TaskMonth } from "@/components/task-style/TaskMonth";
 import { TaskStylePicker } from "@/components/task-style/TaskStylePicker";
-import { cleanSessionInput, exerciseWeekOf, sessionRefusalOf, type ExerciseSessionView } from "@/lib/exercise";
+import { cleanSessionInput, exerciseWeekOf, sessionLoggedLineOf, sessionRefusalOf, type ExerciseSessionView, type SessionView } from "@/lib/exercise";
 import type { MonthDoneTask } from "@/lib/task-style";
 import { MindCard, MindOff } from "@/components/mind/MindCard";
 import { CheckInStrip } from "@/components/mind/CheckInStrip";
@@ -154,6 +188,187 @@ export function ExerciseStyleFixtures() {
         </p>
         <MonthDoneCard today={EX_TODAY} initial={MONTH} load={async (month) => ({ ok: true, value: month === "2026-10" ? MONTH : { month, days: {} } })} />
       </div>
+    </div>
+  );
+}
+
+/** The fakes for one lift fixture: its lift kept in memory while the page is open, answered as the server would. */
+function liftFakesOf(f: LiftFixture): LiftActions {
+  const view = f.lift;
+  const unit = view.unit;
+  let seq = 0;
+  const next = (p: string) => `fx-${p}-${++seq}`;
+  const own: UserMovementView[] = [...view.movements];
+  const resolve = (key: string) => liftResolverOf(own)(key);
+  let lift: LiftSessionView | null = view.open ? { ...view.open, entries: view.open.entries.map((e) => ({ ...e, sets: [...e.sets] })) } : null;
+  let ended: LiftSessionView | null = f.ended ?? null;
+  // The fixtures' own clock: three minutes a set on from the fixture lift's last instant (its day is not today's).
+  let clock = Math.max(...[view.open?.startedAt, ...(view.open?.entries.flatMap((e) => e.sets.map((s) => s.doneAt)) ?? [])].map((x) => (x ? Date.parse(x) : 0)));
+  const tick = () => (clock = Math.max(nowMs(), clock + 3 * 60_000));
+  const entryOf = (id: string) => lift?.entries.find((e) => e.id === id) ?? null;
+  const setOf = (id: string) => lift?.entries.flatMap((e) => e.sets).find((s) => s.id === id) ?? null;
+  const jumpOf = (s: LiftSet, e: LiftEntryView) => {
+    const m = resolve(e.movementKey);
+    const jump = m ? bigJumpOf(s, m, e.bodyKg, jumpBaselineOf(LIFT_FIXTURE_HISTORY, e.movementKey, view.today, resolve)) : null;
+    return { jump, jumpLine: jump && m ? bigJumpLineOf(jump, m.load, unit) : null };
+  };
+  const finishedOf = (s: LiftSessionView, answers: Record<string, JumpAnswer>, replay: boolean): FinishedLift => {
+    const answered = { ...s, entries: s.entries.map((e) => ({ ...e, sets: e.sets.map((x) => (answers[x.id] ? { ...x, jumpAnswer: answers[x.id] } : x)) })) };
+    const lm = liftMomentsOf([...LIFT_FIXTURE_HISTORY, answered], unit, resolve);
+    const moments = lm.moments.get(s.id) ?? [];
+    const held = lm.held.get(s.id) ?? [];
+    const session: SessionView = {
+      id: s.id,
+      kind: "LIFT",
+      day: s.day,
+      angleDeg: 0,
+      distanceKm: 0,
+      durationMin: s.durationMin,
+      note: null,
+      variant: null,
+      label: s.label,
+      poolM: null,
+      avgWatts: null,
+      avgHr: null,
+      maxHr: null,
+      sessionRpe: null,
+      startedAt: s.startedAt,
+      endedAt: s.endedAt,
+      clientId: null,
+    };
+    const refusal = sessionRefusalOf(session);
+    const link = refusal ? null : { kind: "COUNTED" as const, title: "Gym session" };
+    const summary = sessionSummaryOf(s, resolve);
+    return { session, by: null, refusal, link, replay, unit, summary, moments, held, records: [], line: sessionLoggedLineOf(session, refusal, link), lines: summaryLinesOf(summary, unit, moments, held) };
+  };
+  return {
+    startLift: async (input) => {
+      await wait();
+      const from = input.repeat ? (view.recent.find((r) => r.id === input.repeat) ?? null) : null;
+      const id = next("lift");
+      const entries = (from?.movements ?? []).map((x, i): LiftEntryView => {
+        const m = resolve(x.movementKey);
+        return { id: `${id}-e${i + 1}`, movementKey: x.movementKey, ord: i + 1, groupNo: null, bodyKg: m?.load === "BW" ? (view.body?.kg ?? null) : null, note: null, sets: [] };
+      });
+      lift = { id, day: view.today, label: from?.label ?? null, startedAt: new Date(tick()).toISOString(), endedAt: null, durationMin: 0, backfill: false, entries };
+      return { ok: true, value: { session: lift, replay: false, already: false, closed: [] } };
+    },
+    addLiftEntry: async (input) => {
+      await wait();
+      const m = resolve(input.movementKey);
+      if (!lift || !m) return { ok: false, error: "Pick a movement from the list." };
+      const bodyKg = m.load === "BW" ? (view.body?.kg ?? null) : null;
+      const entry: LiftEntryView = { id: next("e"), movementKey: input.movementKey, ord: lift.entries.length + 1, groupNo: null, bodyKg, note: null, sets: [] };
+      lift.entries.push(entry);
+      return { ok: true, value: { entry, replay: false, repsOnly: repsOnlyOf(m, bodyKg) } };
+    },
+    removeLiftEntry: async (entryId) => {
+      await wait();
+      if (lift) lift.entries = lift.entries.filter((e) => e.id !== entryId);
+      return { ok: true, value: { deleted: true, sets: 0 } };
+    },
+    logLiftSet: async (input) => {
+      await wait();
+      const e = entryOf(input.entryId);
+      const m = e ? resolve(e.movementKey) : null;
+      if (!e || !m) return { ok: false, error: "That movement is no longer in this lift." };
+      const links = e.sets.map((x) => ({ ord: x.ord, kind: x.kind, chainOf: x.chainOf }));
+      const kind = input.kind ?? "WORKING";
+      const prev = links[links.length - 1];
+      const chainOf = (kind === "DROP" || kind === "MINI") && prev ? chainHeadOf(prev) : null;
+      const clean = cleanSetInput({ ...input, ord: links.reduce((n, x) => Math.max(n, x.ord), 0) + 1, kind, chainOf }, { movement: m, unit, others: links, bodyKg: e.bodyKg });
+      if (!clean.ok) return clean;
+      const set: LiftSetView = { id: next("s"), entryId: e.id, ...clean.value, clientId: input.clientId, doneAt: new Date(tick()).toISOString(), afterFinish: false };
+      e.sets.push(set);
+      return { ok: true, value: { set, replay: false, ...jumpOf(set, e), restSec: restAfterOf(set.kind, null, m) } };
+    },
+    confirmLiftSet: async (input) => {
+      await wait();
+      return { ok: true, value: { setId: input.setId, jump: null, jumpLine: null, answer: input.answer, counts: true } };
+    },
+    editLiftSet: async (input) => {
+      await wait();
+      const s = setOf(input.setId);
+      const e = s ? entryOf(s.entryId) : null;
+      const m = e ? resolve(e.movementKey) : null;
+      if (!s || !e || !m) return { ok: false, error: "That set is no longer here." };
+      const others = e.sets.filter((x) => x.id !== s.id).map((x) => ({ ord: x.ord, kind: x.kind, chainOf: x.chainOf }));
+      const clean = cleanSetInput({ ...s, ...input }, { movement: m, unit, others, bodyKg: e.bodyKg });
+      if (!clean.ok) return clean;
+      const set: LiftSetView = { ...s, ...clean.value, restSec: s.restSec };
+      e.sets = e.sets.map((x) => (x.id === s.id ? set : x));
+      return { ok: true, value: { set, ...jumpOf(set, e) } };
+    },
+    deleteLiftSet: async (setId) => {
+      await wait();
+      for (const e of lift?.entries ?? []) e.sets = e.sets.filter((x) => x.id !== setId);
+      return { ok: true, value: { deleted: true } };
+    },
+    finishLift: async (input) => {
+      await wait();
+      const answers = input.answers ?? {};
+      if (ended && ended.id === input.sessionId) return { ok: true, value: finishedOf(ended, answers, true) };
+      if (!lift || lift.id !== input.sessionId) return { ok: false, error: "That lift is no longer here." };
+      const sets = lift.entries.flatMap((e) => e.sets);
+      if (sets.length === 0) return { ok: false, error: "No sets yet. Log a set, or discard this lift." };
+      const end = tick();
+      const lastSetAt = sets.reduce((n, x) => Math.max(n, Date.parse(x.doneAt)), 0);
+      const { minutes } = finishMinutesOf({ startedAt: lift.startedAt, endedAt: end, lastSetAt, reportedMin: input.reportedMin ?? null });
+      ended = { ...lift, label: input.label !== undefined ? input.label : lift.label, endedAt: new Date(end).toISOString(), durationMin: minutes };
+      lift = null;
+      return { ok: true, value: finishedOf(ended, answers, false) };
+    },
+    discardLift: async () => {
+      await wait();
+      lift = null;
+      return { ok: true, value: { discarded: true } };
+    },
+    createMovement: async (input) => {
+      await wait();
+      const clean = cleanUserMovementInput(input, new Set(own.filter((m) => !m.archived).map((m) => normNameOf(m.name))));
+      if (!clean.ok) return clean;
+      const id = next("m");
+      const v = clean.value;
+      const made: UserMovementView = {
+        id,
+        key: userMovementKey(id),
+        name: v.name,
+        pattern: v.pattern,
+        equipment: v.equipment,
+        primaryMuscles: v.primaryMuscles,
+        secondaryMuscles: v.secondaryMuscles,
+        load: v.load,
+        bodyFraction: v.bodyFraction,
+        unilateral: v.unilateral,
+        stepKg: v.stepKg,
+        restSec: v.restSec,
+        archived: false,
+      };
+      own.push(made);
+      return { ok: true, value: made };
+    },
+  };
+}
+
+/** The card on Lift in each LIFT_FIXTURES state, each with its own fakes. */
+export function LiftStyleFixtures() {
+  const fakes = useMemo(() => Object.fromEntries((Object.keys(LIFT_FIXTURES) as LiftFixtureName[]).map((k) => [k, liftFakesOf(LIFT_FIXTURES[k])])) as Record<LiftFixtureName, LiftActions>, []);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <p className="t-meta" style={{ margin: 0 }}>
+        Lift, on {LIFT_FIXTURES.start.lift.today}. The fakes keep each lift in memory while this page is open and save nothing.
+      </p>
+      {(Object.keys(LIFT_FIXTURES) as LiftFixtureName[]).map((k) => {
+        const f = LIFT_FIXTURES[k];
+        return (
+          <div key={k} data-state={`lift-${k}`}>
+            <p className="t-eyebrow" style={{ margin: "0 0 8px" }}>
+              {f.label}
+            </p>
+            <ExerciseCard view={f.view} actions={FAKE_EX} initial={f.initial} lift={f.lift} liftActions={fakes[k]} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -284,6 +499,8 @@ export function TrainFixtures({ state = null }: { state?: string | null }) {
       <MindFixtures state={state} />
       <div style={{ height: 24 }} />
       <ExerciseStyleFixtures />
+      <div style={{ height: 24 }} />
+      <LiftStyleFixtures />
       <div style={{ display: "flex", flexDirection: "column", gap: 24, marginTop: 24 }}>
         {(Object.keys(WEIGHT_FIXTURES) as WeightFixtureName[]).map((k) => (
           <div key={k}>

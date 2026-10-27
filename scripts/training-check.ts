@@ -1382,7 +1382,13 @@ function walkRegionOf(src: string): string {
     ["src/lib/exercise-server.ts: userId, templateId, day: s.day, workoutId: s.id, minutes: Math.round(s.durationMin), at: now", "src/lib/exercise-server.ts: userId, templateId, day: s.day, workoutId: s.id, minutes: Math.max(1, Math.round(s.durationMin)), at: now, asTick: true"]
   );
   const del = codeOf(decls.get("deleteSessionCore") ?? "");
-  check("deleteSessionCore deletes the row alone, and only a kind logSessionCore writes (never a walk, whose pay comes back first, nor a lift, whose sets go with it)", /prisma\.exerciseSession\.deleteMany\(\{ where: \{ id, userId, kind: \{ in: \[\.\.\.SESSION_CORE_KINDS\] \} \} \}\)/.test(del) && /invalidate\("exercise"\);/.test(del));
+  // Re-pinned for the lift logger (phase 4): a lift's delete takes its movements and sets in one transaction.
+  const delLift = codeOf(decls.get("deleteLiftRows") ?? "");
+  check(
+    "deleteSessionCore deletes a kind logSessionCore writes as the row alone, and a lift with its movements and sets in one transaction (deleteLiftRows: the LIFT row only); never a walk, whose pay comes back first (deleteExerciseCore); no ledger row either way",
+    /prisma\.exerciseSession\.deleteMany\(\{ where: \{ id, userId, kind: \{ in: \[\.\.\.SESSION_CORE_KINDS\] \} \} \}\)/.test(del) && /invalidate\("exercise"\);/.test(del) && /return \(await deleteLiftRows\(userId, id\)\) \? \{ ok: true, value: null \} : \{ ok: false, error: GONE \};/.test(del) &&
+      /prisma\.exerciseSession\.deleteMany\(\{ where: \{ id, userId, kind: "LIFT" \} \}\)/.test(delLift) && /prisma\.exerciseSet\.deleteMany\(\{ where: \{ userId, sessionId: id \} \}\)/.test(delLift) && /prisma\.exerciseEntry\.deleteMany\(\{ where: \{ userId, sessionId: id \} \}\)/.test(delLift) && !LEDGER_WRITES.test(delLift)
+  );
   const actions = read("src/app/actions/exercise.ts");
   const ad = declsOf(actions);
   check(
@@ -1529,14 +1535,30 @@ console.log("— readers");
   check("…its pay lookups are walks' ids only (a record has no pay to show)", /const ids = sessions\.filter\(isWalk\)\.map\(\(s\) => s\.id\);/.test(decls.get("loadWalkMomentum") ?? ""));
   check("H3: the hand-log twin guard (importedWalksOn) reads walks only: a run is never a walk's twin", /where: \{ userId, day: dateColumn\(day\), kind: "WALK" \}/.test(decls.get("importedWalksOn") ?? ""));
   check("H3: Health Connect's match (health-ingest-server sessionsOn) reads walks only", /where: \{ userId, day: \{ in: days\.map\(dateColumn\) \}, kind: "WALK" \}/.test(code("src/lib/health-ingest-server.ts")));
-  // Every ExerciseSession read in src: walks only, keyed by id or clientId, or the view's own (every kind; its week walks).
+  // Every ExerciseSession read in src: walks only, lifts only (the lift logger, training-server.ts: phase 4), keyed by id
+  // or clientId, Repeat's source (a lift either way, checked below), or the view's own (every kind; its week walks).
+  // Re-pinned for the lift logger (phase 4): the 'lifts' and "Repeat's source" classes, and a by-id read keyed by a
+  // named id (`{ id: sessionId, userId }`); each of those reads in training-server checks the row is a LIFT before use.
   const reads = srcFiles().flatMap((f) =>
     [...readCode(f).matchAll(/exerciseSession\.(findMany|findFirst|findUnique|findFirstOrThrow|findUniqueOrThrow|count|aggregate|groupBy)\(([\s\S]{0,240})/g)].map((m) => ({ f, what: m[2].replace(/\s+/g, " ") }))
   );
-  const kindOf = (w: string) => (/kind: "WALK"/.test(w) ? "walks" : /\bid: \{ in: \w+ \}|where: \{ id, userId \}/.test(w) ? "by id" : /where: \{ userId, clientId \}/.test(w) ? "by clientId" : /^\{ where, orderBy, select: FULL_SELECT \}/.test(w) ? "the view" : "OTHER");
+  const kindOf = (w: string) =>
+    /kind: "WALK"/.test(w)
+      ? "walks"
+      : /kind: "LIFT"/.test(w)
+        ? "lifts"
+        : /\bid: \{ in: \w+ \}|where: \{ id(?:: [\w.]+)?, userId \}/.test(w)
+          ? "by id"
+          : /where: \{ userId, clientId \}/.test(w)
+            ? "by clientId"
+            : /^\{ where, orderBy, select: FULL_SELECT \}/.test(w)
+              ? "the view"
+              : /^\{ where, orderBy: \[\{ day: "desc" \}, \{ createdAt: "desc" \}\], select: HEADER_SELECT \}/.test(w)
+                ? "Repeat's source"
+                : "OTHER";
   const odd = reads.filter((r) => kindOf(r.what) === "OTHER");
   eq(
-    "every ExerciseSession read in src is walks only, keyed by id or clientId, or the view's own (none reads a run as a walk)",
+    "every ExerciseSession read in src is walks only, lifts only, keyed by id or clientId, Repeat's source, or the view's own (none reads a run as a walk, nor a lift as one)",
     reads.map((r) => `${r.f}: ${kindOf(r.what)}`),
     [
       "src/lib/exercise-server.ts: the view",
@@ -1547,9 +1569,27 @@ console.log("— readers");
       "src/lib/exercise-server.ts: by clientId",
       "src/lib/health-ingest-server.ts: walks",
       "src/lib/momentum-server.ts: by id",
+      "src/lib/training-server.ts: lifts",
+      // refusalOf: a stale lift's guard reads it again by id once closeStaleCore closed nothing (another request did).
+      "src/lib/training-server.ts: by id",
+      "src/lib/training-server.ts: by id",
+      "src/lib/training-server.ts: lifts",
+      "src/lib/training-server.ts: Repeat's source",
+      "src/lib/training-server.ts: by clientId",
+      "src/lib/training-server.ts: lifts",
+      // addEntryCore, deleteEntryCore, logSetCore (the lift given, or the movement's), confirmSetCore, editSetCore,
+      // finishLiftCore (the read, and the re-read after a raced Finish), discardLiftCore.
+      ...Array.from({ length: 9 }, () => "src/lib/training-server.ts: by id"),
     ]
   );
   check("…none unclassified", odd.length === 0, odd.map((r) => `${r.f}: ${r.what.slice(0, 80)}`).join(" | "));
+  const ts = declsOf(read("src/lib/training-server.ts"));
+  check(
+    "…training-server's Repeat source is a LIFT either way (the newest finished one, or one by id), and its clientId and by-id reads check the row is a LIFT before use",
+    /const where: Prisma\.ExerciseSessionWhereInput = repeat === true \? \{ userId, kind: "LIFT", endedAt: \{ not: null \} \} : \{ id: repeat, userId, kind: "LIFT" \};/.test(ts.get("readRepeatSource") ?? "") &&
+      /if \(prior && prior\.kind === "LIFT"\) return/.test(ts.get("startLiftCore") ?? "") && /if \(!s \|\| s\.kind !== "LIFT"\) return LIFT_COPY\.NO_LIFT;/.test(ts.get("openErrorOf") ?? "") &&
+      /if \(!row \|\| row\.kind !== "LIFT" \|\| !row\.startedAt\) return fail\(LIFT_COPY\.NO_LIFT\);/.test(ts.get("finishLiftCore") ?? "") && /if \(!found \|\| found\.kind !== "LIFT"\) return fail\(LIFT_COPY\.NO_LIFT\);/.test(ts.get("logSetCore") ?? "")
+  );
   const raw = srcFiles().filter((f) => /"ExerciseSession"/.test(readCode(f)));
   const comp = code("src/lib/competency-server.ts");
   check(
@@ -1777,18 +1817,42 @@ async function serverChecks() {
     linked.ok && linked.value.kind === "SWIM" && json(linked.value.link) === json({ kind: "NOT_COUNTED", error: "Couldn't count it as the habit." }) && calls.includes("taskTemplate.findFirst") && json(writes()) === json(["exerciseSession.create"]) && logged.length === before + 1 && /a session wasn't counted as its habit/.test(logged[logged.length - 1] ?? ""),
     `${json(linked.ok && linked.value.link)} · ${calls.join(", ")}`
   );
-  // deleteSessionCore.
+  // deleteSessionCore. Re-pinned for the lift logger (phase 4): a record kind's row alone, as before; an id that is not
+  // one (a lift, a walk, one gone) then tries the lift branch, one transaction of the lift's sets, its movements and the
+  // LIFT row (exercise-server deleteLiftRows), which deletes nothing for a walk.
   answer({});
   const gone = await deleteSessionCore("u1", "bad id");
   answer({ "exerciseSession.deleteMany": () => ({ count: 1 }) });
   const del = await deleteSessionCore("u1", "ex_1");
   const where = (argsOf.get("exerciseSession.deleteMany")?.[0] as { where: { id: string; userId: string; kind: { in: string[] } } }).where;
-  answer({ "exerciseSession.deleteMany": () => ({ count: 0 }) });
+  const recordCalls = [...calls];
+  const inOrder = (a: unknown) => Promise.all(a as Promise<unknown>[]);
+  answer({ "exerciseSession.deleteMany": () => ({ count: 0 }), "exerciseSet.deleteMany": () => ({ count: 0 }), "exerciseEntry.deleteMany": () => ({ count: 0 }), $transaction: inOrder });
   const walkDel = await deleteSessionCore("u1", "a_walk");
+  const liftWhere = (argsOf.get("exerciseSession.deleteMany")?.[1] as { where: Record<string, unknown> } | undefined)?.where;
+  const walkCalls = [...calls];
+  answer({
+    "exerciseSession.deleteMany": (a) => ({ count: (a as { where: { kind: unknown } }).where.kind === "LIFT" ? 1 : 0 }),
+    "exerciseSet.deleteMany": () => ({ count: 4 }),
+    "exerciseEntry.deleteMany": () => ({ count: 2 }),
+    $transaction: inOrder,
+  });
+  const liftDel = await deleteSessionCore("u1", "a_lift");
   eq(
-    "deleteSessionCore: a bad id is gone with no call; otherwise one deleteMany of that id, for the record kinds only (never WALK, never LIFT); a walk's id deletes nothing",
-    [gone, del, where.id, where.userId, where.kind.in, walkDel, calls],
-    [{ ok: false, error: "That session is no longer here." }, { ok: true, value: null }, "ex_1", "u1", RECORD_KINDS.filter((k) => k !== "LIFT"), { ok: false, error: "That session is no longer here." }, ["exerciseSession.deleteMany"]]
+    "deleteSessionCore: a bad id is gone with no call; a record kind's id one deleteMany of that row, for the record kinds only (never WALK, never LIFT there); a walk's id then the lift branch's one transaction (its sets, movements and the LIFT row only), which deletes nothing; a lift's id deletes it with its sets and movements",
+    [gone, del, where.id, where.userId, where.kind.in, recordCalls, walkDel, walkCalls, liftWhere, liftDel],
+    [
+      { ok: false, error: "That session is no longer here." },
+      { ok: true, value: null },
+      "ex_1",
+      "u1",
+      RECORD_KINDS.filter((k) => k !== "LIFT"),
+      ["exerciseSession.deleteMany"],
+      { ok: false, error: "That session is no longer here." },
+      ["exerciseSession.deleteMany", "exerciseSet.deleteMany", "exerciseEntry.deleteMany", "exerciseSession.deleteMany", "$transaction"],
+      { id: "a_walk", userId: "u1", kind: "LIFT" },
+      { ok: true, value: null },
+    ]
   );
   check("…no call ever reached a database (every one was a recorder)", inPlace());
 }
@@ -2065,9 +2129,10 @@ function uiChecks() {
 function chainChecks() {
   console.log("— chain");
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
+  // Re-pinned for the lift logger (phase 4): lift-check runs right after this one.
   check(
-    "life:check runs this check right after exercise-style-check, before subtasks-check; npm run training:check runs it alone",
-    pkg.scripts["life:check"].includes("tsx scripts/exercise-style-check.ts && tsx scripts/training-check.ts && tsx scripts/subtasks-check.ts") && pkg.scripts["training:check"] === "tsx scripts/training-check.ts"
+    "life:check runs this check right after exercise-style-check, then lift-check, before subtasks-check; npm run training:check runs it alone",
+    pkg.scripts["life:check"].includes("tsx scripts/exercise-style-check.ts && tsx scripts/training-check.ts && tsx scripts/lift-check.ts && tsx scripts/subtasks-check.ts") && pkg.scripts["training:check"] === "tsx scripts/training-check.ts"
   );
 }
 

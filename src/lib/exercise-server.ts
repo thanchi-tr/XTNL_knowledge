@@ -37,8 +37,11 @@
  *                                            moments a manual tick returns (a streak milestone, a habit rung, the
  *                                            BODY quest done); the record has no moments of its own
  *   deleteSessionCore(userId, id)          → { ok, value: null } | { ok: false, error }  a record's delete: the row
- *                                            alone, since nothing was paid (a walk's delete is deleteExerciseCore's);
+ *                                            alone, since nothing was paid (a walk's delete is deleteExerciseCore's), and
+ *                                            a lift's with its movements and sets in one transaction (deleteLiftRows);
  *                                            the view names the habit a record ticked (view.counted), which stays
+ * A lift is written by the set logger (training-server.ts): logSessionCore never writes one, and the view leaves out a
+ * lift still open (isListed), which is the logger's until Finish ends it.
  * The added columns (migration 20270104000000_strength_sets) may be missing on a database it has not reached: the
  * view then falls back to the walk-only read (kindsReady false: the card is the walking card it always was), and
  * logSessionCore says so in one plain line (KINDS_NOT_READY). A walk never reads or writes an added column.
@@ -283,6 +286,12 @@ const sessionViewOf = (r: FullRow): SessionView => ({
 const isWalk = (s: { kind: string }): boolean => s.kind === "WALK";
 
 /**
+ * A lift still open (started, not ended) is the lift logger's (training-server.ts), not a record yet: the list, the
+ * week and its Delete never show it as a "0 min" lift. It is listed once Finish (or a lazy close) ends it.
+ */
+const isListed = (s: SessionView): boolean => !(s.kind === "LIFT" && s.startedAt != null && s.endedAt == null);
+
+/**
  * Before the strength_sets migration the full read fails on every load (a wasted round trip): once it has, the view
  * reads walks only for this long, then tries the full read again (so the kinds appear soon after the migration).
  */
@@ -300,7 +309,7 @@ export async function loadExerciseView(userId: string, now: Date = new Date(), o
       if (Date.now() >= columnsMissingUntil) {
         try {
           const rows = await prisma.exerciseSession.findMany({ where, orderBy, select: FULL_SELECT });
-          sessions = rows.filter((r) => isExerciseKind(r.kind)).map(sessionViewOf);
+          sessions = rows.filter((r) => isExerciseKind(r.kind)).map(sessionViewOf).filter(isListed);
           kindsReady = true;
         } catch (err) {
           if (!isMissingSessionColumns(err)) throw err;
@@ -874,9 +883,10 @@ async function sessionByClientId(userId: string, clientId: string): Promise<Sess
 
 /**
  * The habit a record session's first save ticked (its done instance carries the session's id), or null: a resend
- * answers from that habit. On the (userId, day) index. Fail soft: null.
+ * answers from that habit (a lift's repeated Finish too, training-server finishLiftCore). On the (userId, day) index.
+ * Fail soft: null.
  */
-async function habitCountedBy(userId: string, s: SessionView): Promise<string | null> {
+export async function habitCountedBy(userId: string, s: SessionView): Promise<string | null> {
   const rows = await prisma.taskInstance.findMany({ where: { userId, day: dateColumn(s.day), workoutId: s.id }, select: { templateId: true, status: true } }).catch(() => []);
   return rows.find((r) => isDoneStatus(r.status))?.templateId ?? null;
 }
@@ -898,9 +908,10 @@ export function recordLinkErrorOf(error: string): string {
  * "Counts as" for a record session: tasks.ts completeLinkedCore with asTick, the habit's own tick as a manual one
  * would be (its price, its proof rules with the session's minutes, its streak unit), never SESSION and never a
  * walk's top-up. The same session again (a resend) answers as the first call; a habit ticked already that day
- * writes nothing and says so. Never throws: the session is saved whatever happens here.
+ * writes nothing and says so. Never throws: the session is saved whatever happens here. A lift's Finish takes this path
+ * too (training-server finishLiftCore): one "Counts as" for every record kind.
  */
-async function linkRecord(userId: string, templateId: string, s: SessionView, now: Date): Promise<SessionLinkOutcome> {
+export async function linkRecord(userId: string, templateId: string, s: SessionView, now: Date): Promise<SessionLinkOutcome> {
   try {
     const res = await completeLinkedCore({ userId, templateId, day: s.day, workoutId: s.id, minutes: Math.max(1, Math.round(s.durationMin)), at: now, asTick: true });
     if (!res.ok) return { kind: "NOT_COUNTED", error: recordLinkErrorOf(res.error) };
@@ -1007,19 +1018,38 @@ export async function logSessionMomentsCore(
 }
 
 /**
- * Deletes a record session (a kind logSessionCore writes): the row alone, since a record wrote no ledger row and paid
- * nothing; a habit it counted as stays ticked, as a manual tick does (its own Undo is on Today). A walk is never
- * deleted here (deleteExerciseCore takes its pay back first), nor a lift (its entries and sets go with it, phase 4).
+ * Deletes a record session: the row alone for a kind logSessionCore writes, since a record wrote no ledger row and paid
+ * nothing; a lift (the set logger's, training-server.ts) with its movements and sets, in one transaction
+ * (deleteLiftRows), since nothing was paid for it either. A habit either counted as stays ticked, as a manual tick does
+ * (its own Undo is on Today). A walk is never deleted here (deleteExerciseCore takes its pay back first).
  */
 export async function deleteSessionCore(userId: string, id: string): Promise<ExerciseResult<null>> {
   if (typeof id !== "string" || !ID_RE.test(id)) return { ok: false, error: GONE };
   try {
     const out = await prisma.exerciseSession.deleteMany({ where: { id, userId, kind: { in: [...SESSION_CORE_KINDS] } } });
     invalidate("exercise");
-    return out.count > 0 ? { ok: true, value: null } : { ok: false, error: GONE };
+    if (out.count > 0) return { ok: true, value: null };
+    // Not a kind logSessionCore writes: a lift, or nothing (a walk's id, one gone). A record kind's delete never reads
+    // the lift tables, so it works on a database the strength_sets migration has not reached.
+    return (await deleteLiftRows(userId, id)) ? { ok: true, value: null } : { ok: false, error: GONE };
   } catch (err) {
     if (isMissingExerciseTable(err)) return { ok: false, error: EXERCISE_NOT_READY };
     console.error("Exercise: a session wasn't deleted.", err);
     return { ok: false, error: SAVE_FAILED };
   }
+}
+
+/**
+ * A LIFT session's delete with its ExerciseEntry and ExerciseSet rows (no foreign keys: the delete removes them, in
+ * the same transaction), true when there was one. A walk's id, or one gone, deletes nothing: only a lift has entries
+ * and sets, and only a LIFT row is deleted. Writes no ledger row (a lift paid nothing).
+ */
+async function deleteLiftRows(userId: string, id: string): Promise<boolean> {
+  const [, , session] = await prisma.$transaction([
+    prisma.exerciseSet.deleteMany({ where: { userId, sessionId: id } }),
+    prisma.exerciseEntry.deleteMany({ where: { userId, sessionId: id } }),
+    prisma.exerciseSession.deleteMany({ where: { id, userId, kind: "LIFT" } }),
+  ]);
+  if (session.count > 0) invalidate("exercise", "training");
+  return session.count > 0;
 }

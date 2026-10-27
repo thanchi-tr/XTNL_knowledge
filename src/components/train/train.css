@@ -150,3 +150,117 @@
     .wt-ex-week.wt-ex-week-3 > div:last-child { grid-column: 1 / -1; }
   }
 }
+
+/* =====================================================================
+   TRAIN › EXERCISE › LIFT — the set logger (LiftLogger, SetRow, MovementPicker, PlateMath, RestTimer, LiftRecords,
+   LiftWeek, LiftFinish; health-2026-10-27.md D12, D14-D19). Namespaced wt-lift-; reuses wt-input, wt-label, wt-msg,
+   wt-log and the wt-ex- grid and chip groups. 344 px first: a set row is 44 + 76 + 56 + 44 with 8 px gaps (244 px),
+   inside the card's 278; the steppers, plate math and the kind menu sit on the lines under it. Floors: 12 px text, 44
+   px targets (48 for a row's chip, figures and ✓), 16 px inputs. Nothing here moves.
+   ===================================================================== */
+@layer components {
+  .wt-lift { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .wt-lift-msg { margin: 0; }
+  .wt-lift-head { display: flex; flex-direction: column; gap: 2px; }
+  .wt-lift-title { margin: 0; font: 600 18px/24px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .wt-lift-name { margin: 0; font: 600 16px/22px var(--font-ui); color: var(--ink-0); min-width: 0; overflow-wrap: anywhere; }
+  .wt-lift-sub { margin: 0; font: 500 13px/18px var(--font-ui); color: var(--ink-1); }
+  .wt-lift-line { margin: 0; font: 500 12px/16px var(--font-ui); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  .wt-lift-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .wt-lift-acts .btn { min-height: 44px; min-width: 44px; }
+  .wt-lift-h5 { margin: 0 0 4px; font: 600 12px/16px var(--font-ui); color: var(--ink-2); }
+  /* A primary in the column (Start, Finish) keeps its 44 px: wt-log's flex basis is a row's width, never a column's height. */
+  .wt-lift > .wt-log { flex: none; align-self: stretch; }
+
+  /* ---------- start: Repeat <name>, or an empty lift ---------- */
+  .wt-lift-repeat { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .wt-lift-repeat li { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+  /* ---------- a movement in the lift ---------- */
+  .wt-lift-entry { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line-1); min-width: 0; }
+  .wt-lift-entry-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .wt-lift-entry-h .wt-lift-name { padding-top: 11px; }
+  .wt-lift-entry-h .btn { flex: none; min-height: 44px; margin-right: -10px; }
+  .wt-lift-cols, .wt-lift-row {
+    display: grid; grid-template-columns: 44px minmax(76px, 1fr) minmax(56px, 1fr) 44px; gap: 8px;
+    align-items: center; max-width: 360px;
+  }
+  .wt-lift-cols { margin-bottom: -4px; font: 600 12px/16px var(--font-ui); color: var(--ink-2); }
+  .wt-lift-cols span { text-align: center; }
+
+  /* ---------- a set row: chip, weight, reps, ✓; then the lines under the fields ---------- */
+  .wt-lift-set { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .wt-lift-set > :not(.wt-lift-row) { margin-left: 52px; max-width: 308px; }
+  .wt-lift-row .btn.wt-lift-chip { width: 44px; min-width: 44px; min-height: 48px; padding: 0; font: 600 15px/1 var(--font-ui); }
+  .wt-lift-row .btn.wt-lift-chip[aria-expanded="true"] { border-color: var(--ink-0); }
+  .wt-lift-row .btn.wt-lift-done { width: 44px; min-width: 44px; min-height: 48px; padding: 0; }
+  .wt-lift-row .btn.wt-lift-done svg { width: 22px; height: 22px; }
+  .wt-lift-row .btn.wt-lift-done[data-done] { background: var(--ink-0); border-color: var(--ink-0); color: var(--page); }
+  .wt-lift-row .wt-input.wt-lift-in { min-width: 0; padding: 10px 4px; text-align: center; }
+  .wt-lift-row .btn.wt-lift-val {
+    min-width: 0; min-height: 48px; padding: 0 4px; background: var(--sunken); border-color: var(--line-2);
+    font: 600 16px/1.2 var(--font-ui); white-space: normal; overflow-wrap: anywhere;
+  }
+  .wt-lift-none { min-height: 48px; }
+  .wt-lift-steps { display: flex; flex-wrap: wrap; gap: 8px; }
+  .wt-lift-steps .btn.wt-lift-stepb {
+    min-width: 72px; min-height: 44px; padding: 0 10px;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation;
+  }
+  .wt-lift-menu .chip.btn-chip { white-space: nowrap; }
+
+  /* ---------- the big-jump question (Keep or Fix), and a held jump on the summary ---------- */
+  .wt-lift-jump { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: var(--r-ctl); border: 1px solid var(--line-ctl); }
+  .wt-lift-jump .wt-lift-msg { font: 600 14px/20px var(--font-ui); color: var(--ink-0); }
+
+  /* ---------- the rest timer: a figure that counts down (no bar, no motion) ---------- */
+  .wt-lift-timer {
+    display: flex; align-items: center; gap: 10px; max-width: 360px; padding: 2px 2px 2px 12px;
+    border-radius: var(--r-ctl); background: var(--sunken); border: 1px solid var(--line-2);
+  }
+  .wt-lift-timer-t { font: 600 18px/24px var(--font-ui); color: var(--ink-0); }
+  .wt-lift-timer-of { flex: 1 1 auto; min-width: 0; }
+  .wt-lift-timer .btn.wt-lift-timer-b { flex: none; min-height: 44px; }
+  .wt-lift-foot { display: flex; flex-wrap: wrap; gap: 8px; }
+  .wt-lift-foot .btn { min-height: 44px; }
+  .wt-lift-foot .btn:last-child { margin-left: auto; }
+
+  /* ---------- the movement picker and Finish: an outlined panel (its inputs keep their sunken fill) ---------- */
+  .wt-lift-picker, .wt-lift-fin { display: flex; flex-direction: column; gap: 10px; padding: 10px; border-radius: 12px; border: 1px solid var(--line-ctl); min-width: 0; }
+  .wt-lift-picks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .wt-lift-picks li + li { border-top: 1px solid var(--line-1); }
+  .wt-lift-picks .btn.wt-lift-pick {
+    width: 100%; min-height: 48px; padding: 6px 8px; flex-direction: column; align-items: flex-start; justify-content: center;
+    gap: 2px; white-space: normal; text-align: left; color: var(--ink-0);
+  }
+  .wt-lift-pick-n { font: 600 15px/20px var(--font-ui); overflow-wrap: anywhere; }
+  .wt-lift-pick-s { font: 500 12px/16px var(--font-ui); color: var(--ink-2); }
+  .wt-lift-fin-min { margin: 0; font: 600 16px/22px var(--font-ui); color: var(--ink-0); }
+
+  /* ---------- a movement's records ---------- */
+  .wt-lift-rec { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-2); min-width: 0; }
+  .wt-lift-best { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+  .wt-lift-best > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .wt-lift-best dt { font: 600 12px/16px var(--font-ui); color: var(--ink-2); }
+  .wt-lift-best dd { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font: 600 16px/22px var(--font-ui); color: var(--ink-0); }
+  .wt-lift-rm { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .wt-lift-rm > div { display: flex; flex-direction: column; gap: 1px; padding: 6px; border-radius: 8px; background: var(--card); min-width: 0; }
+  .wt-lift-rm dt { font: 600 12px/16px var(--font-ui); color: var(--ink-2); white-space: nowrap; }
+  .wt-lift-rm dd { margin: 0; font: 600 15px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .wt-lift-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font: 400 14px/20px var(--font-ui); color: var(--ink-0); }
+
+  /* ---------- the summary: plain lines; a new best in an outlined box, never a colour of reward ---------- */
+  .wt-lift-sum { display: flex; flex-direction: column; gap: 10px; }
+  .wt-lift-sum-l { margin: 0; font: 600 15px/22px var(--font-ui); color: var(--ink-0); }
+  .wt-lift-prs { padding: 10px 12px; border-radius: var(--r-ctl); border: 1px solid var(--line-ctl); }
+  .wt-lift-pr { font-weight: 600; }
+
+  /* ---------- hard sets this week: bands as words, never a bar that fills ---------- */
+  .wt-lift-week { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line-1); }
+  .wt-lift-week h3 { margin: 0; }
+  .wt-lift-groups { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .wt-lift-groups li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 6px; padding: 8px 10px; border-radius: var(--r-ctl); background: var(--sunken); min-width: 0; }
+  .wt-lift-g { font: 600 14px/18px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .wt-lift-gn { font: 600 14px/18px var(--font-ui); color: var(--ink-0); text-align: right; }
+  .wt-lift-gb { grid-column: 1 / -1; font: 500 12px/16px var(--font-ui); color: var(--ink-2); }
+}

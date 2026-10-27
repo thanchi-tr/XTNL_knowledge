@@ -18,7 +18,8 @@ const MIND_SHEET_STATES = ["mind-sheet", "mind-sheet-picked"];
  * MIND_FIXTURES), and Train › Exercise with every kind (EXERCISE_FIXTURES,
  * each under data-state="ex-<name>": the picker, a run, a swim with pool
  * lengths, a sport, yoga, the Again chip, a refusal, the record-only line,
- * Lift's "arrives next"). ?state=mind-sheet or ?state=mind-sheet-picked opens the
+ * Lift's "arrives next"), and the lift logger in every state (LIFT_FIXTURES,
+ * each under data-state="lift-<name>"). ?state=mind-sheet or ?state=mind-sheet-picked opens the
  * check-in sheet on load, so the browser audit can reach it. Gated like every
  * /dev/style page.
  */

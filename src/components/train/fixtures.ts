@@ -26,14 +26,28 @@
  * recordOnly (no habit due: the record-only line), walkOffer ("Log it as a run?"), lift (the set logger arrives next)
  * and walkOnly (before the strength_sets migration). The saved lines are sessionLoggedLineOf's own, so they read as
  * the server's would.
+ *
+ * Fixture LiftViews for Train › Exercise, Lift mode (health-2026-10-27.md D12, D14-D19; phase 4): LIFT_FIXTURES on
+ * twelve made-up finished lifts (Push day, Legs and Pull day, a week apart each, over four weeks: LIFT_FIXTURE_HISTORY),
+ * run through training.ts's own rules (movementRecordsOf, liftMomentsOf, sessionSummaryOf, weekGroupsOf, bigJumpOf),
+ * so the ghosts, records, new bests, the big-jump line and the bands are what the rules say. Each opens the card on
+ * Lift in a state: start (no open lift: Repeat), ghosts (Push day repeated, every row a ghost), warmup, plates (plate
+ * math, the weight's steppers shown), drop (a drop chain and the next drop at −20 %), timer (the rest timer running),
+ * jump (the Big jump question), bw and bwNoBody (a bodyweight movement with and without a weigh-in), kinds (the kind
+ * menu open), records (the Records panel), picker (search), custom (the user's own movement in use, the new-movement
+ * form open), finish (the Finish panel), summary (a new best), summaryHeld (a 2× set held for Confirm), notReady and
+ * failed.
  */
 import { addDays, daysBetween, zonedToInstant, type DayKey } from "@/lib/life-day";
+import { bigJumpLineOf, bigJumpOf, jumpBaselineOf, liftMomentsOf, movementRecordsOf, sessionSummaryOf, summaryLinesOf, weekGroupsOf } from "@/lib/training";
+import type { FinishedLift, LiftSessionView, LiftSetView, LiftView, MovementHistory, RecentLift, UserMovementView } from "@/lib/training-server";
 import { MIN_READINGS_FOR_RATE, STALE_AFTER_DAYS, TREND_ALPHA, type WeightGoalView, type WeightTrendPoint, type WeightView } from "@/lib/weight";
 import { EMPTY_PREFS, emptyMindView, mindViewOf, olderFromOf, receiptLineOf, type MindPrefsView, type MindView, type MoodCheckView } from "@/lib/mind";
 import type { LoggedCheck } from "@/lib/mind-server";
-import { exerciseWeekOf, sessionLoggedLineOf, sessionRefusalOf, type SessionView } from "@/lib/exercise";
+import { againLineOf, exerciseWeekOf, sessionLoggedLineOf, sessionRefusalOf, type SessionView } from "@/lib/exercise";
 import type { ExerciseView } from "@/lib/exercise-server";
 import type { ExerciseCardInitial } from "./ExerciseCard";
+import { dropDraftOf, liftResolverOf, rowsOf } from "./lift-model";
 
 export const FIXTURE_TODAY: DayKey = "2026-10-01";
 
@@ -420,4 +434,432 @@ export const EXERCISE_FIXTURES: Record<ExerciseFixtureName, ExerciseFixture> = {
       { kindsReady: false }
     ),
   },
+};
+
+// ── Exercise: the lift logger (health-2026-10-27.md D12, D14-D19; phase 4) ──
+
+/** The lift fixtures' day (the exercise fixtures' Thursday) and the body weight they log against. */
+export const LIFT_FIXTURE_TODAY: DayKey = EXERCISE_FIXTURE_TODAY;
+const BODY_KG = 72;
+/** The habit "Counts as" pre-selects at Finish. */
+const GYM_LINK = { templateId: "t-gym", title: "Gym session" };
+
+/** The user's own movements: a landmine press in use, a sled push never logged. */
+const USER_MOVEMENTS: UserMovementView[] = [
+  {
+    id: "fx-landmine",
+    key: "u:fx-landmine",
+    name: "Landmine press",
+    pattern: "PUSH_V",
+    equipment: "OTHER",
+    primaryMuscles: ["shoulders"],
+    secondaryMuscles: ["chest", "triceps"],
+    load: "EXT",
+    bodyFraction: null,
+    unilateral: true,
+    stepKg: 2.5,
+    restSec: null,
+    archived: false,
+  },
+  {
+    id: "fx-sled",
+    key: "u:fx-sled",
+    name: "Sled push",
+    pattern: "SQUAT",
+    equipment: "OTHER",
+    primaryMuscles: ["quadriceps", "glutes"],
+    secondaryMuscles: ["calves"],
+    load: "EXT",
+    bodyFraction: null,
+    unilateral: false,
+    stepKg: 10,
+    restSec: 120,
+    archived: false,
+  },
+];
+
+export const LIFT_FIXTURE_RESOLVE = liftResolverOf(USER_MOVEMENTS);
+
+/** An instant `ago` days back at hh:mm in the life zone (ISO). */
+function liftAt(ago: number, hh: number, mm: number): string {
+  const [y, m, d] = addDays(LIFT_FIXTURE_TODAY, -ago).split("-").map(Number);
+  return new Date(zonedToInstant(y, m, d, hh).getTime() + mm * 60_000).toISOString();
+}
+
+/** A set as written: W a warm-up, S a working set, D a drop, R a rest-pause set; the weight, the reps, then any other field. */
+type SetSpec = [kind: "W" | "S" | "D" | "R", weightKg: number | null, reps: number | null, extra?: Partial<LiftSetView>];
+const SET_KIND = { W: "WARMUP", S: "WORKING", D: "DROP", R: "MINI" } as const;
+const MIN_A_SET = 3;
+
+function liftSetsOf(entryId: string, specs: readonly SetSpec[], fromMs: number): LiftSetView[] {
+  let head: number | null = null;
+  return specs.map(([k, weightKg, reps, extra], i): LiftSetView => {
+    const ord = i + 1;
+    const kind = SET_KIND[k];
+    if (kind === "WORKING") head = ord;
+    return {
+      id: `${entryId}-s${ord}`,
+      entryId,
+      ord,
+      kind,
+      chainOf: kind === "DROP" || kind === "MINI" ? head : null,
+      weightKg,
+      reps,
+      rir: null,
+      toFailure: false,
+      amrap: false,
+      durationSec: null,
+      distanceM: null,
+      restSec: null,
+      clientId: `${entryId}-c${ord}`,
+      doneAt: new Date(fromMs + (i + 1) * MIN_A_SET * 60_000).toISOString(),
+      afterFinish: false,
+      ...extra,
+    };
+  });
+}
+
+/** One movement as written: its key, its sets, and the body weight it was logged against (a BW movement: 72 kg unless given). */
+interface EntrySpec {
+  key: string;
+  sets: SetSpec[];
+  bodyKg?: number | null;
+}
+
+/** A lift `ago` days back from 18:02, three minutes a set and two between movements; open, or finished four minutes after its last set. */
+function liftOf(id: string, ago: number, label: string | null, specs: readonly EntrySpec[], open = false): LiftSessionView {
+  const startedAt = liftAt(ago, 18, 2);
+  let minute = 0;
+  const entries = specs.map((e, i) => {
+    const entryId = `${id}-e${i + 1}`;
+    const sets = liftSetsOf(entryId, e.sets, Date.parse(startedAt) + minute * 60_000);
+    minute += e.sets.length * MIN_A_SET + 2;
+    const bw = LIFT_FIXTURE_RESOLVE(e.key)?.load === "BW";
+    return { id: entryId, movementKey: e.key, ord: i + 1, groupNo: null, bodyKg: e.bodyKg !== undefined ? e.bodyKg : bw ? BODY_KG : null, note: null, sets };
+  });
+  const durationMin = minute + 4;
+  return {
+    id,
+    day: addDays(LIFT_FIXTURE_TODAY, -ago),
+    label,
+    startedAt,
+    endedAt: open ? null : new Date(Date.parse(startedAt) + durationMin * 60_000).toISOString(),
+    durationMin: open ? 0 : durationMin,
+    backfill: false,
+    entries,
+  };
+}
+
+const sameSets = (k: "W" | "S", kg: number | null, r: number, n: number): SetSpec[] => Array.from({ length: n }, (): SetSpec => [k, kg, r]);
+const hold = (sec: number): SetSpec => ["S", null, null, { durationSec: sec }];
+const carry = (kg: number, m: number): SetSpec => ["S", kg, null, { distanceM: m }];
+
+/** Four weeks of Push day, Legs and Pull day (a week apart each), oldest first: the history the ghosts, records and bests read. */
+export const LIFT_FIXTURE_HISTORY: LiftSessionView[] = [
+  liftOf("fx-push-1", 28, "Push day", [
+    { key: "bench_press", sets: [["W", 40, 10], ...sameSets("S", 60, 8, 3)] },
+    { key: "incline_db_press", sets: [["S", 22, 10], ["S", 22, 10], ["S", 22, 9]] },
+    { key: "triceps_pushdown", sets: [["S", 25, 12], ["S", 25, 12], ["S", 25, 11]] },
+    { key: "dip", sets: [["S", 0, 10], ["S", 0, 9], ["S", 0, 8]] },
+  ]),
+  liftOf("fx-legs-1", 26, "Legs", [
+    { key: "back_squat", sets: [["W", 60, 5], ["W", 80, 3], ...sameSets("S", 95, 5, 3)] },
+    { key: "romanian_deadlift", sets: sameSets("S", 80, 8, 3) },
+    { key: "plank", sets: [hold(60), hold(60)] },
+  ]),
+  liftOf("fx-pull-1", 24, "Pull day", [
+    { key: "pull_up", sets: sameSets("S", -20, 8, 3) },
+    { key: "barbell_row", sets: sameSets("S", 60, 8, 3) },
+    { key: "db_curl", sets: sameSets("S", 12, 10, 3) },
+    { key: "farmers_carry", sets: [carry(32, 40), carry(32, 40)] },
+  ]),
+  liftOf("fx-push-2", 21, "Push day", [
+    { key: "bench_press", sets: [["W", 40, 10], ["S", 62.5, 8], ["S", 62.5, 8], ["S", 62.5, 7]] },
+    { key: "incline_db_press", sets: sameSets("S", 22, 10, 3) },
+    { key: "triceps_pushdown", sets: sameSets("S", 25, 12, 3) },
+    { key: "dip", sets: sameSets("S", 5, 8, 3) },
+  ]),
+  liftOf("fx-legs-2", 19, "Legs", [
+    { key: "back_squat", sets: [["W", 60, 5], ["W", 80, 3], ...sameSets("S", 97.5, 5, 3)] },
+    { key: "romanian_deadlift", sets: sameSets("S", 80, 8, 3) },
+    { key: "plank", sets: [hold(60), hold(70)] },
+  ]),
+  liftOf("fx-pull-2", 17, "Pull day", [
+    { key: "pull_up", sets: sameSets("S", -15, 8, 3) },
+    { key: "barbell_row", sets: sameSets("S", 62.5, 8, 3) },
+    { key: "db_curl", sets: sameSets("S", 12, 10, 3) },
+    { key: "farmers_carry", sets: [carry(32, 40), carry(32, 40)] },
+  ]),
+  liftOf("fx-push-3", 14, "Push day", [
+    { key: "bench_press", sets: [["W", 40, 10], ["S", 62.5, 8], ["S", 65, 6], ["S", 65, 6], ["D", 52.5, 8]] },
+    { key: "incline_db_press", sets: [["S", 24, 8], ["S", 24, 8], ["S", 22, 10]] },
+    { key: "triceps_pushdown", sets: [["S", 25, 12], ["S", 25, 12], ["S", 25, 10]] },
+    { key: "dip", sets: [["S", 5, 8], ["S", 5, 8], ["S", 5, 7]] },
+  ]),
+  liftOf("fx-legs-3", 12, "Legs", [
+    { key: "back_squat", sets: [["W", 60, 5], ["W", 80, 3], ...sameSets("S", 100, 5, 3)] },
+    { key: "romanian_deadlift", sets: sameSets("S", 82.5, 8, 3) },
+    { key: "plank", sets: [hold(75), hold(70)] },
+  ]),
+  liftOf("fx-pull-3", 10, "Pull day", [
+    { key: "pull_up", sets: sameSets("S", -10, 8, 3) },
+    { key: "barbell_row", sets: sameSets("S", 62.5, 8, 3) },
+    { key: "db_curl", sets: sameSets("S", 14, 8, 3) },
+    { key: "farmers_carry", sets: [carry(34, 40), carry(34, 40)] },
+  ]),
+  liftOf("fx-push-4", 7, "Push day", [
+    { key: "bench_press", sets: [["W", 40, 10], ["S", 65, 8], ["S", 65, 8], ["S", 65, 7]] },
+    { key: "incline_db_press", sets: sameSets("S", 24, 8, 3) },
+    { key: "triceps_pushdown", sets: sameSets("S", 25, 12, 3) },
+    { key: "dip", sets: [["S", 10, 8], ["S", 10, 7], ["S", 10, 6]] },
+  ]),
+  liftOf("fx-legs-4", 5, "Legs", [
+    { key: "back_squat", sets: [["W", 60, 5], ["W", 80, 3], ...sameSets("S", 100, 5, 3)] },
+    { key: "romanian_deadlift", sets: sameSets("S", 85, 8, 3) },
+    { key: "plank", sets: [hold(75), hold(75)] },
+  ]),
+  liftOf("fx-pull-4", 3, "Pull day", [
+    { key: "pull_up", sets: sameSets("S", -10, 8, 3) },
+    { key: "barbell_row", sets: sameSets("S", 65, 8, 3) },
+    { key: "db_curl", sets: sameSets("S", 14, 8, 3) },
+    { key: "farmers_carry", sets: [carry(34, 40), carry(34, 40)] },
+  ]),
+];
+
+const newestFirst = (a: Pick<LiftSessionView, "day">, b: Pick<LiftSessionView, "day">) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0);
+
+/** The history's moments as the server derives them: one pass over whole lifts (each lift's two-a-session cap holds). */
+const LIFT_FIXTURE_MOMENTS = liftMomentsOf(LIFT_FIXTURE_HISTORY, "kg", LIFT_FIXTURE_RESOLVE).moments;
+
+/** A movement's history as the server builds it (training-server historyOf): the last lift's sets, its newest lifts, its records and its new bests. */
+function liftHistoryOf(key: string): MovementHistory {
+  const withIt = LIFT_FIXTURE_HISTORY.filter((s) => s.entries.some((e) => e.movementKey === key)).map((s) => ({ ...s, entries: s.entries.filter((e) => e.movementKey === key) }));
+  const newest = [...withIt].sort(newestFirst);
+  const last = newest[0];
+  return {
+    movementKey: key,
+    last: last ? { sessionId: last.id, day: last.day, bodyKg: last.entries[0].bodyKg, sets: last.entries[0].sets } : null,
+    recent: newest.slice(0, 5).map((s) => ({ sessionId: s.id, day: s.day, bodyKg: s.entries[0].bodyKg, sets: s.entries.flatMap((e) => e.sets) })),
+    records: movementRecordsOf(withIt, key, LIFT_FIXTURE_RESOLVE),
+    moments: [...LIFT_FIXTURE_MOMENTS.values()]
+      .flat()
+      .filter((p) => p.movementKey === key)
+      .sort(newestFirst)
+      .slice(0, 10),
+    since: null,
+  };
+}
+
+/** Repeat's choices: the newest finished lift of each name. */
+const LIFT_RECENT: RecentLift[] = (() => {
+  const seen = new Set<string>();
+  const out: RecentLift[] = [];
+  for (const s of [...LIFT_FIXTURE_HISTORY].sort(newestFirst)) {
+    const name = (s.label ?? "").toLowerCase();
+    if (seen.has(name) || out.length >= 5) continue;
+    seen.add(name);
+    out.push({
+      id: s.id,
+      day: s.day,
+      label: s.label,
+      durationMin: s.durationMin,
+      movements: s.entries.map((e) => ({ movementKey: e.movementKey, name: LIFT_FIXTURE_RESOLVE(e.movementKey)?.name ?? e.movementKey })),
+      line: againLineOf({ kind: "LIFT", label: s.label, variant: null, distanceKm: 0, durationMin: s.durationMin, avgWatts: null }),
+    });
+  }
+  return out;
+})();
+
+const lastSetIsoOf = (s: LiftSessionView): string | null => s.entries.flatMap((e) => e.sets.map((x) => x.doneAt)).reduce<string | null>((m, x) => (m == null || x > m ? x : m), null);
+
+/** The lift view the server would give with `open` open (or none). */
+function liftViewOf(open: LiftSessionView | null, over: Partial<LiftView> = {}): LiftView {
+  // The server reads history for the open lift's movements; with none open, the fixtures carry Repeat's, so a fake
+  // Repeat opens on its ghosts (the server's view has them once its refresh lands).
+  const keys = [...new Set(open ? open.entries.map((e) => e.movementKey) : LIFT_RECENT.flatMap((r) => r.movements.map((x) => x.movementKey)))];
+  return {
+    today: LIFT_FIXTURE_TODAY,
+    ready: true,
+    unit: "kg",
+    body: { kg: BODY_KG, day: addDays(LIFT_FIXTURE_TODAY, -1) },
+    open: open ? { ...open, summary: sessionSummaryOf(open, LIFT_FIXTURE_RESOLVE), lastSetAt: lastSetIsoOf(open) } : null,
+    recent: LIFT_RECENT,
+    history: Object.fromEntries(keys.map((k) => [k, liftHistoryOf(k)])),
+    movements: USER_MOVEMENTS,
+    week: weekGroupsOf([...LIFT_FIXTURE_HISTORY, ...(open ? [open] : [])], LIFT_FIXTURE_TODAY, LIFT_FIXTURE_RESOLVE),
+    closed: [],
+    ...over,
+  };
+}
+
+/** The exercise card around the logger: the lifts listed as sessions (a finished lift is a LIFT session), and a walk. */
+const LIFT_EX_VIEW: ExerciseView = exerciseViewOf(
+  [
+    ...LIFT_FIXTURE_HISTORY.map((s) => sessionOf(s.id, daysBetween(s.day, LIFT_FIXTURE_TODAY), { kind: "LIFT", label: s.label, durationMin: s.durationMin, startedAt: s.startedAt, endedAt: s.endedAt })),
+    EXERCISE_SESSIONS[5],
+  ].sort(newestFirst),
+  { link: GYM_LINK, paid: {} }
+);
+
+const OPEN_ID = "fx-now";
+const entryIdOf = (i: number) => `${OPEN_ID}-e${i}`;
+const pushWith = (bench: SetSpec[]) =>
+  liftOf(OPEN_ID, 0, "Push day", [
+    { key: "bench_press", sets: bench },
+    { key: "incline_db_press", sets: [] },
+    { key: "triceps_pushdown", sets: [] },
+  ], true);
+
+const GHOSTS = pushWith([]);
+const DROP_LIFT = pushWith([["W", 40, 10], ["S", 67.5, 8], ["S", 67.5, 6], ["D", 52.5, 8]]);
+const TIMER_LIFT = pushWith([["W", 40, 10], ["S", 67.5, 8]]);
+const JUMP_LIFT = pushWith([["W", 40, 10], ["S", 85, 5]]);
+const LEGS_WARMUP = liftOf(OPEN_ID, 0, "Legs", [{ key: "back_squat", sets: [["W", 60, 5]] }, { key: "romanian_deadlift", sets: [] }, { key: "plank", sets: [] }], true);
+const LEGS_PLATES = liftOf(OPEN_ID, 0, "Legs", [{ key: "back_squat", sets: [["W", 60, 5], ["W", 80, 3]] }, { key: "romanian_deadlift", sets: [] }], true);
+const bwLift = (bodyKg: number | null) =>
+  liftOf(OPEN_ID, 0, "Bodyweight", [
+    { key: "dip", sets: [["S", 10, 8]], bodyKg },
+    { key: "pull_up", sets: [["S", -10, 8]], bodyKg },
+  ], true);
+const CUSTOM_LIFT = liftOf(OPEN_ID, 0, null, [{ key: "u:fx-landmine", sets: [["S", 30, 10], ["S", 30, 10]] }, { key: "bench_press", sets: [] }], true);
+const FINISH_LIFT = liftOf(OPEN_ID, 0, "Push day", [
+  { key: "bench_press", sets: [["W", 40, 10], ["S", 67.5, 8], ["S", 67.5, 8], ["S", 67.5, 7]] },
+  { key: "incline_db_press", sets: [["S", 24, 9], ["S", 24, 8], ["S", 24, 8]] },
+  { key: "triceps_pushdown", sets: [["S", 27.5, 12], ["S", 27.5, 11]] },
+], true);
+
+/** The big jump the jump fixture's 85 × 5 asks about (against the 8 weeks before today). */
+const BENCH = LIFT_FIXTURE_RESOLVE("bench_press");
+const JUMP_SET = JUMP_LIFT.entries[0].sets[1];
+const JUMP = BENCH ? bigJumpOf(JUMP_SET, BENCH, null, jumpBaselineOf(LIFT_FIXTURE_HISTORY, "bench_press", LIFT_FIXTURE_TODAY, LIFT_FIXTURE_RESOLVE)) : null;
+
+/** A lift finished at 19:00 (closed), summed up as finishLiftCore sums it (its new bests over the four weeks before it). */
+function finishedOf(current: LiftSessionView): FinishedLift & { closed: LiftSessionView } {
+  const closed: LiftSessionView = { ...current, endedAt: liftAt(0, 19, 0), durationMin: 58 };
+  const lm = liftMomentsOf([...LIFT_FIXTURE_HISTORY, closed], "kg", LIFT_FIXTURE_RESOLVE);
+  const moments = lm.moments.get(closed.id) ?? [];
+  const held = lm.held.get(closed.id) ?? [];
+  const session = sessionOf(closed.id, 0, { kind: "LIFT", label: closed.label, durationMin: 58, startedAt: closed.startedAt, endedAt: closed.endedAt });
+  const link = { kind: "COUNTED" as const, title: GYM_LINK.title };
+  const summary = sessionSummaryOf(closed, LIFT_FIXTURE_RESOLVE);
+  return { session, by: "CLOCK", refusal: null, link, replay: false, unit: "kg", summary, moments, held, records: [], line: sessionLoggedLineOf(session, null, link), lines: summaryLinesOf(summary, "kg", moments, held), closed };
+}
+
+/** The summary as a FinishedLift (the closed lift kept apart, for the fakes' replay). */
+const asFinished = ({ closed: _closed, ...f }: FinishedLift & { closed: LiftSessionView }): FinishedLift => (void _closed, f);
+
+const DONE = finishedOf({ ...FINISH_LIFT, id: "fx-done" });
+/** A pushdown at 60 kg, over twice the best of 25: recorded, held for Confirm. */
+const HELD = finishedOf(
+  liftOf("fx-held", 0, "Push day", [
+    { key: "bench_press", sets: [["W", 40, 10], ["S", 67.5, 8], ["S", 67.5, 8]] },
+    { key: "triceps_pushdown", sets: [["S", 60, 8], ["S", 25, 12]] },
+  ], true)
+);
+
+const DROP_ENTRY = DROP_LIFT.entries[0];
+const NEXT_DROP = BENCH ? dropDraftOf(rowsOf(DROP_ENTRY.sets, []), BENCH, "kg", null, liftHistoryOf("bench_press").last?.sets ?? null, `${DROP_ENTRY.id}:d1`) : null;
+
+export type LiftFixtureName =
+  | "start"
+  | "ghosts"
+  | "warmup"
+  | "plates"
+  | "drop"
+  | "timer"
+  | "jump"
+  | "bw"
+  | "bwNoBody"
+  | "kinds"
+  | "records"
+  | "picker"
+  | "custom"
+  | "finish"
+  | "summary"
+  | "summaryHeld"
+  | "notReady"
+  | "failed";
+
+export interface LiftFixture {
+  label: string;
+  view: ExerciseView;
+  lift: LiftView;
+  initial: ExerciseCardInitial;
+  /** A finished lift the summary shows: the fakes replay Finish on it (the summary's Keep or Confirm). */
+  ended?: LiftSessionView;
+}
+
+const onLift = (lift: ExerciseCardInitial["lift"] = {}): ExerciseCardInitial => ({ kind: "LIFT", lift });
+
+export const LIFT_FIXTURES: Record<LiftFixtureName, LiftFixture> = {
+  start: { label: "Lift · no open lift: Repeat a lift (one tap) or start an empty one; this week's hard sets as bands", view: LIFT_EX_VIEW, lift: liftViewOf(null), initial: onLift() },
+  ghosts: { label: "Lift · Push day repeated: every row a ghost from last week ('last 40 × 10'); ✓ accepts it", view: LIFT_EX_VIEW, lift: liftViewOf(GHOSTS), initial: onLift() },
+  warmup: { label: "Lift · a warm-up logged ('W'), the next warm-up a ghost with its plate math", view: LIFT_EX_VIEW, lift: liftViewOf(LEGS_WARMUP), initial: onLift() },
+  plates: {
+    label: "Lift · plate math ('per side 25 + 15') and the weight's steppers, shown while the field is focused",
+    view: LIFT_EX_VIEW,
+    lift: liftViewOf(LEGS_PLATES),
+    initial: onLift({ active: { row: `${entryIdOf(1)}:g2`, field: "weight" } }),
+  },
+  drop: {
+    label: "Lift · a drop chain (D after set 2) and the next drop added at −20 %, rounded down to the step",
+    view: LIFT_EX_VIEW,
+    lift: liftViewOf(DROP_LIFT),
+    initial: onLift({ drafts: { [DROP_ENTRY.id]: NEXT_DROP ? [NEXT_DROP] : [] } }),
+  },
+  timer: {
+    label: "Lift · the rest timer running after set 1 (3:00, the bench press's rest); Skip",
+    view: LIFT_EX_VIEW,
+    lift: liftViewOf(TIMER_LIFT),
+    initial: onLift({ timer: { entryId: entryIdOf(1), totalSec: 180, remainingSec: 154, endsAt: null } }),
+  },
+  jump: {
+    label: "Lift · the Big jump question: 85 kg against a best of 65 (Keep or Fix)",
+    view: LIFT_EX_VIEW,
+    lift: liftViewOf(JUMP_LIFT),
+    initial: onLift({ book: { jumps: JUMP ? { [JUMP_SET.id]: { jump: JUMP, line: bigJumpLineOf(JUMP, "EXT", "kg"), movementKey: "bench_press" } } : {}, answers: {} } }),
+  },
+  bw: { label: "Lift · bodyweight movements with a weigh-in: 'body weight 72 kg + 10', and assistance", view: LIFT_EX_VIEW, lift: liftViewOf(bwLift(BODY_KG)), initial: onLift() },
+  bwNoBody: { label: "Lift · bodyweight movements with no weigh-in: reps only, and the screen says so", view: LIFT_EX_VIEW, lift: liftViewOf(bwLift(null), { body: null }), initial: onLift() },
+  kinds: {
+    label: "Lift · the number chip's kind menu open on the next row (Warm-up, Working, Drop, Rest-pause, and the two flags)",
+    view: LIFT_EX_VIEW,
+    lift: liftViewOf(TIMER_LIFT),
+    initial: onLift({ menu: `${entryIdOf(1)}:g2` }),
+  },
+  records: {
+    label: "Lift · the bench press's Records: heaviest, best e1RM and what it is estimated from, rep maxes, new bests, recent lifts",
+    view: LIFT_EX_VIEW,
+    lift: liftViewOf(GHOSTS),
+    initial: onLift({ records: entryIdOf(1) }),
+  },
+  picker: { label: "Lift · Add a movement: a search ('press'), the ones lifted lately first, the user's own marked", view: LIFT_EX_VIEW, lift: liftViewOf(GHOSTS), initial: onLift({ picker: { query: "press" } }) },
+  custom: {
+    label: "Lift · the user's own movement in the lift (Landmine press), and the new-movement form open",
+    view: LIFT_EX_VIEW,
+    lift: liftViewOf(CUSTOM_LIFT),
+    initial: onLift({ picker: { create: { name: "Cable lateral raise", pattern: "ISOLATION", equipment: "CABLE", load: "EXT", primary: ["shoulders"], unilateral: true, bodyFraction: "" } } }),
+  },
+  finish: {
+    label: "Lift · Finish: the minutes it counts, how hard (7), Counts as pre-selected",
+    view: LIFT_EX_VIEW,
+    lift: liftViewOf(FINISH_LIFT),
+    initial: onLift({ finish: { label: "Push day", minutes: "", rpe: 7, countsAs: true, nowMs: Date.parse(lastSetIsoOf(FINISH_LIFT) ?? liftAt(0, 19, 0)) + 4 * 60_000 } }),
+  },
+  summary: {
+    label: "Lift · the Finish summary: sets, volume, each top set and the new bests (no XP, no celebration)",
+    view: LIFT_EX_VIEW,
+    lift: liftViewOf(null),
+    initial: onLift({ finished: asFinished(DONE) }),
+    ended: DONE.closed,
+  },
+  summaryHeld: {
+    label: "Lift · the summary with a set over twice the best, held until Confirm",
+    view: LIFT_EX_VIEW,
+    lift: liftViewOf(null),
+    initial: onLift({ finished: asFinished(HELD) }),
+    ended: HELD.closed,
+  },
+  notReady: { label: "Lift · before the lift tables: the set logger arrives next (nothing is saved)", view: LIFT_EX_VIEW, lift: { ...liftViewOf(null), ready: false }, initial: onLift() },
+  failed: { label: "Lift · the lift view failed to load (never the empty logger)", view: LIFT_EX_VIEW, lift: { ...liftViewOf(null), ready: false, failed: true }, initial: onLift() },
 };

@@ -54,6 +54,12 @@ export type CacheTag =
   | "exercise"
   /** Check-ins and their prefs: the pause and the low-pattern card's last hide (MoodCheck, MindPrefs; src/lib/mind-server.ts). */
   | "mind"
+  /**
+   * The lift logger's movements and sets (ExerciseEntry, ExerciseSet, UserMovement; src/lib/training-server.ts). A set,
+   * a movement or an edit clears it alone; a start, a Finish, a discard, a lazy close or a delete clears 'exercise' too
+   * (the session list). Not the shell's: nothing in the shell reads a set, and a set every few minutes would rebuild it.
+   */
+  | "training"
   /** Word completion's record of the user's picks and passes (WordChoice; src/lib/vocabulary.ts). */
   | "words"
   /**
@@ -68,7 +74,9 @@ export type CacheTag =
  * Every tag the shell's read depends on (shell-data.ts). Not 'words': word
  * completion's choices are cleared on every flush and nothing in the shell
  * reads them, so the shell does not rebuild for them. Not 'work' either: the
- * work tabs' search index is read by the work frame, never by the shell.
+ * work tabs' search index is read by the work frame, never by the shell. Nor
+ * 'training': the lift logger's sets feed nothing the shell reads (a lift's
+ * start and Finish clear 'exercise', which is the shell's).
  */
 export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight", "roadmap", "exercise", "mind"];
 
