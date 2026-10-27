@@ -53,6 +53,7 @@ import java.util.concurrent.Executors
  *   stamp / landAt           a new idea's seal stamped, then landing on Review
  *   merge / duplicate        an idea folded into one you have, or not saved
  *   work                     a work item's Done: a lighter CLICK and the clack (its undo leaves the ladder alone)
+ *   checkIn                  a check-in saved: one neutral TICK, the same for every value, no sound
  *   segment / select         a tab, a chip
  */
 class Feel(context: Context, private val prefs: () -> Prefs) {
@@ -494,6 +495,12 @@ class Feel(context: Context, private val prefs: () -> Prefs) {
         )
         soundAt(if (motion == MotionLevel.STILL) 0 else 360, "land", 0.8f, id)
     }
+
+    /**
+     * A check-in saved (health phase 2; D5): [Scores.checkIn], one neutral TICK whatever was picked, on every motion level.
+     * No sound and no moment: a record, never a reward.
+     */
+    fun checkIn(id: String) = score(id, Scores.checkIn, fallback = Fallback.View(0, HapticFeedbackConstants.CLOCK_TICK to 1))
 
     /** A tab changed. */
     fun segment() = viewHaptic(HapticFeedbackConstants.SEGMENT_TICK to 34, HapticFeedbackConstants.CLOCK_TICK to 1)

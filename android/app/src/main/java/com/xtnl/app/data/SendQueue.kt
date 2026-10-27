@@ -1,6 +1,8 @@
 package com.xtnl.app.data
 
+import com.xtnl.app.core.CheckinLine
 import com.xtnl.app.core.SendLine
+import com.xtnl.app.core.TimeLabels
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,10 +19,15 @@ import kotlinx.serialization.Serializable
 import java.io.File
 
 /**
- * One write waiting on the phone (blueprint P8, D34; core/SendLine holds the rules): a tick, a quick line or a work
- * item's Done, keyed by its [clientId] (the first try's, so a replay is the same request and the server writes it
- * once). [day] is its own life day, fixed at the tap, never "today": a tick sends it as its `day`. [source] is the server
- * it was made for: it is never sent anywhere else.
+ * One write waiting on the phone (blueprint P8, D34; core/SendLine holds the rules): a tick, a quick line, a work
+ * item's Done, a check-in or a set of the open lift (health phase 2), keyed by its [clientId] (the first try's, so a
+ * replay is the same request and the server writes it once). [day] is its own life day, fixed at the tap, never
+ * "today": a tick sends it as its `day`; a check-in's and a set's is the day of their own instant [at]. [source] is
+ * the server it was made for: it is never sent anywhere else.
+ *
+ * A waiting check-in holds its pick here, on the phone only: its [label] is its time ("Check-in at 14:12"), so the
+ * Not sent card, Check's lines and the widget's counts never show a value, and the queue's file stays out of backups
+ * and device transfers (res/xml/data_extraction_rules.xml).
  */
 @Serializable
 data class QueuedWrite(
@@ -44,6 +51,24 @@ data class QueuedWrite(
     val section: String? = null,
     // A work item's Done (POST /work/done).
     val workId: String? = null,
+    /** A check-in's `at` or a set's `doneAt`: the instant of the tap (ISO), sent as is on every try. */
+    val at: String? = null,
+    // A check-in (POST /checkin): the pick and where it came from.
+    val valence: Int? = null,
+    val energy: Int? = null,
+    val stress: Int? = null,
+    val via: String? = null,
+    val tookMs: Long? = null,
+    val trigger: String? = null,
+    // A set (POST /lift/set): the lift, the movement and the set's own kind and figures (kilograms).
+    val liftId: String? = null,
+    val entryId: String? = null,
+    val setKind: String? = null,
+    val weightKg: Double? = null,
+    val reps: Int? = null,
+    val durationSec: Int? = null,
+    val distanceM: Double? = null,
+    val amrap: Boolean = false,
     /** Server faults so far (a 5xx); set aside at SendLine.SERVER_TRIES. No answer at all is never counted. */
     val tries: Int = 0,
 ) {
@@ -61,7 +86,32 @@ data class QueuedWrite(
 
         fun workDone(clientId: String, source: String, day: String, title: String, workId: String, atMs: Long = System.currentTimeMillis()) =
             QueuedWrite(clientId, SendLine.Kind.WORK_DONE, source, day, atMs, title, workId = workId)
+
+        /** A check-in that got no answer: the first try's body, its day the day of its own `at`; labelled by its time alone. */
+        fun checkin(clientId: String, source: String, body: CheckinBody, atMs: Long = System.currentTimeMillis()) =
+            QueuedWrite(
+                clientId, SendLine.Kind.CHECKIN, source, dayOf(body.at, atMs), atMs, CheckinLine.queueLabel(body.at),
+                at = body.at, valence = body.valence, energy = body.energy, stress = body.stress, via = body.via, tookMs = body.tookMs,
+                trigger = body.trigger,
+            )
+
+        /** A set that got no answer: the first try's body, its day the day of its own `doneAt`. */
+        fun liftSet(clientId: String, source: String, label: String, body: LiftSetBody, atMs: Long = System.currentTimeMillis()) =
+            QueuedWrite(
+                clientId, SendLine.Kind.SET, source, dayOf(body.doneAt, atMs), atMs, label,
+                at = body.doneAt, liftId = body.sessionId, entryId = body.entryId, setKind = body.kind, weightKg = body.weightKg,
+                reps = body.reps, durationSec = body.durationSec, distanceM = body.distanceM, amrap = body.amrap,
+            )
+
+        private fun dayOf(at: String, fallbackMs: Long): String =
+            SendLine.dayKey(TimeLabels.parseInstant(at) ?: java.time.Instant.ofEpochMilli(fallbackMs))
     }
+
+    /** A check-in's request as its first try sent it (POST /checkin). */
+    fun checkinBody(): CheckinBody = CheckinBody(at.orEmpty(), valence ?: 0, energy ?: 0, stress, via ?: "check", tookMs, trigger ?: "self")
+
+    /** A set's request as its first try sent it (POST /lift/set). */
+    fun setBody(): LiftSetBody = LiftSetBody(liftId.orEmpty(), entryId.orEmpty(), at.orEmpty(), setKind, weightKg, reps, durationSec, distanceM, amrap)
 }
 
 /** An item taken out of the queue unsent, with why ([line]); [keptBack] a line from an earlier day, waiting for the user. */
@@ -124,12 +174,16 @@ sealed interface Landed {
     data class Tick(override val item: QueuedWrite, val result: CompleteResult) : Landed
     data class Log(override val item: QueuedWrite, val result: LogResult) : Landed
     data class Work(override val item: QueuedWrite, val result: WorkResult) : Landed
+    /** Health phase 2: a check-in (its answer's line is the time alone) and a set of the open lift. */
+    data class Checkin(override val item: QueuedWrite, val result: CheckinResult) : Landed
+    data class Lift(override val item: QueuedWrite, val result: LiftSetResult) : Landed
 }
 
 /**
  * The offline queue (blueprint 5.1b, P8; decision D34). A write that gets no answer at all (Check's tick, Log's line, a
- * work item's Done) and every widget tick waits here, on disk, keyed by its clientId, until a pass sends it: the job
- * (data/SendWorker, online only, with backoff), the app opening or reading /check again, or the widget's tick itself.
+ * work item's Done, a check-in, a set of the open lift) and every widget tick waits here, on disk, keyed by its
+ * clientId, until a pass sends it: the job (data/SendWorker, online only, with backoff), the app opening or reading
+ * /check again, or the widget's tick itself.
  * One pass at a time, oldest first, only the source in use ([source]); demo data never waits (it answers on the phone).
  *
  *   A pass that holds a line reads /check first, for the server's own day (a line saves on the server's today, so one
@@ -324,6 +378,8 @@ class SendQueue(
         ).map { Landed.Tick(item, it) }
         SendLine.Kind.LOG -> api.log(item.text.orEmpty(), item.section ?: "task", item.clientId).map { Landed.Log(item, it) }
         SendLine.Kind.WORK_DONE -> api.workDone(item.workId.orEmpty(), item.clientId).map { Landed.Work(item, it) }
+        SendLine.Kind.CHECKIN -> api.checkin(item.checkinBody(), item.clientId).map { Landed.Checkin(item, it) }
+        SendLine.Kind.SET -> api.liftSet(item.setBody(), item.clientId).map { Landed.Lift(item, it) }
     }
 
     private fun putAside(item: QueuedWrite, line: String, keptBack: Boolean = false) {

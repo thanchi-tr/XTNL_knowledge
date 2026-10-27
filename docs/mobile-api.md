@@ -36,13 +36,19 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     capture key), a review answer lands once per clientId (its ledger row is keyed by it; a repeat answers
     `409 recorded`), a Mall purchase lands once per clientId (its ledger row is keyed by it: `POST /mall/buy`
     requires one) and an undo once per purchase, a make-up once per debt (`POST /tasks/makeup` requires a clientId; a
-    repeat answers `duplicate`), Done and Reopen are idempotent, and a repeated new idea is merged into the first by
-    dedup.
+    repeat answers `duplicate`), Done and Reopen are idempotent, a repeated new idea is merged into the first by
+    dedup, a check-in lands once per clientId (`POST /checkin` requires one: its row is keyed by it, and a resend with
+    the same values answers the first row, `duplicate`), its undo is harmless twice (one already gone answers
+    `deleted` 0), and a set lands once per clientId (`POST /lift/set` requires one: its row is keyed by it, and a resend
+    answers the set it wrote, `duplicate`).
   - Writes revalidate the same cache tags the web actions do (they run the same actions).
   - The app's offline queue (blueprint P8, decision D34) leans on these rules. A tick, a quick line or a work item's
     Done that gets no answer at all, and every tick on the cover-screen widget, waits on the phone and is sent again
     with the same clientId and the same body as its first try, so it lands once. Only `POST /tasks/complete`, `POST
-    /log` and `POST /work/done` ever wait; a review answer never does. A tick carries its row's own life day as `day`
+    /log`, `POST /work/done`, `POST /checkin` and `POST /lift/set` ever wait (the queue's kinds TICK, LOG, WORK_DONE,
+    CHECKIN and SET); a review answer never does. A check-in carries its own instant `at` and a set its own `doneAt`,
+    each fixed at the tap, so one sent late is booked when it was made (see `POST /checkin` and `POST /lift/set`). A
+    tick carries its row's own life day as `day`
     (`"YYYY-MM-DD"`: the `day` of the `/check` the row was shown on, its `yesterday.day` for a Yesterday row, the
     widget's cached board's too) from its first try, so one made before 04:00 books on that day when it lands after,
     and a board read before 04:00 and tapped after it books its row on the row's day, as the web board's does (the
@@ -54,12 +60,17 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     be saved before the user sends it. While `/check` gets no answer, the lines wait and the ticks and Dones behind
     them still go.
 - **Errors:** the app keeps what the user typed on any failure.
+- **Check-in values (health phase 2; decision D9):** a check-in's values (its valence, energy, stress, word and tags)
+  travel only in `POST /checkin`'s body, and come back only in that answer's `words`. They are never in a URL or a
+  query string, in `/check` (its `checkin` block is a switch and counts), on the cover widget, the tile, a notification
+  or the lock screen, in a push payload or a log line, and never reach Gemini. Production has no login: set
+  `MOBILE_API_TOKEN` so these routes are not open.
 
 ## Endpoints
 
 | Method | Path | Wraps |
 | --- | --- | --- |
-| GET | /check | the Today board's read and its Yesterday lane, the Review hub's counts and its fatigue, the shell's level, the work tabs' due tasks, the week audit, the credits wallet, the owed cards, the idle skills and attributes |
+| GET | /check | the Today board's read and its Yesterday lane, the Review hub's counts and its fatigue, the shell's level, the work tabs' due tasks, the week audit, the credits wallet, the owed cards, the idle skills and attributes, the check-in's counts (Mind's view, never a value) and the open lift (Train › Exercise's read) |
 | POST | /tasks/complete | `completeTask` (actions/tasks.ts) |
 | POST | /tasks/undo | `undoCompletion` (actions/tasks.ts) |
 | POST | /tasks/start | `startTaskTimer` (actions/tasks.ts), a proof task's timer |
@@ -80,6 +91,9 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 | POST | /mall/buy | `buyReward` (actions/mall.ts), Buy's Confirm |
 | POST | /mall/undo | `undoBuy` (actions/mall.ts), a purchase's Undo |
 | POST | /exercise | `ingestHealthCore` (health-ingest-server.ts): Health Connect's walks, hikes and weigh-ins, through `logWalkCore` and `logWeightCore` |
+| POST | /checkin | `logCheckCore` (mind-server.ts), the 5-second check-in (actions/mind.ts `logCheck`'s core) |
+| POST | /checkin/undo | `deleteCheckCore` (mind-server.ts), the receipt's Undo (actions/mind.ts `deleteCheck`'s core) |
+| POST | /lift/set | `logSetCore` (training-server.ts), the lift logger's "Set done" (actions/training.ts `logLiftSet`'s core) |
 
 ## GET /check: the quick check (the app's home)
 
@@ -135,7 +149,13 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   ],
   "level": { "level": 1, "title": "Novice", "progress": 0.75 } | null,
   "streak": { "days": 12, "keptToday": true, "freezes": 2, "restTokens": 2 | null,
-    "multiplier"?: { "value": 1.16, "fullDays": 3, "floor": false, "line": "Streak ×1.16 · day 3" } } | null
+    "multiplier"?: { "value": 1.16, "fullDays": 3, "floor": false, "line": "Streak ×1.16 · day 3" } } | null,
+  "checkin": { "live": true, "lastAt": "2026-10-21T03:32:00.000Z" | null, "todayCount": 2, "paused": false },
+  "lift"?: { "sessionId": "…", "label": "Push day" | null, "startedAt": "2026-10-21T07:58:00.000Z" | null,
+    "next": { "entryId": "…", "movementKey": "bench_press", "name": "Bench press", "ord": 3,
+      "kind": "WARMUP" | "WORKING" | "DROP" | "MINI", "weightKg": 60 | null, "reps": 8 | null, "durationSec": null,
+      "distanceM": null, "amrap": false, "unit": "kg" | "lb", "fromLast": true, "setText": "60 kg × 8" | null,
+      "ghostLine": "last 60 × 8" | null } | null }
 } }
 ```
 
@@ -349,6 +369,43 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     full tick pays (one-offs included; never the minimum version, #play, a study task, a walk's pay, a make-up, a review
     or MP), so each row's `xpHint` already carries it. `line` is Today's chip in its words: "Streak ×1.16 · day 3", or
     "Streak ×1.00" before the first Full day. It is a separate count from `days` (the daily streak, any activity).
+- `checkin` (health phase 2; decisions D1, D2, D9): the 5-second check-in's switch and counts, always sent. **It
+  carries no value**: never a valence, an energy, a stress level, a word or a tag, because a cached `/check` can move
+  between phones (the app's backup and device-transfer rules) and the widget draws from it. The server reads Mind's own
+  view (the one Body › Mind and Today read) and keeps only these four, key by key.
+  - `live`: the check-in can be drawn: `MIND_LAUNCH_DAY` is in force and the view was read. False before the launch,
+    before the mind_checks migration and when the read failed (as Today then draws no Check in row); with it false,
+    `lastAt` is null, `todayCount` 0 and `paused` false. A check-in sent anyway is the server's to refuse
+    (`POST /checkin`).
+  - `paused`: the user paused check-ins on the web (Body › Mind, a week or a month). The app draws no check-in row and
+    no prompt while it is true. The pause hides the asks; it is not a lock (a check-in sent is still kept).
+  - `todayCount`: how many check-ins today's life day holds; `lastAt` the newest one's instant (null with none). Neither
+    says what any of them was. Only Check's row says when the last one was ("Checked in 14:32"), and only for today's
+    life day; the cover widget and the tile show no time, no count and no value, just "Check in", and a notification
+    (the phase 6 prompt) is neutral text ("Check in?"). No surface makes the count a target (no "2 today", no colour,
+    no ask).
+- `lift` (health phase 2; decisions D12, D14 to D19): the open lift and the set to do next, present only while a lift
+  is open (absent otherwise, before the strength_sets migration and when the read failed, so the reply reads as before).
+  It is Train › Exercise's own read (`loadLiftView`), which closes a lift left open past its life day at its last set,
+  as opening the page does (no lift is open then). It rides on `/check` rather than a route of its own because Check's
+  lift card draws from the app's cached `/check`, so the next set is there without a second request (a cover-widget row
+  and an ongoing notification are later readers of it, in a later phase); `POST /lift/set` answers the same block after
+  each set.
+  - `sessionId` is what `POST /lift/set` names; `label` the lift's name ("Push day"; null with none); `startedAt` when it
+    started.
+  - `next`: the set to do next, by the web logger's own prefill (the rows the page shows before a tap). Each movement's
+    rows still to do are its last finished lift's sets past the ones logged today, kinds and chains as they were and no
+    outcomes (no RIR, no Failure); a movement with no set yet and no last lift has one empty working row. The next is
+    the movement being worked's (the one with the newest set) while it has a row left, else the first movement in the
+    lift's order with one. Null when every movement's rows are done: another set ("+ Set") and Finish stay with the
+    user.
+  - `ord` is the place the set takes (the movement's next); `kind`, `weightKg` (kilograms as stored; a bodyweight
+    movement's signed added load: −20 is 20 kg of assistance), `reps`, `durationSec` and `distanceM` (a hold, a carry)
+    and `amrap` are the row's. `fromLast` true: the figures are the last lift's set, so one tap ("Next: Bench press
+    60 kg × 8 ✓") sends them as they are; false: there is nothing to copy (the figures are null) and the app asks for
+    them first. `setText` is the set in the logger's words ("60 kg × 8", "24 kg per dumbbell × 10", "hold 1:05") and
+    `ghostLine` its grey line under the fields ("last 60 × 8"), both in `unit` (the unit Body shows; kilograms are
+    stored), null with nothing to copy.
 - Before it reads, the server runs momentum's lazy writes, as Today does (the day's quest set first, so `xpHint` and a
   tick made from this check price today's frog); they return at once when nothing is owed. While the streak
   multiplier is in force (P29) it then runs Duty's lazy settle too, as Today does, so the rows' `xpHint` read the d
@@ -1051,3 +1108,125 @@ no new pay rule.
   app only (this server writes nothing)." (dev and prod share one database).
 - The app shows the reply's `line` under Settings › Health Connect ("Last synced 21 Oct, 18:05 · …"). A sync is never a
   moment: no celebration plays for it.
+
+## POST /checkin: the 5-second check-in
+
+Health phase 2 (docs/life-plan/health-2026-10-27.md D1, D2, D5, D9): one check-in from the phone, the same deed as one
+from Body › Mind's sheet (`logCheckCore`, mind-server.ts). Tap 1 is the 9 × 9 grid (pleasantness across, energy up),
+tap 2 the optional stress row; a feeling word and up to 8 tags are optional. It comes from the Check screen's row, the
+cover widget's sheet, the "Check in" tile and launcher shortcut, or a prompt (phase 6).
+
+```json
+{ "at": "2026-10-28T03:12:05.000Z", "valence": 2, "energy": -1, "stress"?: 1 | null, "word"?: "Calm" | null,
+  "tags"?: ["Work"] | null, "trigger": "self" | "prompted", "via": "check" | "widget" | "tile" | "notify",
+  "promptedAt"?: "2026-10-28T03:00:00.000Z" | null, "tookMs"?: 4200 | null, "clientId": "…" }
+→ { "ok": true, "data": { "id": "…", "day": "2026-10-28", "line": "Logged 14:12", "words": "Calm, content",
+    "undoUntil": "2026-10-28T03:12:10.000Z", "duplicate": false } }
+```
+
+- The shape is checked here (a wrong one is `bad`, 400; no error line repeats a value):
+  - `at` (required): the instant the user tapped, an ISO instant, fixed at the tap, so a check-in that waited in the
+    queue is booked when it was felt. The core keeps it as it allows: a few minutes ahead of the server's clock is
+    booked at the server's clock, further ahead is refused, and so is one more than 7 life days back ("That check-in is
+    more than a week old.", 409). Its life day is the day of `at`.
+  - `valence` and `energy` (required): whole steps from −4 to 4. `stress`: 0 (Not at all) to 4 (Very much), or left out
+    (skipped). `word`: text, or left out; `tags`: at most 8 texts, or left out. The core cleans them as the web sheet's
+    are (each cut to 24 characters, a known word in its own spelling, repeats kept once).
+  - `trigger` (required): `self` (the user's own tap) or `prompted` (a prompt's; then `promptedAt`, when the prompt was
+    shown, kept only within 24 hours before `at`). `via` (required): the phone's surface, `check`, `widget`, `tile` or
+    `notify`. `tookMs`: opening the sheet to saving it, in milliseconds (the 5-second claim is measured; over ten
+    minutes it is stored as none).
+  - `clientId` is **required** here (a UUID): it keys the row (MoodCheck's unique user and clientId). Send the same one
+    on every retry of one check-in, and a new one for every check-in. A resend with the same body replays the first
+    reply on the instance that answered; on any other instance the core finds the row and answers it (`duplicate` true,
+    nothing written). The queue never changes a body; were a resend's pick changed, the core updates that one row to
+    the new values (the web sheet's rule), so a check-in is never two rows.
+- Refusals are the core's, in its own words: `conflict` (409) while check-ins are not open ("Check-ins aren't open
+  yet.", before `MIND_LAUNCH_DAY`), before the mind_checks migration ("Check-ins need a one-time database update
+  first."), and for a value the core refuses; `server` (500) for "Couldn't save that. Try again.", which the queue tries
+  again.
+- The answer: `id` (what `POST /checkin/undo` names) and `day`, the life day it was booked on. `line` is the receipt's
+  frame with the time alone ("Logged 14:12", as Today's strip says it), **safe on any surface**: the cover screen, a
+  notification, the lock screen. `words` are the grid's words for the pick ("Calm, content"; on an axis line "Neutral,
+  low energy"), for the main screen's sheet only, beside the line ("Logged 14:12 · Calm, content", the web sheet's
+  receipt); never on the cover, the tile, a notification or the lock screen. `undoUntil` is when the receipt stops
+  offering Undo (5 seconds from this answer, the web receipt's); `duplicate` marks a resend the core had already logged.
+- A record, never a reward (D5): no ledger row, no XP, MP or credit, no streak, quest or celebration, whatever the
+  values. The app plays the same neutral haptic (`Scores.checkIn`) for every value and shows no colour judgement and no
+  praise or shame.
+- Privacy (D9): the values travel only in this request's body (never in a URL or a query string) and come back only as
+  `words`. They are never in `/check`, the widget, the tile, a notification, the lock screen, a push payload or a log
+  line, and never reach Gemini. The check-in sheet on the phone always shows "Need to talk? Lifeline 13 11 14" as a
+  tap-to-call that opens the dialer with the number filled in (the user presses call; the app asks for no permission).
+
+### POST /checkin/undo
+
+- Body: `{ "id": "…", "clientId"?: "…" }`, the `id` `POST /checkin` answered. It runs `deleteCheckCore`, the
+  check-in's own Delete (the receipt's Undo and Body › Mind's Delete are one action), which never waits for the switch:
+  what was recorded can always be removed.
+
+```json
+{ "ok": true, "data": { "id": "…", "deleted": 1 | 0, "line": "Check-in taken back." | "Already deleted." } }
+```
+
+- `deleted` 0 is one already gone ("Already deleted."): a repeat is harmless, so the server sets no window on it; the
+  app offers Undo only until `undoUntil`. An id that isn't one is `bad`. No value is sent or answered. Every check-in
+  stays deletable on the web (Body › Mind: each one's Delete, and "Delete all check-ins").
+- An undo never waits in the queue: with no answer the app says so and leaves the check-in for Body › Mind.
+
+## POST /lift/set: one set of the open lift
+
+Health phase 2 (D12, D14 to D19): "Set done" from the phone (the Check screen's lift card; a cover-widget row and an
+ongoing notification are a later phase), the same deed as the web row's ✓ (`logSetCore`, training-server.ts). Start, adding a movement,
+Keep, Fix, Delete and Finish (with its "Counts as") stay on the web (Train › Exercise, `/train/exercise`).
+
+```json
+{ "sessionId": "…", "entryId": "…", "doneAt": "2026-10-21T08:14:30.000Z", "clientId": "…",
+  "ord"?: 3, "kind"?: "WARMUP" | "WORKING" | "DROP" | "MINI", "weightKg"?: 60 | null, "reps"?: 8 | null,
+  "rir"?: 2 | null, "toFailure"?: false, "amrap"?: false, "durationSec"?: 65 | null, "distanceM"?: 40 | null,
+  "restSec"?: 150 | null }
+→ { "ok": true, "data": {
+    "set": { "id": "…", "entryId": "…", "ord": 3, "kind": "WORKING", "chainOf": null, "weightKg": 60, "reps": 8,
+      "rir": 2, "toFailure": false, "amrap": false, "durationSec": null, "distanceM": null, "doneAt": "…" },
+    "duplicate": false, "restSec": 180, "line": "Bench press: logged 60 kg × 8 · RIR 2.",
+    "jump"?: { "line": "Big jump: 100 kg (best 80). Saved as a record. It counts as a new best only once kept on the web's Finish summary; if the number is wrong, fix it on the web.",
+      "webHref": "/train/exercise" },
+    "lift": { "sessionId": "…", "label": "Push day" | null, "startedAt": "…", "next": { … } | null } | null } }
+```
+
+- The shape is checked here (a wrong one is `bad`, 400): `sessionId` and `entryId` (`/check`'s `lift.sessionId` and
+  `lift.next.entryId`), `doneAt` (required: the instant of the tap, ISO, fixed at the tap; the core keeps it inside the
+  lift's start and the server's clock, and refuses one more than a minute ahead), and `clientId` (**required**, a UUID:
+  the set's key). The set itself is the web row's, every field optional: `ord` (left out, the set takes the movement's
+  next place, under the movement's lock, so two devices never share one: the app leaves it out), `kind` (WORKING when
+  left out; a DROP or MINI left without a chain continues the set before it), `weightKg` (kilograms, as stored: never
+  the unit shown; a bodyweight movement's signed added load), `reps`, `rir` (0 to 5, 5 is "4+"), `toFailure`,
+  `amrap`, `durationSec` and `distanceM` (a hold, a carry) and `restSec` (the rest the timer gave before it, never
+  typed). The bounds are the core's (training.ts `cleanSetInput`): a figure out of range is refused in its words
+  ("Reps from 1 to 100, please.", 409).
+- Once per clientId, on any instance: a resend with the same body replays the first reply on the instance that
+  answered; on any other the core answers the set that clientId wrote, whatever happened to the lift since
+  (`duplicate` true, nothing written). So a set that waited in the queue lands once.
+- Refusals: `gone` (404) for a lift or a movement that isn't there ("That lift is no longer here.", "That movement is
+  no longer in this lift."); `conflict` (409) for a finished lift ("That lift is finished. Start a new one to log
+  more."), one left open past its day (closed at its last set first: "That lift was left open past its day, so it was
+  closed at its last set."), the core's bounds and chain rules, and before the strength_sets migration ("The lift
+  logger needs a one-time database update first."); `server` (500) for "Couldn't save that. Try again.", which the
+  queue tries again.
+- The answer: `set` as stored (kilograms; `chainOf` the head a drop continues), `duplicate`, `restSec` the rest timer
+  after it, the web logger's (training.ts `restAfterOf`): 0, none, when the lift's next set is this set's own drop (the
+  same movement, the very next place), 20 s before its rest-pause, else the movement's rest (60 s after a warm-up), and
+  `line` in the web row's words ("Bench press: logged 60 kg × 8 · RIR 2.";
+  "Bench press: already logged …" for a resend; "Set logged." when the lift couldn't be read after). `lift` is the lift
+  after the set as `/check` reads it (its `next` the set after this one), null when it is no longer open or the read
+  after failed: the app reads `/check` again then.
+- `jump`, present only when a working set is more than 15 % over the movement's best of the 8 weeks before this lift
+  (else all time): the big-jump question in plain words. The phone does not answer it. **The set is saved as logged,
+  as a record**: no column holds an answer (the web page keeps one and Finish carries it), so a Keep on the phone would
+  be lost. The web's Finish summary asks again (Keep, or Confirm for more than twice the best) before the set can count
+  as a new best, and a wrong figure is fixed on the web (Fix). `line` is the core's question less "Keep it?", then that;
+  `webHref` is the page. Unanswered, the set stays a record, never a PR moment: the safe side.
+- A record (D12): a set writes no ledger row, no XP, MP or credit, no streak, quest or celebration; the lift's one
+  effect, "Counts as" at Finish, is the web's. Nothing about a lift is a mood value: its words ("Next: Bench press 60 kg
+  × 8") may show on a later cover-widget row and in a later ongoing notification; today they show on Check's lift card
+  only.

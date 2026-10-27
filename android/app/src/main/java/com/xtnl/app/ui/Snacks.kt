@@ -30,28 +30,38 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import com.xtnl.app.core.Layouts
 import com.xtnl.app.ui.components.CtlShape
 import com.xtnl.app.ui.components.Glyphs
 import com.xtnl.app.ui.motion.LocalMotion
 import com.xtnl.app.ui.theme.X
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class SnackTone { PLAIN, KEPT, ERROR }
 
+/**
+ * [coverMessage]: what the snackbar says instead on the cover screen (health phase 2, D2: a check-in's receipt is its
+ * time alone there). It is picked as the snackbar draws, so a fold or an unfold swaps the words at once, keeping the same
+ * snackbar, its action and its time left.
+ */
 class XSnack(
     override val message: String,
     override val actionLabel: String?,
     val tone: SnackTone,
     override val duration: SnackbarDuration,
+    val coverMessage: String? = null,
 ) : SnackbarVisuals {
     override val withDismissAction: Boolean = false
 }
 
 /**
  * One snackbar at a time, the newest wins (a run of ticks never queues a
- * line of Undos). [show] runs [onAction] when the action is tapped.
+ * line of Undos). [show] runs [onAction] when the action is tapped. [forMs]
+ * holds it exactly that long (the check-in's Undo: its 5 seconds), then it goes.
  */
 class Snacks(val host: SnackbarHostState, private val scope: CoroutineScope) {
     fun show(
@@ -60,16 +70,21 @@ class Snacks(val host: SnackbarHostState, private val scope: CoroutineScope) {
         tone: SnackTone = SnackTone.PLAIN,
         long: Boolean = false,
         onDismiss: (() -> Unit)? = null,
+        forMs: Long? = null,
+        coverMessage: String? = null,
         onAction: (() -> Unit)? = null,
     ) {
         host.currentSnackbarData?.dismiss()
         scope.launch {
             val duration = when {
+                forMs != null -> SnackbarDuration.Indefinite
                 action != null && tone == SnackTone.ERROR -> SnackbarDuration.Long
                 long || action != null -> SnackbarDuration.Long
                 else -> SnackbarDuration.Short
             }
-            val r = host.showSnackbar(XSnack(message, action, tone, duration))
+            val snack = XSnack(message, action, tone, duration, coverMessage)
+            // Timed out: showSnackbar is cancelled, which takes the snackbar down (its action with it).
+            val r = if (forMs != null) withTimeoutOrNull(forMs.coerceAtLeast(1L)) { host.showSnackbar(snack) } ?: SnackbarResult.Dismissed else host.showSnackbar(snack)
             if (r == SnackbarResult.ActionPerformed) onAction?.invoke() else onDismiss?.invoke()
         }
     }
@@ -91,6 +106,9 @@ private fun XSnackbar(data: SnackbarData) {
     val motion = LocalMotion.current
     val v = data.visuals
     val tone = (v as? XSnack)?.tone ?: SnackTone.PLAIN
+    // Read as it draws: the cover screen in either orientation (its short side), so a fold swaps the words at once.
+    val onCover = Layouts.onCover(LocalConfiguration.current.smallestScreenWidthDp)
+    val message = if (onCover) (v as? XSnack)?.coverMessage ?: v.message else v.message
     val lift = remember(data) { Animatable(if (motion.moves) 1f else 0f) }
     LaunchedEffect(data) { lift.animateTo(0f, tween(220)) }
     val accent = when (tone) {
@@ -113,7 +131,7 @@ private fun XSnackbar(data: SnackbarData) {
     ) {
         Box(Modifier.size(8.dp).clip(CtlShape).background(accent))
         Spacer(Modifier.size(10.dp))
-        Text(v.message, Modifier.weight(1f).padding(vertical = 10.dp), color = c.ink0, style = MaterialTheme.typography.bodyMedium)
+        Text(message, Modifier.weight(1f).padding(vertical = 10.dp), color = c.ink0, style = MaterialTheme.typography.bodyMedium)
         v.actionLabel?.let { label ->
             Row(
                 Modifier

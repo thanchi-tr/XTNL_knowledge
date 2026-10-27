@@ -28,6 +28,8 @@ import { loadSkills, loadTemplateSkill } from "./competency-server";
 import { loadConditionItems } from "./skill-decay-server";
 import { loadFatigue } from "./review-fatigue-server";
 import { ingestHealthCore } from "./health-ingest-server";
+import { loadCheckinRead } from "./mind-mobile-cores";
+import { loadLiftView } from "./training-server";
 import { reviewDedupeKey } from "./srs";
 import { loadReviewDay } from "../app/review/review-data";
 import { completeTask, startTaskTimer, stopTaskTimer, undoCapture, undoCompletion } from "../app/actions/tasks";
@@ -132,4 +134,9 @@ export const realMobileDeps: MobileDeps = {
   // POST /exercise (blueprint P27, D22): Health Connect's walks and weigh-ins, at the route's clock, through the walk's
   // own core (exercise-server logWalkCore, as Train › Exercise logs one) and the weigh-in's (weight-server logWeightCore).
   ingestHealth: (userId, batch, now) => ingestHealthCore(userId, batch, { now: () => now }),
+
+  // GET /check (health phase 2): the check-in's counts, narrowed in its own binding (mind-mobile-cores: never a value),
+  // and Train › Exercise's own lift read (training-server loadLiftView), for the open lift's next set.
+  loadCheckin: (userId, now) => loadCheckinRead(userId, now),
+  loadLift: (userId, now) => loadLiftView(userId, now),
 };

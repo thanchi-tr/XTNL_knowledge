@@ -12,10 +12,12 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.semantics.SemanticsActions
@@ -24,6 +26,7 @@ import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.longClick
 import androidx.test.core.app.ApplicationProvider
 import com.xtnl.app.XtnlApp
@@ -204,6 +207,82 @@ class ScreensTest {
     @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
     fun widgetMain() = widget("main")
 
+    /**
+     * Health phase 2: the Check in row under the header, then the check-in sheet opened by its deep link (the tile's,
+     * the widget's, the shortcut's), a pick on the grid, a stress tap that saves (the receipt: the time alone on the
+     * cover screen, with the grid's words on the main display) and its Undo. The cover screen, the main display upright
+     * and sideways (the grid beside the stress levels).
+     */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun checkinFront() = checkin("front", cover = true)
+
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun checkinMain() = checkin("main", cover = false)
+
+    @Test @Config(qualifiers = "w932dp-h704dp-420dpi")
+    fun checkinSideways() = checkin("sideways", cover = false)
+
+    /**
+     * D2 and §Safety: the cover screen turned sideways (751 × 475 dp; its short side, sw475, is still the cover's) shows
+     * the receipt's time alone, and the stacked sheet keeps "Need to talk? Lifeline 13 11 14" on screen with no
+     * scrolling (pinned under the scroll; its grid is the 40 dp cells' floor there).
+     */
+    @Test @Config(qualifiers = "sw475dp-w751dp-h475dp-land-420dpi")
+    fun checkinFrontSideways() = checkin("front-sideways", cover = true, minCellDp = 40f)
+
+    /** A short window on the main display (a split screen, 704 × 460 dp): it stacks, Lifeline on screen; under 600 on its short side, no words. */
+    @Test @Config(qualifiers = "sw460dp-w704dp-h460dp-land-420dpi")
+    fun checkinMainShort() = checkin("main-short", cover = true, minCellDp = 40f)
+
+    /**
+     * D2: a receipt with its words, shown on the main display, drops them the moment the phone folds to the cover screen
+     * (the snackbar picks its wording as it draws), keeping the same snackbar and its Undo; unfolded, they are back.
+     */
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun receiptFolds() {
+        val folded = androidx.compose.runtime.mutableStateOf(false)
+        var snacks: Snacks? = null
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            val base = androidx.compose.ui.platform.LocalConfiguration.current
+            val config = if (!folded.value) base else android.content.res.Configuration(base).apply { screenWidthDp = 475; screenHeightDp = 751; smallestScreenWidthDp = 475 }
+            XtnlTheme(resolveColors(ThemeChoice.NIGHT)) {
+                CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalConfiguration provides config,
+                    com.xtnl.app.ui.motion.LocalMotion provides com.xtnl.app.ui.motion.MotionLevel.STILL,
+                ) {
+                    val host = androidx.compose.runtime.remember { androidx.compose.material3.SnackbarHostState() }
+                    val scope = androidx.compose.runtime.rememberCoroutineScope()
+                    snacks = androidx.compose.runtime.remember { Snacks(host, scope) }
+                    Box(Modifier.fillMaxSize().background(X.c.page)) { XSnackHost(host, Modifier.align(Alignment.BottomCenter)) }
+                }
+            }
+        }
+        settle(400)
+        val line = "Logged 14:12"
+        rule.runOnUiThread { snacks!!.show(com.xtnl.app.core.CheckinLine.receipt(line, "Calm, content", cover = false), "Undo", forMs = 5_000, coverMessage = line) {} }
+        settle(800)
+        rule.onAllNodes(hasText("$line · Calm, content")).onFirst().assertIsDisplayed()
+        snap("main-receipt-1-open")
+        rule.runOnUiThread { folded.value = true }
+        settle(400)
+        val words = rule.onAllNodes(hasText("Calm, content", substring = true)).fetchSemanticsNodes().size
+        check(words == 0) { "the receipt's words on the cover after a fold: $words" }
+        rule.onAllNodes(hasText(line)).onFirst().assertIsDisplayed()
+        rule.onAllNodes(hasText("Undo")).onFirst().assertIsDisplayed()
+        snap("main-receipt-2-folded")
+        rule.runOnUiThread { folded.value = false }
+        settle(400)
+        rule.onAllNodes(hasText("$line · Calm, content")).onFirst().assertIsDisplayed()
+    }
+
+    /** Health phase 2: the open lift's card on Check (the demo's Push day), a ✓ and its rest, then the big jump the web answers. */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun liftCardFront() = liftCard("front")
+
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun liftCardMain() = liftCard("main")
+
     /** The minutes sheet (P7, P23, P24) on the cover screen and the main display, with demo data. */
     @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
     fun minutesSheetFront() = minutesSheet("front")
@@ -242,29 +321,28 @@ class ScreensTest {
         snap("$name-m0-board")
 
         // 1. A tick at the ladder's root: the press, the stamp's peak and hold, the shock and streaks, the flood, the motes and their landing.
-        tap(hasText("Gym legs"))
+        tapRow(hasText("Gym legs"))
         film("$name-m1-tick", 16, 32, 48, 64, 80, 96, 128, 160, 240, 320, 400, 448, 496, 560, 720)
         frames(600)
         // 1b. Consecutive ticks climb the ladder; the third crosses a level: the character's level up on the header seal.
-        tap(hasText("Call the dentist"))
+        tapRow(hasText("Call the dentist"))
         film("$name-m1b-tick-step1", 64, 160, 480)
         frames(300)
-        tap(hasText("Lodge the tax return"))
+        tapRow(hasText("Lodge the tax return"))
         film("$name-m6b-level", 64, 300, 480, 560, 640, 720, 800, 880, 960, 1040, 1120, 1280, 1600)
         frames(1_500)
         // 1c. Undo: the mark undraws, the disc drains, the flood recedes.
-        tap(hasText("Call the dentist"))
+        tapRow(hasText("Call the dentist"))
         film("$name-m1c-undo", 16, 64, 112, 160, 240)
         frames(1_200)
-        tap(hasText("Call the dentist"))
+        tapRow(hasText("Call the dentist"))
         film("$name-m1d-tick-step3", 64, 160, 480)
         frames(2_000)
 
-        // 11. A work item's Done: the check in the work hue, the row's flood and slide, the gap closing.
-        if (name == "front") {
-            scrolling { rule.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasContentDescription("Done: Follow up on the contract")) }
-            frames(400)
-        }
+        // 11. A work item's Done: the check in the work hue, the row's flood and slide, the gap closing. The work rows sit
+        // below the fold on both displays (the cover screen's one column, the main display's second pane).
+        reveal(hasContentDescription("Done: Follow up on the contract"))
+        frames(400)
         tap(hasContentDescription("Done: Follow up on the contract"))
         film("$name-m11-work", 16, 48, 64, 96, 150, 240, 300, 360, 420, 520, 700)
         frames(2_000)
@@ -323,19 +401,19 @@ class ScreensTest {
         }
         // P23 and P24: the demo's deep-work task takes its minutes and its reading task its pages, through the sheet,
         // before the last two habits clear the board.
-        tap(hasText("Write the thesis chapter"))
+        tapRow(hasText("Write the thesis chapter"))
         frames(1_200)
         tap(hasText("90 min"))
         frames(200)
         tap(hasText("Done · 90 min"))
         frames(1_500)
-        tap(hasText("Read the novel"))
+        tapRow(hasText("Read the novel"))
         frames(1_200)
         tap(hasText("Done · 30 pages"))
         frames(1_500)
-        tap(hasText("Read 20 pages"))
+        tapRow(hasText("Read 20 pages"))
         frames(1_200)
-        tap(hasText("Stretch"))
+        tapRow(hasText("Stretch"))
         film("$name-m2-clear", 300, 480, 560, 620, 660, 700, 760, 820, 900, 1_000, 1_100, 1_300, 1_500)
         frames(2_000)
 
@@ -415,6 +493,30 @@ class ScreensTest {
     /** A tap on the first node matching [m], at the current frame. */
     private fun tap(m: SemanticsMatcher) {
         rule.onAllNodes(m).onFirst().performClick()
+    }
+
+    /**
+     * Health phase 2: a row the Check in row and the lift card above it can push below the fold (the cover screen,
+     * tabletop's top half, the main display's second pane) is scrolled into view first, in whichever list holds it; a
+     * row in view doesn't move. The clock is left as it was (running, or held for a film).
+     */
+    private fun reveal(m: SemanticsMatcher) {
+        val auto = rule.mainClock.autoAdvance
+        rule.mainClock.autoAdvance = true
+        try {
+            val lists = rule.onAllNodes(hasScrollAction())
+            for (i in 0 until lists.fetchSemanticsNodes().size) {
+                if (runCatching { lists[i].performScrollToNode(m) }.isSuccess) break
+            }
+        } finally {
+            rule.mainClock.autoAdvance = auto
+        }
+    }
+
+    /** A row's tap, once it is in view ([reveal]). */
+    private fun tapRow(m: SemanticsMatcher) {
+        reveal(m)
+        tap(m)
     }
 
     /** Snaps the moment at each time (ms after the tap), advancing the clocks between them. */
@@ -762,6 +864,7 @@ class ScreensTest {
         snap("$name-1-check")
         // P21: the Rest tokens chip is on the check's header, on every display.
         rule.onAllNodes(hasText(RestTokenLine.chip(2))).onFirst().assertExists()
+        reveal(hasText("Call the dentist"))
         rule.onAllNodes(hasText("Call the dentist")).onFirst().performClick()
         settle(1_200)
         snap("$name-1b-check-ticked")
@@ -858,6 +961,7 @@ class ScreensTest {
             AppRoot(graph, MutableStateFlow(WindowFacts()), links, { links.value = null }, WebHolder(), {})
         }
         settle()
+        reveal(hasText("Call the dentist"))
         rule.onAllNodes(hasText("Call the dentist")).onFirst().performTouchInput { longClick() }
         settle(1_200)
         rule.onAllNodes(hasText("Done · ~10 min")).onFirst().assertExists()
@@ -865,7 +969,7 @@ class ScreensTest {
         tap(hasText("Done · ~10 min"))
         settle(1_200)
 
-        tap(hasText("Write the thesis chapter"))
+        tapRow(hasText("Write the thesis chapter"))
         settle(1_200)
         rule.onAllNodes(hasText("Pick the minutes")).onFirst().assertExists()
         rule.onAllNodes(hasText("180 min")).onFirst().assertExists()
@@ -894,6 +998,107 @@ class ScreensTest {
         tap(hasText("Done · 30 pages"))
         settle(1_200)
         snap("$name-sheet-6-board")
+    }
+
+    private fun checkin(name: String, cover: Boolean, minCellDp: Float = 49f) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        val links = MutableStateFlow<Uri?>(null)
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), links, { links.value = null }, WebHolder(), {})
+        }
+        settle()
+        // The row under the header: "Check in", no count and no value.
+        rule.onAllNodes(hasText(com.xtnl.app.core.CheckinLine.TITLE)).onFirst().assertExists()
+        snap("$name-check-row")
+
+        links.value = Uri.parse("xtnl://app/checkin?via=tile")
+        settle()
+        val grid = hasContentDescription(com.xtnl.app.core.CheckinLine.GRID_LABEL)
+        rule.onAllNodes(grid).onFirst().assertExists()
+        // §Safety: always visible, with no scrolling, however short the window (it is pinned under the scroll).
+        rule.onAllNodes(hasText(com.xtnl.app.core.CheckinLine.SAFETY_FOOTER)).onFirst().assertIsDisplayed()
+        rule.onAllNodes(hasText(com.xtnl.app.core.CheckinLine.STRESS_QUESTION)).onFirst().assertExists()
+        // One control, its cells at least 49 dp (the cover screen's 475 dp less its margins; 40 dp, the floor, in a short window).
+        val density = ApplicationProvider.getApplicationContext<XtnlApp>().resources.displayMetrics.density
+        val side = rule.onAllNodes(grid).onFirst().fetchSemanticsNode().boundsInRoot.width / density
+        check(side / com.xtnl.app.core.CheckinLine.STEPS >= minCellDp) { "a grid cell is ${side / com.xtnl.app.core.CheckinLine.STEPS} dp" }
+        snapAll("$name-checkin-1-sheet")
+
+        // Tap 1: the bottom right, calm and content.
+        // By the grid's whole size: in a short window the scroll clips its bottom, and the input's width and height are
+        // the visible part's only.
+        val full = rule.onAllNodes(grid).onFirst().fetchSemanticsNode().size
+        rule.onAllNodes(grid).onFirst().performTouchInput { click(androidx.compose.ui.geometry.Offset(full.width * 0.8f, full.height * 0.8f)) }
+        settle(800)
+        rule.onAllNodes(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "Pleasantness +3, energy −3 · Calm, content")).onFirst().assertExists()
+        rule.onAllNodes(hasText(com.xtnl.app.core.CheckinLine.SAFETY_FOOTER)).onFirst().assertIsDisplayed()
+        snapAll("$name-checkin-2-picked")
+
+        // Tap 2: a stress level saves; the sheet closes and the receipt shows with its Undo. In a short window the stress
+        // row is under the fold, as for the user: scrolled to first (a row in view doesn't move), Lifeline still on screen.
+        rule.mainClock.autoAdvance = true
+        rule.onAllNodes(hasText("A little")).onFirst().performScrollTo()
+        settle(400)
+        rule.onAllNodes(hasText(com.xtnl.app.core.CheckinLine.SAFETY_FOOTER)).onFirst().assertIsDisplayed()
+        if (minCellDp < 49f) snapAll("$name-checkin-2b-scrolled")
+        tap(hasText("A little"))
+        settle(1_200)
+        rule.onAllNodes(hasText("Logged ", substring = true)).onFirst().assertExists()
+        val words = rule.onAllNodes(hasText("Calm, content", substring = true)).fetchSemanticsNodes().size
+        // D2: the cover screen (visible on a closed phone) shows the time alone; the main display adds the grid's words.
+        check(if (cover) words == 0 else words > 0) { "the receipt's words on the ${if (cover) "cover" else "main"} display: $words" }
+        snap("$name-checkin-3-logged")
+        tap(hasText("Undo"))
+        settle(1_200)
+        rule.onAllNodes(hasText("Check-in taken back.")).onFirst().assertExists()
+        snap("$name-checkin-4-undone")
+    }
+
+    private fun liftCard(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), MutableStateFlow<Uri?>(null), {}, WebHolder(), {})
+        }
+        settle()
+        val first = hasContentDescription("Done: Bench press 60 kg × 8")
+        val lists = rule.onAllNodes(hasScrollAction())
+        fun scrollTo(m: SemanticsMatcher) {
+            for (i in 0 until lists.fetchSemanticsNodes().size) {
+                if (runCatching { scrolling { lists[i].performScrollToNode(m) } }.isSuccess) break
+            }
+        }
+        scrollTo(first)
+        settle(800)
+        rule.onAllNodes(hasText("Next: Bench press 60 kg × 8")).onFirst().assertExists()
+        rule.onAllNodes(hasText("Set 2 · last 60 × 8")).onFirst().assertExists()
+        snap("$name-lift-1-card")
+
+        // The ✓: the set as the last lift had it, then the rest the server gives under its line.
+        rule.mainClock.autoAdvance = true
+        tap(first)
+        settle(1_200)
+        rule.onAllNodes(hasText("Bench press: logged 60 kg × 8.")).onFirst().assertExists()
+        rule.onAllNodes(hasText("Rest ", substring = true)).onFirst().assertExists()
+        rule.onAllNodes(hasText("Set 3 · last 60 × 8")).onFirst().assertExists()
+        snap("$name-lift-2-rest")
+
+        // Two more: the third copies 60 × 8, the fourth is the last lift's 72.5 × 5, a big jump the web answers.
+        tap(first)
+        settle(1_200)
+        tap(hasContentDescription("Done: Bench press 72.5 kg × 5"))
+        settle(1_200)
+        val jump = hasText("Big jump: 72.5 kg (best 60)", substring = true)
+        scrollTo(hasText(com.xtnl.app.core.SetLine.OPEN_WEB))
+        settle(800)
+        rule.onAllNodes(jump).onFirst().assertExists()
+        rule.onAllNodes(hasText("Next: Overhead press 40 kg × 8")).onFirst().assertExists()
+        snap("$name-lift-3-jump")
     }
 
     /**
@@ -959,9 +1164,16 @@ class ScreensTest {
         val ctx = ApplicationProvider.getApplicationContext<XtnlApp>()
         val data = kotlinx.coroutines.runBlocking { (com.xtnl.app.data.DemoApi().check() as com.xtnl.app.data.Outcome.Ok).value }
         val now = java.time.Instant.now()
-        val queue = com.xtnl.app.data.QueueState(items = listOf(com.xtnl.app.data.QueuedWrite.tick("w-1", "demo", data.day!!, "Stretch", "t-stretch")))
+        // A tick waiting and a line not sent (P8): the title band's note, which a narrow widget must never cut.
+        val queue = com.xtnl.app.data.QueueState(
+            items = listOf(com.xtnl.app.data.QueuedWrite.tick("w-1", "demo", data.day!!, "Stretch", "t-stretch")),
+            notSent = listOf(com.xtnl.app.data.NotSent(com.xtnl.app.data.QueuedWrite.tick("w-2", "demo", data.day!!, "Floss", "t-floss"), "That task no longer exists.")),
+        )
         val view = com.xtnl.app.core.WidgetRows.of(data, queue, now, demo = true)
-        val sizes = listOf("4x2" to androidx.compose.ui.unit.DpSize(440.dp, 200.dp), "4x3" to androidx.compose.ui.unit.DpSize(440.dp, 290.dp), "3x2" to androidx.compose.ui.unit.DpSize(300.dp, 200.dp))
+        val sizes = listOf(
+            "4x2" to androidx.compose.ui.unit.DpSize(440.dp, 200.dp), "4x3" to androidx.compose.ui.unit.DpSize(440.dp, 290.dp),
+            "3x2" to androidx.compose.ui.unit.DpSize(300.dp, 200.dp), "2x2" to androidx.compose.ui.unit.DpSize(180.dp, 200.dp),
+        )
         rule.runOnUiThread { rule.activity.actionBar?.hide() }
         for ((label, size) in sizes) {
             val rv = kotlinx.coroutines.runBlocking {
@@ -977,6 +1189,20 @@ class ScreensTest {
                 rule.activity.setContentView(host)
             }
             settle(800)
+            // The note comes first and is never cut: "1 not sent" fits its line whole at every size.
+            rule.runOnUiThread {
+                val texts = mutableListOf<android.widget.TextView>()
+                fun walk(x: android.view.View) {
+                    if (x is android.widget.TextView) texts += x
+                    if (x is android.view.ViewGroup) for (i in 0 until x.childCount) walk(x.getChildAt(i))
+                }
+                walk(rule.activity.window.decorView)
+                val sub = texts.firstOrNull { it.text.contains("not sent") } ?: error("no sub line at $label")
+                val text = sub.text.toString()
+                val end = text.indexOf("1 not sent") + "1 not sent".length
+                val room = sub.width - sub.totalPaddingLeft - sub.totalPaddingRight
+                check(text.startsWith("1 not sent") && sub.paint.measureText(text, 0, end) <= room) { "the sub line at $label: '$text' in $room px" }
+            }
             snap("$name-widget-$label")
         }
     }

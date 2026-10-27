@@ -39,6 +39,18 @@ class NavTest {
         assertFalse(nav.back())
     }
 
+    /** Health phase 2: the check-in sheet's tick (the tile, the widget, the shortcut, Check's row) is acted on once. */
+    @Test fun aCheckinTickIsTakenOnce() {
+        val nav = Nav()
+        assertFalse(nav.takeCheckin())
+        nav.checkin++
+        assertTrue(nav.takeCheckin())
+        assertFalse(nav.takeCheckin())
+        // xtnl://app/checkin lands on Check with the sheet's tick and its surface (ScreensTest opens it for real).
+        val src = (java.io.File("src/main/java/com/xtnl/app/ui/Nav.kt").takeIf { it.exists() } ?: java.io.File("app/src/main/java/com/xtnl/app/ui/Nav.kt")).readText()
+        assertTrue(Regex("""path == "/checkin" -> \{\s*tab = Tab\.CHECK\s*checkinVia = CheckinLine\.viaOf\(uri\.getQueryParameter\("via"\)\)\s*checkin\+\+""").containsMatchIn(src))
+    }
+
     @Test fun aFocusTickIsTakenOnce() {
         val nav = Nav()
         nav.focusLog++

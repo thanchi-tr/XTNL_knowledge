@@ -10,6 +10,7 @@ import com.xtnl.app.data.TaskItem
 import com.xtnl.app.data.TaskPages
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -54,7 +55,20 @@ class WidgetRowsTest {
         assertEquals("Gym legs, waiting to send", WidgetRows.tickLabel(gym))
         assertEquals("Tick Stretch", WidgetRows.tickLabel(v.rows[1]))
         assertEquals("1 open · 1 kept", v.status)
-        assertEquals("1 waiting to send · 1 not sent", v.note)
+        // P8: what was not sent comes first, and the note before the counts, so a narrow widget's ellipsis never cuts it.
+        assertEquals("1 not sent · 1 waiting to send", v.note)
+        assertEquals("1 not sent · 1 waiting to send · 1 open · 1 kept", WidgetRows.subLine(v))
+        assertEquals("1 open · 1 kept", WidgetRows.subLine(v.copy(note = null)))
+        assertEquals("1 not sent", WidgetRows.subLine(v.copy(status = "", note = "1 not sent")))
+        assertEquals("", WidgetRows.subLine(v.copy(status = "", note = null)))
+    }
+
+    /** The Check in button is its glyph alone under 400 dp (the 3 × 2 cover widget, 300 dp; 180 dp), labelled at 4 × 2 (440 dp). */
+    @Test fun theCheckinButtonIsCompactInANarrowWidget() {
+        assertTrue(WidgetRows.compactCheckin(180f))
+        assertTrue(WidgetRows.compactCheckin(300f))
+        assertFalse(WidgetRows.compactCheckin(440f))
+        assertFalse(WidgetRows.compactCheckin(WidgetRows.CHECKIN_COMPACT_BELOW_DP))
     }
 
     @Test fun aProofRowOpensCheckAndAnOldBoardSaysItsDay() {
@@ -85,6 +99,25 @@ class WidgetRowsTest {
         assertEquals(listOf("t1", "t2") to 2, WidgetRows.fit(rows, 200f).let { (s, n) -> s.map { it.templateId } to n })
         assertEquals(rows to 0, WidgetRows.fit(rows, 290f))
         assertTrue("a row is a 48 dp target", WidgetRows.ROW_DP >= 44)
+    }
+
+    /** Health phase 2 (D2): the title band's "Check in" opens the sheet while the board's check-in is live and not paused; it shows no value. */
+    @Test fun theCheckinButtonFollowsTheSwitchAndShowsNoValue() = runTest {
+        val data = (DemoApi(clock = { now }).check() as Outcome.Ok).value
+        assertTrue(WidgetRows.of(data, QueueState(), now, demo = true).checkin)
+        assertFalse("paused", WidgetRows.of(data.copy(checkin = com.xtnl.app.data.CheckinState(live = true, paused = true)), QueueState(), now).checkin)
+        assertFalse("not live", WidgetRows.of(data.copy(checkin = com.xtnl.app.data.CheckinState(live = false)), QueueState(), now).checkin)
+        assertFalse("an older server", WidgetRows.of(data.copy(checkin = null), QueueState(), now).checkin)
+        assertFalse("nothing read yet", WidgetRows.of(null, QueueState(), now).checkin)
+        assertEquals("Check in", WidgetRows.CHECKIN)
+        assertEquals("/checkin?via=widget", WidgetRows.CHECKIN_PATH)
+        fun src(p: String) = (File("src/main/java/com/xtnl/app/$p").takeIf { it.exists() } ?: File("app/src/main/java/com/xtnl/app/$p")).readText()
+        val widget = src("widget/TodayWidget.kt")
+        val button = Regex("""private fun CheckinButton\(context: Context\) \{[\s\S]*?\n\}\n""").find(widget)?.value.orEmpty()
+        assertTrue(button, button.contains("openApp(context, WidgetRows.CHECKIN_PATH)") && button.contains("GlanceModifier.height(WidgetRows.ROW_DP.dp)"))
+        // The widget's code (its comments aside) never names a check-in's time, count or value.
+        val code = widget.replace(Regex("""/\*[\s\S]*?\*/"""), "").replace(Regex("""//[^\n]*"""), "")
+        for (word in listOf("lastAt", "todayCount", "valence", "energy", "stress", "words")) assertFalse(word, code.contains(word))
     }
 
     /** The budget (ingest-budget-check): a widget tick is one tap: the row's tick runs WidgetTick, which queues it, no dialog. */

@@ -1,6 +1,8 @@
 package com.xtnl.app.data
 
+import com.xtnl.app.core.CheckinLine
 import com.xtnl.app.core.SendLine
+import com.xtnl.app.core.SetLine
 import com.xtnl.app.core.TimeLabels
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -21,6 +23,7 @@ import java.time.LocalDate
  * The offline queue (blueprint P8, decision D34): a tick queued offline before 04:00 and replayed after it books on its
  * original day; a replay with the same clientId writes once; review answers are never queued; a line from an earlier
  * day is kept back, never saved on the wrong day; the server's no sets an item aside, its token holds them all.
+ * Health phase 2: a check-in and a set wait too, each with its own clientId and its own instant, and land once.
  */
 class SendQueueTest {
     private val src = "https://xtnl.example"
@@ -106,7 +109,10 @@ class SendQueueTest {
     }
 
     @Test fun reviewAnswersAreNeverQueued() {
-        assertEquals(listOf("/tasks/complete", "/log", "/work/done"), SendLine.Kind.entries.map { it.path })
+        // Re-pinned on purpose for health phase 2: the check-in (CHECKIN) and the set (SET) wait too; a review answer still never does.
+        assertEquals(listOf("/tasks/complete", "/log", "/work/done", "/checkin", "/lift/set"), SendLine.Kind.entries.map { it.path })
+        assertEquals(listOf("TICK", "LOG", "WORK_DONE", "CHECKIN", "SET"), SendLine.Kind.entries.map { it.name })
+        for (path in listOf("/checkin/undo")) assertNull("$path never waits", SendLine.Kind.ofPath(path))
         for (path in listOf("/review/answer", "/review/queue", "/tasks/undo", "/tasks/makeup", "/mall/buy", "/log/undo", "/ideas")) {
             assertNull("$path never waits", SendLine.Kind.ofPath(path))
         }
@@ -178,6 +184,73 @@ class SendQueueTest {
         q.enqueue(QueuedWrite.tick("k-5", src, day, "Stretch", "t-stretch"))
         assertEquals(SendQueue.Pass.HELD, q.pass())
         assertEquals(2, q.state.value.items.size)
+    }
+
+    /** Health phase 2: a check-in made offline at 03:30 and sent after 04:00 keeps its own instant and its day, and lands once. */
+    @Test fun aCheckinQueuedOfflineReplaysOnceWithItsOwnInstant() = runTest {
+        val server = FakeServer(beforeFour).apply { reachable = false }
+        val q = queue(server)
+        val body = CheckinLine.bodyOf(CheckinLine.Cell(2, -1), stress = 1, via = "widget", at = beforeFour, tookMs = 3_200)
+        assertTrue(q.enqueue(QueuedWrite.checkin("ci-1", src, body)))
+        val item = q.state.value.items.single()
+        assertEquals(SendLine.Kind.CHECKIN, item.kind)
+        assertEquals("its day is its own instant's: 03:30 is still Saturday's", "2026-10-24", item.day)
+        assertEquals("its label is the time alone, never a value", "Check-in at 03:30", item.label)
+        assertEquals(SendQueue.Pass.RETRY, q.pass())
+        // Back online after 04:00; the first try's answer is lost, so the queue sends the same request again.
+        server.now = afterFour
+        server.reachable = true
+        server.loseNextAnswer = true
+        assertEquals(SendQueue.Pass.RETRY, q.pass())
+        val landed = async { q.landed.first() }
+        yield()
+        assertEquals(SendQueue.Pass.DONE, q.pass())
+        assertEquals("one check-in", 1, server.checkins.size)
+        assertEquals("the same body on every try", listOf(body, body), server.checkinCalls)
+        assertEquals("booked when it was made, not when it landed", "2026-10-24T16:30:00Z", server.checkins.single().at)
+        val l = landed.await() as Landed.Checkin
+        assertEquals("Logged 03:30", l.result.line)
+        assertEquals("Check-in sent · Logged 03:30", CheckinLine.sent(l.result.line))
+        assertTrue(q.state.value.items.isEmpty())
+    }
+
+    /** Health phase 2: the server keeps a check-in up to a week back; an older one is set aside unsent, one exactly a week old goes. */
+    @Test fun aCheckinMoreThanAWeekOldIsSetAsideUnsent() = runTest {
+        val server = FakeServer(afterFour)
+        val q = queue(server)
+        // 09:00 Sat 17 Oct, Sydney: 8 life days before Sunday 25 Oct.
+        val old = CheckinLine.bodyOf(CheckinLine.Cell(0, 0), null, "check", Instant.parse("2026-10-16T22:00:00Z"), null)
+        q.enqueue(QueuedWrite.checkin("ci-old", src, old))
+        assertEquals(SendQueue.Pass.DONE, q.pass())
+        assertTrue("never sent", server.checkinCalls.isEmpty())
+        assertEquals("The check-in from Sat 17 Oct is more than a week old, so it wasn't sent.", q.state.value.notSent.single().line)
+        // 09:00 Sun 18 Oct: exactly a week back, still kept by the server.
+        val week = CheckinLine.bodyOf(CheckinLine.Cell(0, 0), null, "check", Instant.parse("2026-10-17T22:00:00Z"), null)
+        q.enqueue(QueuedWrite.checkin("ci-week", src, week))
+        assertEquals(SendQueue.Pass.DONE, q.pass())
+        assertEquals(listOf(week), server.checkins)
+    }
+
+    /** Health phase 2: a set's ✓ with no answer waits, holds the card's next ✓, and lands once with its own instant and no `ord`. */
+    @Test fun aSetQueuedOfflineLandsOnce() = runTest {
+        val server = FakeServer(afterFour).apply { reachable = false }
+        val q = queue(server)
+        val next = LiftNext("e-bench", "bench_press", "Bench press", ord = 2, weightKg = 60.0, reps = 8, fromLast = true, setText = "60 kg × 8")
+        val lift = OpenLift("lift-1", "Push day", next = next)
+        val body = SetLine.bodyOf(lift, next, afterFour.toString())!!
+        assertTrue(q.enqueue(QueuedWrite.liftSet("st-1", src, SetLine.label(next), body)))
+        assertEquals("the card's ✓ waits for it", 1, SetLine.waiting(lift, q.state.value))
+        assertEquals("Bench press 60 kg × 8", q.state.value.items.single().label)
+        assertEquals(SendQueue.Pass.RETRY, q.pass())
+        server.reachable = true
+        server.loseNextAnswer = true
+        assertEquals(SendQueue.Pass.RETRY, q.pass())
+        assertEquals(SendQueue.Pass.DONE, q.pass())
+        assertEquals("one set", 1, server.sets.size)
+        assertEquals("the same body on every try", listOf(body, body), server.setCalls)
+        assertEquals(afterFour.toString(), server.sets.single().doneAt)
+        assertFalse("never an ord: the server takes the movement's next place", liftSetJson(body, "st-1").containsKey("ord"))
+        assertEquals(0, SetLine.waiting(lift, q.state.value))
     }
 
     @Test fun aTickTooOldToBookIsSetAsideUnsent() = runTest {
@@ -273,9 +346,16 @@ class SendQueueTest {
         val first = queue(server, FileQueueStore(file))
         first.enqueue(QueuedWrite.tick("p-1", src, "2026-10-25", "Gym legs", "t-gym", minutes = 45))
         first.enqueue(QueuedWrite.log("p-2", src, "2026-10-25", "buy milk", "task"))
+        // Health phase 2: a check-in and a set come back as they were sent the first time.
+        val ci = CheckinLine.bodyOf(CheckinLine.Cell(-3, 2), 4, "tile", afterFour, 2_100)
+        first.enqueue(QueuedWrite.checkin("p-3", src, ci))
+        val set = LiftSetBody("lift-1", "e-1", afterFour.toString(), "DROP", 47.5, 10)
+        first.enqueue(QueuedWrite.liftSet("p-4", src, "Bench press 47.5 kg × 10", set))
         val again = queue(server, FileQueueStore(file))
         assertEquals(first.state.value.items, again.state.value.items)
         assertEquals(45, again.state.value.items.first().minutes)
+        assertEquals(ci, again.state.value.items[2].checkinBody())
+        assertEquals(set, again.state.value.items[3].setBody())
         dir.deleteRecursively()
     }
 
@@ -322,6 +402,11 @@ internal class FakeServer(var now: Instant, demo: DemoApi = DemoApi()) : XtnlApi
     val ticks = mutableListOf<Booked>()
     val lines = mutableListOf<String>()
     val done = mutableListOf<String>()
+    /** Health phase 2: the check-ins and sets written, and every request that arrived. */
+    val checkins = mutableListOf<CheckinBody>()
+    val checkinCalls = mutableListOf<CheckinBody>()
+    val sets = mutableListOf<LiftSetBody>()
+    val setCalls = mutableListOf<LiftSetBody>()
     /** Each tick request as it arrived: its fields, the day last. */
     val calls = mutableListOf<List<Any?>>()
     private val replies = HashMap<String, Pair<List<Any?>, Outcome<*>>>()
@@ -381,6 +466,31 @@ internal class FakeServer(var now: Instant, demo: DemoApi = DemoApi()) : XtnlApi
         return answer(clientId, listOf(id)) {
             if (id !in done) done += id
             Outcome.Ok(WorkResult(id, now.toString()))
+        }
+    }
+
+    /** POST /checkin: once per clientId, booked at the body's own `at`; the line is the time alone. */
+    override suspend fun checkin(body: CheckinBody, clientId: String): Outcome<CheckinResult> {
+        gate?.await()
+        if (!reachable) return offline
+        refuse?.let { return it }
+        checkinCalls += body
+        return answer(clientId, listOf(body)) {
+            checkins += body
+            val at = Instant.parse(body.at)
+            Outcome.Ok(CheckinResult("mc-${checkins.size}", TimeLabels.lifeDay(at).toString(), "Logged " + TimeLabels.clock(at, h24 = true)))
+        }
+    }
+
+    /** POST /lift/set: once per clientId, at the body's own `doneAt`. */
+    override suspend fun liftSet(body: LiftSetBody, clientId: String): Outcome<LiftSetResult> {
+        gate?.await()
+        if (!reachable) return offline
+        refuse?.let { return it }
+        setCalls += body
+        return answer(clientId, listOf(body)) {
+            sets += body
+            Outcome.Ok(LiftSetResult(LiftSet("s-${sets.size}", body.entryId, sets.size, body.kind ?: "WORKING"), restSec = 180, line = "Bench press: logged 60 kg × 8."))
         }
     }
 }

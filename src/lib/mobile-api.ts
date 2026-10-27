@@ -105,6 +105,9 @@ import {
   type HcWeight,
   type IngestSummary,
 } from "./health-ingest";
+import { SET_KINDS, SET_LIMITS, isSetKind, movementByKey, type SetKind } from "./training-library";
+import { ghostLineOf, repeatDraftsOf, restAfterOf, setLineOf, setTextOf, userLiftMovementOf, type LiftMovement, type SetDraft } from "./training";
+import type { LiftView, LoggedSet, RawLogSetInput, UserMovementView } from "./training-server";
 
 // ── The endpoints ───────────────────────────────────────────────────────────
 
@@ -135,6 +138,9 @@ export const MOBILE_ENDPOINTS: readonly { method: MobileMethod; path: string }[]
   { method: "POST", path: "/mall/buy" },
   { method: "POST", path: "/mall/undo" },
   { method: "POST", path: "/exercise" },
+  { method: "POST", path: "/checkin" },
+  { method: "POST", path: "/checkin/undo" },
+  { method: "POST", path: "/lift/set" },
 ];
 
 // ── The token ───────────────────────────────────────────────────────────────
@@ -208,6 +214,9 @@ export function bad(line: string): never {
 export const MAKEUP_GONE = "That debt no longer exists.";
 /** P22 review: an undo naming a make-up that isn't there (duty.ts undoMakeUpCore). */
 export const MAKEUP_UNDO_GONE = "That make-up no longer exists.";
+/** Health phase 2: training-server LIFT_COPY.NO_LIFT and ENTRY_GONE, a set's lift or movement that isn't there (mobile-api-check holds them the same). */
+export const LIFT_GONE = "That lift is no longer here.";
+export const LIFT_ENTRY_GONE = "That movement is no longer in this lift.";
 
 export const GONE_LINES: ReadonlySet<string> = new Set([
   "That task no longer exists.",
@@ -224,6 +233,9 @@ export const GONE_LINES: ReadonlySet<string> = new Set([
   // or an undo naming a make-up that isn't there (undoMakeUpCore).
   MAKEUP_GONE,
   MAKEUP_UNDO_GONE,
+  // Health phase 2: a set sent for a lift or a movement that isn't there (training-server logSetCore).
+  LIFT_GONE,
+  LIFT_ENTRY_GONE,
 ]);
 
 export const SERVER_LINES: ReadonlySet<string> = new Set([
@@ -1472,6 +1484,235 @@ export function exerciseReplyOf(s: IngestSummary & { line: string }) {
     weights: { ...s.weights },
     refused: s.refused.map((r) => ({ kind: r.kind, externalId: r.externalId, error: r.error })),
     line: s.line,
+  };
+}
+
+// ── /check's check-in (health phase 2; D1, D2, D9) ──────────────────────────
+
+/**
+ * What /check reads of Mind (mind-mobile-cores loadCheckinRead narrows Mind's view to it): the switch in force (live),
+ * the view read (ready), the pause, today's count and the last check-in's instant. Never a value.
+ */
+export interface MobileCheckinRead {
+  live: boolean;
+  ready: boolean;
+  paused: boolean;
+  todayCount: number;
+  lastAt: string | null;
+}
+
+/**
+ * /check's `checkin` (always sent): `live` while the check-in can be drawn (MIND_LAUNCH_DAY in force and Mind's view
+ * read; false before the launch, before the migration and on a failed read, as Today then draws no Check in row),
+ * `paused` while the user paused check-ins on the web, today's count and the last instant. Counts only, copied key by
+ * key: no value, word or tag ever reaches /check (a cached /check can move between phones). With the row not live:
+ * zero and none.
+ */
+export function checkCheckinOf(r: MobileCheckinRead | null) {
+  if (!r || !r.live || !r.ready) return { live: false, lastAt: null, todayCount: 0, paused: false };
+  return { live: true, lastAt: typeof r.lastAt === "string" ? r.lastAt : null, todayCount: Math.max(0, Math.floor(r.todayCount) || 0), paused: r.paused === true };
+}
+
+// ── /check's lift and POST /lift/set (health phase 2; D12, D14-D19) ─────────
+
+/** Where the lift's Keep, Fix and Finish live: Train › Exercise on the web (Lift mode). */
+export const LIFT_WEB_HREF = "/train/exercise";
+
+/** POST /lift/set's fields (and clientId, which it requires). */
+export const LIFT_SET_KEYS = ["sessionId", "entryId", "ord", "kind", "weightKg", "reps", "rir", "toFailure", "amrap", "durationSec", "distanceM", "restSec", "doneAt"] as const;
+
+export const LIFT_NEEDS_CLIENT_ID = "clientId is required here (a UUID): it is the set's key, so a resend saves it once.";
+
+/** After a big jump's own words (training.ts bigJumpLineOf less its "Keep it?"): the set stands, and the question is the web's. */
+export const LIFT_JUMP_NOTE = "Saved as a record. It counts as a new best only once kept on the web's Finish summary; if the number is wrong, fix it on the web.";
+
+/** A movement by key: the library's, else the user's own (archived too, for old sets), as training-server resolverOf reads them. */
+export function liftResolverOf(movements: readonly UserMovementView[]): (key: string) => LiftMovement | null {
+  const own = new Map<string, LiftMovement>(movements.map((m) => [m.key, userLiftMovementOf(m.key, m)]));
+  return (key) => movementByKey(key) ?? own.get(key) ?? null;
+}
+
+/** The set to do next (/check's `lift.next`): where it lands, what it copies, and its words. */
+export interface MobileLiftNext {
+  entryId: string;
+  movementKey: string;
+  name: string;
+  /** The place the set takes (the movement's next): POST /lift/set left without `ord` takes it there. */
+  ord: number;
+  kind: SetKind;
+  /** Kilograms as stored (a bodyweight movement's signed added load); null: none to copy (a hold, or no last lift). */
+  weightKg: number | null;
+  reps: number | null;
+  durationSec: number | null;
+  distanceM: number | null;
+  amrap: boolean;
+  /** The unit the words are in (kg are stored). */
+  unit: LiftView["unit"];
+  /** The figures are the last lift's set (one tap sends them as they are); false: nothing to copy, the app asks for them. */
+  fromLast: boolean;
+  /** '60 kg × 8', '24 kg per dumbbell × 10', 'hold 1:05' (training.ts setTextOf); null with nothing to copy. */
+  setText: string | null;
+  /** The logger's grey line under the fields: 'last 60 × 8' (training.ts ghostLineOf); null with nothing to copy. */
+  ghostLine: string | null;
+}
+
+/** A movement with no set yet and no last lift: one empty working row, as the web logger shows it. */
+const EMPTY_ROW: SetDraft = { ord: 1, kind: "WORKING", chainOf: null, weightKg: null, reps: null, durationSec: null, distanceM: null, amrap: false };
+
+/**
+ * The set to do next, by the web logger's own prefill (lift-model initialDraftsOf): each movement's rows still to do
+ * are its last finished lift's sets past the ones logged today (training.ts repeatDraftsOf: kinds and chains as they
+ * were, no outcomes), or one empty working row for a movement with no set and no last lift. The next is the movement
+ * being worked's (the one with the newest set) while it has a row left, else the first movement in the lift's order
+ * with one; null when every movement's rows are done ("+ Set" and Finish stay with the user). A movement whose key no
+ * longer resolves is passed over (the server would refuse its set).
+ */
+export function liftNextOf(view: Pick<LiftView, "open" | "history" | "movements" | "unit">): MobileLiftNext | null {
+  const open = view.open;
+  if (!open) return null;
+  const resolve = liftResolverOf(view.movements);
+  const plans = [...open.entries]
+    .sort((a, b) => a.ord - b.ord)
+    .flatMap((e) => {
+      const m = resolve(e.movementKey);
+      if (!m) return [];
+      const last = view.history[e.movementKey]?.last?.sets ?? [];
+      const fromLast = last.length > 0;
+      const row = fromLast ? repeatDraftsOf(last)[e.sets.length] : e.sets.length === 0 ? EMPTY_ROW : undefined;
+      return row ? [{ e, m, row, fromLast }] : [];
+    });
+  if (plans.length === 0) return null;
+  const newest = open.entries
+    .flatMap((e) => e.sets.map((s) => ({ entryId: e.id, at: Date.parse(s.doneAt) })))
+    .filter((s) => Number.isFinite(s.at))
+    .sort((a, b) => b.at - a.at)[0];
+  const { e, m, row, fromLast } = plans.find((p) => p.e.id === newest?.entryId) ?? plans[0];
+  return {
+    entryId: e.id,
+    movementKey: e.movementKey,
+    name: m.name,
+    ord: e.sets.reduce((n, s) => Math.max(n, s.ord), 0) + 1,
+    kind: row.kind,
+    weightKg: row.weightKg,
+    reps: row.reps,
+    durationSec: row.durationSec,
+    distanceM: row.distanceM,
+    amrap: row.amrap,
+    unit: view.unit,
+    fromLast,
+    setText: fromLast ? setTextOf(row, m, view.unit) : null,
+    ghostLine: fromLast ? ghostLineOf({ from: "LAST_SESSION", fromOrd: row.ord, draft: row }, m, view.unit) : null,
+  };
+}
+
+/**
+ * /check's `lift` (present only while a lift is open, read by Train › Exercise's own loadLiftView) and POST /lift/set's
+ * `lift` after the set: the open lift's id, name and start, and the set to do next (null when every row is done).
+ * Null with no lift open, before the strength_sets migration and on a failed read.
+ */
+export function checkLiftOf(view: LiftView | null) {
+  if (!view || !view.ready || !view.open) return null;
+  return { sessionId: view.open.id, label: view.open.label, startedAt: view.open.startedAt, next: liftNextOf(view) };
+}
+
+/** A whole number of at least `min`, or absent (left out or null), else BadInput naming the field only. */
+function wholeOf(v: unknown, field: string, min: number, what: string): number | undefined {
+  if (absent(v)) return undefined;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < min) bad(`${field} must be ${what}, or left out.`);
+  return v as number;
+}
+
+/**
+ * POST /lift/set's body (health phase 2; the phone's SET), its shape only (a wrong one is 400): the lift and the
+ * movement (row ids), the set's own time `doneAt` (ISO; the core keeps it inside the lift's start and now), the
+ * clientId (required: the set's key), and the set itself as the web row's ✓ sends it, every field optional: `ord`
+ * (left out: the movement's next place, under its lock), `kind` (WORKING when left out), `weightKg` (kilograms as
+ * stored; a bodyweight movement's signed added load), `reps`, `rir` (0 to 5, 5 is "4+"), `toFailure`, `amrap`,
+ * `durationSec` and `distanceM` (a hold, a carry) and `restSec` (the rest the timer gave before it). The bounds are the
+ * core's (training.ts cleanSetInput): a figure out of range is refused there, in its own words (409).
+ */
+export function liftSetRequestOf(body: Record<string, unknown>): RawLogSetInput & { sessionId: string; entryId: string; clientId: string; doneAt: string } {
+  const sessionId = idOf(body.sessionId, "sessionId");
+  const entryId = idOf(body.entryId, "entryId");
+  const clientId = clientIdOf(body.clientId);
+  if (!clientId) bad(LIFT_NEEDS_CLIENT_ID);
+  const doneAt = instantOf(body.doneAt, "doneAt").toISOString();
+  const kind = body.kind;
+  if (!absent(kind) && !isSetKind(kind)) bad(`kind must be ${SET_KINDS.map((k) => `'${k}'`).join(", ")}, or left out.`);
+  const weightKg = body.weightKg;
+  if (!absent(weightKg) && (typeof weightKg !== "number" || !Number.isFinite(weightKg))) bad("weightKg must be a number of kilograms, or left out.");
+  const distanceM = body.distanceM;
+  if (!absent(distanceM) && (typeof distanceM !== "number" || !Number.isFinite(distanceM) || distanceM < 0)) bad("distanceM must be a number of metres, or left out.");
+  const rir = body.rir;
+  if (!absent(rir) && (typeof rir !== "number" || !Number.isInteger(rir) || rir < 0 || rir > SET_LIMITS.RIR_MAX)) bad(`rir must be a whole number from 0 to ${SET_LIMITS.RIR_MAX} (${SET_LIMITS.RIR_MAX} is 4+), or left out.`);
+  const ord = wholeOf(body.ord, "ord", 1, "a set number of 1 or more");
+  const reps = wholeOf(body.reps, "reps", 0, "a whole number of reps");
+  const durationSec = wholeOf(body.durationSec, "durationSec", 0, "a whole number of seconds");
+  const restSec = wholeOf(body.restSec, "restSec", 0, "a whole number of seconds");
+  const toFailure = boolOf(body.toFailure, "toFailure");
+  const amrap = boolOf(body.amrap, "amrap");
+  return {
+    sessionId,
+    entryId,
+    clientId,
+    doneAt,
+    ...(ord !== undefined ? { ord } : {}),
+    ...(!absent(kind) ? { kind } : {}),
+    ...(!absent(weightKg) ? { weightKg } : {}),
+    ...(reps !== undefined ? { reps } : {}),
+    ...(!absent(rir) ? { rir } : {}),
+    ...(toFailure !== undefined ? { toFailure } : {}),
+    ...(amrap !== undefined ? { amrap } : {}),
+    ...(durationSec !== undefined ? { durationSec } : {}),
+    ...(!absent(distanceM) ? { distanceM } : {}),
+    ...(restSec !== undefined ? { restSec } : {}),
+  };
+}
+
+/** The big jump on the phone: the core's own words less "Keep it?", then what stands (LIFT_JUMP_NOTE). */
+export function liftJumpLineOf(jumpLine: string): string {
+  const head = jumpLine.replace(/\s*Keep it\?\s*$/, "");
+  return `${head} ${LIFT_JUMP_NOTE}`;
+}
+
+/**
+ * POST /lift/set's answer: the set as stored, `duplicate` for a resend the core had already saved (nothing written),
+ * `restSec` the rest timer after it (0: none), `line` in the web row's words ("Bench press: logged 60 kg × 8 · RIR
+ * 2."), `jump` only when the set asks the big-jump question (plain words and the web link: Keep, Confirm and Fix stay
+ * on the web), and `lift`, the lift after the set as /check's `lift` reads it (null when it is no longer open or the read
+ * after failed: the app reads /check again). The core books the rest as if nothing followed; when the lift's next set is
+ * this set's own drop or rest-pause (the same movement, the very next place), the rest is the web logger's before it
+ * (training.ts restAfterOf: none before a drop, 20 s before a rest-pause), so the phone's timer is the web's.
+ */
+export function liftSetReplyOf(v: LoggedSet, view: LiftView | null) {
+  const s = v.set;
+  const entry = view?.open?.entries.find((e) => e.id === s.entryId) ?? null;
+  const m = entry && view ? liftResolverOf(view.movements)(entry.movementKey) : null;
+  const lift = checkLiftOf(view);
+  const next = lift?.next ?? null;
+  const chained = m && next && next.entryId === s.entryId && next.ord === s.ord + 1 && (next.kind === "DROP" || next.kind === "MINI");
+  const line = m && view ? `${m.name}: ${v.replay ? "already logged" : "logged"} ${setLineOf(s, m, view.unit)}.` : v.replay ? "That set was already logged." : "Set logged.";
+  return {
+    set: {
+      id: s.id,
+      entryId: s.entryId,
+      ord: s.ord,
+      kind: s.kind,
+      chainOf: s.chainOf,
+      weightKg: s.weightKg,
+      reps: s.reps,
+      rir: s.rir,
+      toFailure: s.toFailure,
+      amrap: s.amrap,
+      durationSec: s.durationSec,
+      distanceM: s.distanceM,
+      doneAt: s.doneAt,
+    },
+    duplicate: v.replay,
+    restSec: chained ? restAfterOf(s.kind, next.kind, m) : v.restSec,
+    line,
+    ...(v.jump && v.jumpLine ? { jump: { line: liftJumpLineOf(v.jumpLine), webHref: LIFT_WEB_HREF } } : {}),
+    lift,
   };
 }
 

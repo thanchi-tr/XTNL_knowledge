@@ -32,6 +32,7 @@ import androidx.glance.layout.Box
 import androidx.glance.layout.Column
 import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
+import androidx.glance.layout.fillMaxHeight
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
@@ -60,7 +61,9 @@ import com.xtnl.app.ui.theme.Vellum
  * are the last /check's (the stored server's, with its token; demo data's when that is on), read again when the
  * widget is drawn and the board is older than [STALE_MS] or from another day; the queue's waiting ticks show over them
  * (core/WidgetRows). Sized for the Fold's cover screen (4 × 2 cells there) and it fits the main display's grid too: the
- * rows that fit its height, the rest counted ("+2 more"). The title and a row's name open Check.
+ * rows that fit its height, the rest counted ("+2 more"). The title and a row's name open Check. Health phase 2: the
+ * title's band has a "Check in" button while the board's check-in is live (WidgetRows.View.checkin); it opens the
+ * check-in sheet and shows no value (D2).
  */
 class TodayWidget : GlanceAppWidget() {
 
@@ -118,6 +121,7 @@ private object W {
     val ink2 = ColorProvider(day = Vellum.ink2, night = Night.ink2)
     val line = ColorProvider(day = Vellum.lineCtl, night = Night.lineCtl)
     val kept = ColorProvider(day = Vellum.kept, night = Night.kept)
+    val raised = ColorProvider(day = Vellum.raised, night = Night.raised)
     val must = ColorProvider(day = Vellum.must, night = Night.must)
     val habit = ColorProvider(day = Vellum.habit, night = Night.habit)
 }
@@ -133,14 +137,17 @@ internal fun WidgetBody(context: Context, view: WidgetRows.View) {
     val (shown, more) = WidgetRows.fit(view.rows, size.height.value)
     val check = openApp(context, "/check")
     Column(
-        GlanceModifier.fillMaxSize().appWidgetBackground().background(W.card).cornerRadius(20.dp).padding(horizontal = 8.dp, vertical = 6.dp),
+        GlanceModifier.fillMaxSize().appWidgetBackground().background(W.card).cornerRadius(20.dp).padding(horizontal = 8.dp, vertical = 2.dp),
     ) {
-        Row(GlanceModifier.fillMaxWidth().height(40.dp).padding(horizontal = 6.dp).clickable(check), verticalAlignment = Alignment.CenterVertically) {
-            Column(GlanceModifier.defaultWeight()) {
+        // The title's band: 48 dp (the Check in button's target) and 2 dp each side, WidgetRows.HEAD_DP in all.
+        Row(GlanceModifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(GlanceModifier.defaultWeight().fillMaxHeight().padding(horizontal = 6.dp).clickable(check), verticalAlignment = Alignment.CenterVertically) {
                 Text(view.title, style = TextStyle(color = W.ink0, fontSize = 15.sp, fontWeight = FontWeight.Medium), maxLines = 1)
-                val sub = listOfNotNull(view.status.ifEmpty { null }, view.note).joinToString(" · ")
+                // The queue's note first ("1 not sent · 1 waiting to send"), so an end ellipsis cuts the counts, never it.
+                val sub = WidgetRows.subLine(view)
                 if (sub.isNotEmpty()) Text(sub, style = TextStyle(color = W.ink2, fontSize = 12.sp), maxLines = 1)
             }
+            if (view.checkin) CheckinButton(context)
         }
         if (view.empty != null && shown.isEmpty()) {
             Box(GlanceModifier.fillMaxWidth().defaultWeight().padding(horizontal = 6.dp).clickable(check), contentAlignment = Alignment.CenterStart) {
@@ -152,6 +159,32 @@ internal fun WidgetBody(context: Context, view: WidgetRows.View) {
         if (more > 0) {
             Box(GlanceModifier.fillMaxWidth().height(WidgetRows.MORE_DP.dp).padding(horizontal = 6.dp).clickable(check), contentAlignment = Alignment.CenterStart) {
                 Text("+$more more", style = TextStyle(color = W.ink2, fontSize = 12.sp), maxLines = 1)
+            }
+        }
+    }
+}
+
+/**
+ * Health phase 2 (D2): "Check in", a 48 dp target that opens the check-in sheet in the app (xtnl://app/checkin, via
+ * "widget"). The words and the glyph are all it shows: never a past value, a time or a count. Under
+ * [WidgetRows.CHECKIN_COMPACT_BELOW_DP] wide (the 3 × 2 cover widget and smaller) it is the glyph alone in a 48 × 48 dp
+ * target (TalkBack still hears its words), so the title band keeps room for the queue's note.
+ */
+@Composable
+private fun CheckinButton(context: Context) {
+    val compact = WidgetRows.compactCheckin(LocalSize.current.width.value)
+    Box(
+        (
+            if (compact) GlanceModifier.size(WidgetRows.ROW_DP.dp).clickable(openApp(context, WidgetRows.CHECKIN_PATH))
+            else GlanceModifier.height(WidgetRows.ROW_DP.dp).padding(start = 4.dp).clickable(openApp(context, WidgetRows.CHECKIN_PATH))
+        ).semantics { contentDescription = WidgetRows.CHECKIN_LABEL },
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(GlanceModifier.background(W.raised).cornerRadius(16.dp).padding(horizontal = if (compact) 10.dp else 12.dp, vertical = if (compact) 10.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Image(ImageProvider(R.drawable.ic_widget_checkin), contentDescription = null, modifier = GlanceModifier.size(16.dp), colorFilter = ColorFilter.tint(W.ink0))
+            if (!compact) {
+                Spacer(GlanceModifier.width(6.dp))
+                Text(WidgetRows.CHECKIN, style = TextStyle(color = W.ink0, fontSize = 13.sp, fontWeight = FontWeight.Medium), maxLines = 1)
             }
         }
     }

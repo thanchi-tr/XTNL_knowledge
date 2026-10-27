@@ -1,5 +1,6 @@
 package com.xtnl.app.data
 
+import com.xtnl.app.core.CheckinLine
 import com.xtnl.app.core.HealthLine
 import com.xtnl.app.core.IdeaFormat
 import com.xtnl.app.core.LogPreview
@@ -441,6 +442,13 @@ class DemoApi(
                     work = work.filter { !it.done }.map { it.item },
                     level = level,
                     streak = streak,
+                    // Health phase 2, as a server with MIND_LAUNCH_DAY in force sends it: counts only, never a value.
+                    checkin = CheckinState(
+                        live = true, lastAt = checks.maxByOrNull { it.at }?.at?.toString(),
+                        todayCount = checks.count { TimeLabels.lifeDay(it.at) == day }, paused = false,
+                    ),
+                    // As a server with a lift under way sends it: the open lift and its next set.
+                    lift = liftNow(),
                 )
             )
         }
@@ -806,6 +814,159 @@ class DemoApi(
                     weights = weights.copy(added = weights.added + 1)
                 }
                 Outcome.Ok(HealthSyncResult(walks, weights, refused, HealthLine.syncLine(walks, weights, refused.size)))
+            }
+        }
+    }
+
+    // ── The check-in (health phase 2; docs/mobile-api.md POST /checkin, /checkin/undo) ──
+
+    /** A check-in kept here: its id and the instant it was booked at. The demo keeps no value: the counts need none. */
+    private data class DemoCheck(val id: String, val at: Instant)
+    private val checks = mutableListOf<DemoCheck>()
+
+    /**
+     * POST /checkin, as the server answers it: the shape checked (400, the route's words), `at` kept as the core keeps it
+     * (a few minutes ahead booked at the clock, further refused; more than 7 life days back refused, 409), once per
+     * clientId. The answer's line is the time alone; the words are the grid's (mind.ts cellWordsOf). No ledger row.
+     */
+    override suspend fun checkin(body: CheckinBody, clientId: String): Outcome<CheckinResult> {
+        pause(240)
+        val json = JsonObject(checkinJson(body, clientId) - "clientId")
+        return lock.withLock {
+            once(clientId, json) {
+                val now = clock()
+                val at = TimeLabels.parseInstant(body.at) ?: return@once bad("at must be an ISO instant: when the check-in was made.")
+                val steps = "a whole number from ${CheckinLine.MIN} to ${CheckinLine.MAX}"
+                if (!CheckinLine.isValue(body.valence)) return@once bad("valence must be $steps.")
+                if (!CheckinLine.isValue(body.energy)) return@once bad("energy must be $steps.")
+                if (body.stress != null && body.stress !in CheckinLine.STRESS_LEVELS.indices) return@once bad("stress must be a whole number from 0 to 4, or left out.")
+                if (body.trigger != "self" && body.trigger != "prompted") return@once bad("trigger must be 'self' or 'prompted'.")
+                if (body.via !in CheckinLine.VIAS) return@once bad("via must be 'check', 'widget', 'tile' or 'notify'.")
+                if (body.tookMs != null && body.tookMs < 0) return@once bad("tookMs must be a whole number of milliseconds, or left out.")
+                if (at.isAfter(now.plus(Duration.ofMinutes(5)))) return@once Outcome.Err("A check-in can't be logged ahead of time.", code = "conflict", status = 409)
+                val booked = if (at.isAfter(now)) now else at
+                val day = TimeLabels.lifeDay(booked)
+                if (java.time.temporal.ChronoUnit.DAYS.between(day, TimeLabels.lifeDay(now)) > CheckinLine.MAX_AGE_DAYS) {
+                    return@once Outcome.Err("That check-in is more than a week old.", code = "conflict", status = 409)
+                }
+                val id = "mc-" + UUID.randomUUID().toString().take(8)
+                checks += DemoCheck(id, booked)
+                Outcome.Ok(
+                    CheckinResult(
+                        id = id, day = day.toString(), line = "Logged ${TimeLabels.clock(booked, h24 = true)}",
+                        words = CheckinLine.wordsOf(body.valence, body.energy),
+                        undoUntil = now.plusMillis(CheckinLine.UNDO_MS).toString(), duplicate = false,
+                    )
+                )
+            }
+        }
+    }
+
+    /** POST /checkin/undo, as the server answers it: the check-in's own Delete, harmless twice ("Already deleted."). */
+    override suspend fun checkinUndo(id: String, clientId: String): Outcome<CheckinUndoResult> {
+        pause(200)
+        return lock.withLock {
+            if (id.isBlank() || id.length > 64) return@withLock bad("id must be a check-in's id.")
+            val gone = checks.removeAll { it.id == id }
+            Outcome.Ok(CheckinUndoResult(id, if (gone) 1 else 0, if (gone) "Check-in taken back." else "Already deleted."))
+        }
+    }
+
+    // ── The lift (health phase 2; docs/mobile-api.md /check's `lift`, POST /lift/set) ──
+
+    /** One of the last lift's sets (kilograms, as stored). */
+    private data class DemoSet(val kind: String, val kg: Double, val reps: Int)
+
+    /**
+     * A movement of the demo's open lift: its last finished lift's sets (the web logger's prefill), its best working
+     * weight of the 8 weeks before (a set over it by more than 15 % asks the big-jump question) and the rest after a set.
+     */
+    private data class DemoMove(val entryId: String, val key: String, val name: String, val last: List<DemoSet>, val bestKg: Double?, val restSec: Int)
+
+    /**
+     * "Push day", started 25 minutes before the demo began, a warm-up of the bench already done. The bench's last lift
+     * ended on 72.5 × 5, a big jump never kept on the web (so its best is still 60): copied again, it asks again. The
+     * cable fly has no last lift: its first set's figures go in on the web.
+     */
+    private val liftId = "lift-push"
+    private val liftStartedAt: Instant = clock().minus(Duration.ofMinutes(25))
+    private val moves = listOf(
+        DemoMove("e-bench", "bench_press", "Bench press", listOf(DemoSet("WARMUP", 40.0, 10), DemoSet("WORKING", 60.0, 8), DemoSet("WORKING", 60.0, 8), DemoSet("WORKING", 72.5, 5)), bestKg = 60.0, restSec = 180),
+        DemoMove("e-ohp", "overhead_press", "Overhead press", listOf(DemoSet("WORKING", 40.0, 8), DemoSet("WORKING", 40.0, 8), DemoSet("WORKING", 40.0, 6)), bestKg = 42.5, restSec = 180),
+        DemoMove("e-fly", "cable_fly", "Cable fly", emptyList(), bestKg = null, restSec = 90),
+    )
+    private val liftDone: Map<String, MutableList<LiftSet>> = mapOf(
+        "e-bench" to mutableListOf(LiftSet("s-warm", "e-bench", 1, "WARMUP", weightKg = 40.0, reps = 10, doneAt = liftStartedAt.plus(Duration.ofMinutes(8)).toString())),
+        "e-ohp" to mutableListOf(),
+        "e-fly" to mutableListOf(),
+    )
+
+    /** "60", "72.5": a weight as the logger writes it. */
+    private fun kgText(kg: Double): String = if (kg == floor(kg)) kg.toLong().toString() else kg.toString()
+
+    /** The lift as /check sends it: the next set by the web logger's prefill (the movement being worked first, then the lift's order). */
+    private fun liftNow(): OpenLift {
+        val rows = moves.mapNotNull { m ->
+            val done = liftDone.getValue(m.entryId)
+            val fromLast = m.last.isNotEmpty()
+            val row = if (fromLast) m.last.getOrNull(done.size) else if (done.isEmpty()) DemoSet("WORKING", 0.0, 0) else null
+            row?.let { Triple(m, it, fromLast) }
+        }
+        val newest = liftDone.values.flatten().maxByOrNull { it.doneAt.orEmpty() }?.entryId
+        val pick = rows.firstOrNull { it.first.entryId == newest } ?: rows.firstOrNull()
+        val next = pick?.let { (m, r, fromLast) ->
+            LiftNext(
+                entryId = m.entryId, movementKey = m.key, name = m.name, ord = liftDone.getValue(m.entryId).size + 1, kind = r.kind,
+                weightKg = if (fromLast) r.kg else null, reps = if (fromLast) r.reps else null, unit = "kg", fromLast = fromLast,
+                setText = if (fromLast) "${kgText(r.kg)} kg × ${r.reps}" else null,
+                ghostLine = if (fromLast) "last ${kgText(r.kg)} × ${r.reps}" else null,
+            )
+        }
+        return OpenLift(liftId, "Push day", liftStartedAt.toString(), next)
+    }
+
+    /**
+     * POST /lift/set, as the server answers it: the lift and the movement must be there (404, the core's words), the
+     * figures in the core's bounds (409), the set taking the movement's next place, once per clientId. The rest after it is
+     * the movement's (60 after a warm-up); a working set more than 15 % over the best asks the big jump in plain words and
+     * stands as a record. No ledger row.
+     */
+    override suspend fun liftSet(body: LiftSetBody, clientId: String): Outcome<LiftSetResult> {
+        pause(260)
+        val json = JsonObject(liftSetJson(body, clientId) - "clientId")
+        return lock.withLock {
+            once(clientId, json) {
+                val now = clock()
+                if (body.sessionId != liftId) return@once Outcome.Err("That lift is no longer here.", code = "gone", status = 404)
+                val m = moves.firstOrNull { it.entryId == body.entryId } ?: return@once Outcome.Err("That movement is no longer in this lift.", code = "gone", status = 404)
+                val at = TimeLabels.parseInstant(body.doneAt) ?: return@once bad("doneAt must be an ISO instant.")
+                if (at.isAfter(now.plus(Duration.ofMinutes(1)))) return@once Outcome.Err("That set's time isn't valid.", code = "conflict", status = 409)
+                val reps = body.reps
+                if (reps == null || reps !in 1..100) return@once Outcome.Err("Reps from 1 to 100, please.", code = "conflict", status = 409)
+                val kg = body.weightKg ?: 0.0
+                if (kg < 0 || kg > 500) return@once Outcome.Err("A weight from 0 to 500 kg, please.", code = "conflict", status = 409)
+                val kind = body.kind ?: "WORKING"
+                val done = liftDone.getValue(m.entryId)
+                val set = LiftSet(
+                    "s-" + UUID.randomUUID().toString().take(8), m.entryId, done.size + 1, kind, weightKg = kg, reps = reps, amrap = body.amrap,
+                    doneAt = (if (at.isBefore(liftStartedAt)) liftStartedAt else if (at.isAfter(now)) now else at).toString(),
+                )
+                done += set
+                val text = "${kgText(kg)} kg × $reps" + if (body.amrap) " · AMRAP" else ""
+                val after = liftNow()
+                // The web logger's rest (training.ts restAfterOf, as POST /lift/set answers it): none before this set's
+                // drop, 20 s before its rest-pause, else the movement's own (60 after a warm-up).
+                val rest = when {
+                    after.next?.entryId == m.entryId && after.next.kind == "DROP" -> 0
+                    after.next?.entryId == m.entryId && after.next.kind == "MINI" -> 20
+                    kind == "WARMUP" -> 60
+                    else -> m.restSec
+                }
+                val best = m.bestKg
+                val jump = if (kind == "WORKING" && best != null && kg > best * 1.15) {
+                    LiftJump("Big jump: ${kgText(kg)} kg (best ${kgText(best)}). $LIFT_JUMP_NOTE", "/train/exercise")
+                } else null
+                Outcome.Ok(LiftSetResult(set, duplicate = false, restSec = rest, line = "${m.name}: logged $text.", jump = jump, lift = after))
             }
         }
     }
@@ -1304,6 +1465,9 @@ class DemoApi(
             CheckSkill("skill", "Spanish", 0.5, 74),
             CheckSkill("attribute", "Care", 0.869, 31),
         )
+
+        /** The big jump's note after the core's words (mobile-api.ts LIFT_JUMP_NOTE): the set stands; Keep and Fix are the web's. */
+        const val LIFT_JUMP_NOTE = "Saved as a record. It counts as a new best only once kept on the web's Finish summary; if the number is wrong, fix it on the web."
 
         /** The streak multiplier (P29), as the server sends it: 3 judged Full days in a row, min(1.2, 1.05^3) = ×1.16. */
         val DEMO_STREAK_MULT = StreakMultiplier(1.16, 3, floor = false, line = "Streak ×1.16 · day 3")

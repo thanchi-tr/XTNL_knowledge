@@ -76,4 +76,10 @@ object Scores {
 
     /** A Mall purchase (blueprint P19): the CLICK of the Confirm, then the burn cooling in three fading beats. */
     val burn = listOf(Beat(CLICK, 0.65f, 0), Beat(TICK, 0.45f, 110), Beat(TICK, 0.32f, 230), Beat(LOW_TICK, 0.22f, 360))
+
+    /**
+     * A check-in saved (health phase 2; D5): one soft, neutral TICK. A constant: it takes no value, so every pick, every
+     * stress level and every surface feels the same. No sound, no moment, nothing that reads as a reward or a verdict.
+     */
+    val checkIn = listOf(Beat(TICK, 0.30f, 0))
 }

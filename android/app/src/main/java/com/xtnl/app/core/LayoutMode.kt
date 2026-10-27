@@ -65,6 +65,14 @@ object Layouts {
     /** A tabletop half shorter than this can't hold a card; stay in one column. */
     const val MIN_HALF_DP = 200f
 
+    /**
+     * The cover screen (visible on a closed phone; health phase 2, D2), by the display's short side
+     * (Configuration.smallestScreenWidthDp), never its current width: about 475 dp on the cover upright or sideways
+     * (751 × 475), about 704 dp on the main display either way. A window narrower than [COMPACT_MAX] on its short side (a
+     * split screen) and an unknown size (0) count as the cover too: the safe side, as it hides more.
+     */
+    fun onCover(smallestWidthDp: Int): Boolean = smallestWidthDp < COMPACT_MAX
+
     fun widthClass(widthDp: Float): WidthClass = when {
         widthDp < COMPACT_MAX -> WidthClass.COMPACT
         widthDp < MEDIUM_MAX -> WidthClass.MEDIUM

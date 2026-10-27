@@ -103,6 +103,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xtnl.app.core.CalibrationLine
+import com.xtnl.app.core.CheckinLine
 import com.xtnl.app.core.ConditionLine
 import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.FadingLine
@@ -321,6 +322,25 @@ fun CheckEvents(vm: CheckViewModel, spots: CheckSpots) {
                 is CheckViewModel.Event.MakeUpFailed -> { feel?.error(); snacks.error(e.message, e.retry) }
                 // The board-clear moment, once per clear (an event, so coming back to Check doesn't play it again).
                 is CheckViewModel.Event.BoardClear -> scope.launch { boardClear(spots, vm, fx, feel, c, motion, e.templateId, density.density) }
+                // Health phase 2: the check-in's receipt in the plain tone (no colour judgement), its Undo for its 5 seconds.
+                // The haptic played at the tap (Scores.checkIn, the same for every value); nothing plays on the answer.
+                // D2: its words are the main display's; the snackbar picks the wording as it draws (coverMessage on the
+                // cover screen, in either orientation), so a fold swaps it at once and keeps its Undo and its time. With
+                // no time left for Undo (a slow answer, a replayed first reply) it is the receipt alone, never a 1 ms flash.
+                is CheckViewModel.Event.CheckinLogged -> {
+                    val receipt = CheckinLine.receipt(e.line, e.words, cover = false)
+                    if (e.undoMs > 0) snacks.show(receipt, "Undo", forMs = e.undoMs, coverMessage = e.line) { vm.undoCheckin(e.id) }
+                    else snacks.show(receipt, coverMessage = e.line)
+                }
+                is CheckViewModel.Event.CheckinSent ->
+                    if (e.undoMs > 0) snacks.show(e.line, "Undo", forMs = e.undoMs) { vm.undoCheckin(e.id) } else snacks.show(e.line)
+                is CheckViewModel.Event.CheckinQueued -> snacks.show(CheckinLine.QUEUED, "Undo") { vm.cancelCheckin(e.clientId) }
+                is CheckViewModel.Event.CheckinFailed -> { feel?.error(); snacks.error(e.message, e.retry) }
+                is CheckViewModel.Event.CheckinUndone -> snacks.show(e.line)
+                // A set: the server's line; a big jump's question stays on the card (the web answers it).
+                is CheckViewModel.Event.SetLogged -> snacks.show(e.line, long = e.jump != null)
+                is CheckViewModel.Event.SetQueued -> snacks.show(e.message, "Undo") { vm.cancelSet(e.clientId) }
+                is CheckViewModel.Event.SetFailed -> { feel?.error(); snacks.error(e.message, e.retry) }
             }
         }
     }
@@ -491,7 +511,13 @@ private suspend fun boardClear(spots: CheckSpots, vm: CheckViewModel, fx: FxStat
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState, onStartReview: () -> Unit, onOpenSettings: () -> Unit, onUseDemo: () -> Unit) {
+fun CheckScreen(
+    vm: CheckViewModel, spots: CheckSpots, listState: LazyListState, onStartReview: () -> Unit, onOpenSettings: () -> Unit, onUseDemo: () -> Unit,
+    /** Health phase 2: the Check in row opens the check-in sheet (AppRoot holds it). */
+    onCheckin: () -> Unit = {},
+    /** The full app at a path (the lift's Keep, Fix and Finish: Train › Exercise). */
+    onOpenWeb: (String) -> Unit = {},
+) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val c = X.c
     val feel = LocalFeel.current
@@ -599,6 +625,9 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
         )
     }
 
+    // Health phase 2: the lift card's ✓, one tap; a press's haptic, never a moment (a set is a record).
+    val onSet: () -> Unit = { feel?.press(); vm.logSet() }
+
     val pull = rememberPullToRefreshState()
     val top = WindowInsets.safeDrawing.only(WindowInsetsSides.Top).asPaddingValues().calculateTopPadding()
     PullToRefreshBox(
@@ -628,7 +657,9 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 header(data, ui, vm, spots, onOpenSettings)
+                checkin(ui, onCheckin)
                 notSent(ui, vm)
+                lift(ui, onSet, onOpenWeb)
                 tasks(ui, rows, motion)
                 owed(ui, vm)
                 yesterday(ui, yRows, motion)
@@ -648,7 +679,9 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         header(data, ui, vm, spots, onOpenSettings)
+                        checkin(ui, onCheckin)
                         notSent(ui, vm)
+                        lift(ui, onSet, onOpenWeb)
                         tasks(ui, rows, motion)
                         owed(ui, vm)
                         yesterday(ui, yRows, motion)
@@ -709,6 +742,27 @@ private class Rows(
 
 private fun LazyListScope.header(data: CheckData, ui: CheckViewModel.Ui, vm: CheckViewModel, spots: CheckSpots, onOpenSettings: () -> Unit) {
     item(key = "header", contentType = "header") { Header(data, ui, vm, spots, onOpenSettings) }
+}
+
+/**
+ * Health phase 2 (D1, D3): the Check in row, directly under the header on both displays (the cover screen's one
+ * column, the main display's first pane). Only while the server's check-in is live and not paused; it shows no count
+ * and no value, and one tap opens the sheet.
+ */
+private fun LazyListScope.checkin(ui: CheckViewModel.Ui, onCheckin: () -> Unit) {
+    val state = ui.checkin
+    if (!CheckinLine.shows(state)) return
+    item(key = "checkin", contentType = "checkin") {
+        CheckinRow(state, ui.data?.day, onOpen = onCheckin, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+/** Health phase 2 (D12): the open lift's card, under the Not sent card, while /check says a lift is open. */
+private fun LazyListScope.lift(ui: CheckViewModel.Ui, onSet: () -> Unit, onOpenWeb: (String) -> Unit) {
+    if (ui.lift == null) return
+    item(key = "lift", contentType = "lift") {
+        LiftCard(ui, onSet, onOpenWeb, Modifier.padding(top = 4.dp))
+    }
 }
 
 /**

@@ -78,6 +78,10 @@ class CheckCache(context: Context, private val onWrite: () -> Unit = {}) {
                 is Landed.Tick -> ticked(data, item.templateId.orEmpty(), item.day, item.mvv, landed.result.xp)
                 is Landed.Work -> data.copy(work = data.work.filter { it.id != item.workId })
                 is Landed.Log -> data
+                // Health phase 2: a check-in moves only the counts (never a value; the next /check brings them).
+                is Landed.Checkin -> data
+                // A set: the lift after it, as the answer reads it (null: closed, or not read: the next /check says).
+                is Landed.Lift -> landed.result.lift?.let { l -> if (data.lift?.sessionId == l.sessionId) data.copy(lift = l) else data } ?: data
             }
         }
 

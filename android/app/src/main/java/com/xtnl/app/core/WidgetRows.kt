@@ -13,6 +13,10 @@ import java.time.Instant
  * sends at once when it can (data/SendQueue), so it shows "waiting to send" until it lands and then leaves the list. A
  * proof or reading row (P23, P24) needs its minutes or pages, so its tap opens Check instead, as Check's own tap opens
  * the sheet. Planned one-offs, held, skipped, locked and done rows are not listed.
+ *
+ * Health phase 2 (D2): while the server's check-in is live and not paused, the title's band has a "Check in" button
+ * ([View.checkin]) that opens the check-in sheet ([CHECKIN_PATH]). It says nothing else: never a past value, a time or
+ * a count, since the cover screen is visible on a closed phone.
  */
 object WidgetRows {
     /** What a row's tick does. */
@@ -33,15 +37,17 @@ object WidgetRows {
         /** "3 open · 2 kept", or why there is nothing ("Can't reach XTNL"). */
         val status: String,
         val rows: List<Row>,
-        /** "2 waiting to send" and "1 not sent", or null. */
+        /** "1 not sent" and "2 waiting to send" (the one to act on first), or null. */
         val note: String?,
         /** Nothing to show, and why. */
         val empty: String?,
+        /** Health phase 2: the "Check in" button shows (the board's check-in is live and not paused). */
+        val checkin: Boolean = false,
     )
 
     /** A row's height (dp): its tick is a 48 dp target. */
     const val ROW_DP = 48
-    /** The title's band and the padding around it (dp). */
+    /** The title's band (48 dp, the Check in button's target) and the padding around it (dp). */
     const val HEAD_DP = 52
     const val MAX_ROWS = 6
 
@@ -61,6 +67,22 @@ object WidgetRows {
     const val NOTHING_OPEN = "Nothing open in Must or Habits."
     const val NO_BOARD = "Open XTNL to read today's board."
 
+    /** Health phase 2: the button's words, its link (the sheet, sent with via "widget") and TalkBack's words. */
+    const val CHECKIN = "Check in"
+    const val CHECKIN_PATH = "/checkin?via=widget"
+    const val CHECKIN_LABEL = "Check in: opens the check-in"
+
+    /** Under this width (dp) the Check in button is its glyph alone (48 × 48 dp), so the title band keeps its note. */
+    const val CHECKIN_COMPACT_BELOW_DP = 400f
+
+    fun compactCheckin(widthDp: Float): Boolean = widthDp < CHECKIN_COMPACT_BELOW_DP
+
+    /**
+     * The line under the title: the queue's note first ("1 not sent · 1 waiting to send"), then the counts ("3 open · 3
+     * kept"), so an end ellipsis in a narrow widget cuts the counts and never what waits or was not sent.
+     */
+    fun subLine(v: View): String = listOfNotNull(v.note, v.status.ifEmpty { null }).joinToString(" · ")
+
     private val LANES = listOf("MUST", "HABIT")
 
     /**
@@ -70,7 +92,7 @@ object WidgetRows {
     fun of(data: CheckData?, queue: QueueState, now: Instant, demo: Boolean = false, offline: Boolean = false): View {
         val waitingLine = SendLine.waitingLine(queue.items.size)?.let { if (queue.held != null) "$it · ${SendLine.HELD}" else it }
         val notSent = queue.notSent.size.takeIf { it > 0 }?.let { "$it not sent" }
-        val note = listOfNotNull(waitingLine, notSent).joinToString(" · ").ifEmpty { null }
+        val note = listOfNotNull(notSent, waitingLine).joinToString(" · ").ifEmpty { null }
         if (data == null) return View("Today", "", emptyList(), note, NO_BOARD)
         val today = TimeLabels.lifeDay(now).toString()
         val title = (if (data.day == null || data.day == today) "Today" else data.dayLabel ?: data.day) + if (demo) " · demo" else ""
@@ -88,7 +110,7 @@ object WidgetRows {
         val open = rows.count { !it.waiting }
         val kept = data.tasks.count { it.lane in LANES && it.kept } + rows.count { it.waiting }
         val status = listOfNotNull("$open open", "$kept kept".takeIf { kept > 0 }, "offline".takeIf { offline }).joinToString(" · ")
-        return View(title, status, rows, note, if (rows.isEmpty()) NOTHING_OPEN else null)
+        return View(title, status, rows, note, if (rows.isEmpty()) NOTHING_OPEN else null, checkin = CheckinLine.shows(data.checkin))
     }
 
     /** One tap ticks every row but a proof or reading one (Check's own rule, ProofLine.tapOf), which opens Check. */

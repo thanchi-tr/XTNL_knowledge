@@ -3,18 +3,27 @@ package com.xtnl.app.ui.check
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xtnl.app.AppGraph
+import com.xtnl.app.core.CheckinLine
 import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.OwedLine
 import com.xtnl.app.core.QuestLine
 import com.xtnl.app.core.SendLine
+import com.xtnl.app.core.SetLine
 import com.xtnl.app.core.StatusLine
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.core.TickNote
+import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.core.WalletLine
 import com.xtnl.app.core.YesterdayLine
 import com.xtnl.app.data.CheckData
+import com.xtnl.app.data.CheckinBody
+import com.xtnl.app.data.CheckinState
 import com.xtnl.app.data.DailyQuests
 import com.xtnl.app.data.LevelInfo
+import com.xtnl.app.data.LiftJump
+import com.xtnl.app.data.LiftSetBody
+import com.xtnl.app.data.LiftSetResult
+import com.xtnl.app.data.OpenLift
 import com.xtnl.app.data.Outcome
 import com.xtnl.app.data.Landed
 import com.xtnl.app.data.OwedItem
@@ -52,6 +61,9 @@ import java.util.UUID
  * has a row on both lanes. P8: a tick carries its row's own life day, fixed at
  * the tap; one that gets no answer at all (and a work item's Done) waits on the
  * phone (data/SendQueue) and stays ticked, "waiting to send", until it lands.
+ * Health phase 2: the check-in (POST /checkin, its undo) and the open lift's ✓ (POST /lift/set) go from here too, each
+ * with its own clientId and its own instant fixed at the tap; one that gets no answer at all waits on the phone (CHECKIN,
+ * SET). Both are records: nothing here depends on a check-in's value, and its words reach only the receipt.
  */
 class CheckViewModel(private val graph: AppGraph) : ViewModel() {
 
@@ -105,7 +117,22 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         val owedPicks: Map<String, OwedPick> = emptyMap(),
         /** P8: the offline queue, this source's: what waits to send, and what was not sent. */
         val queue: QueueState = QueueState(),
+        /** Health phase 2: the lift the card's own lines below are for (its sessionId); another lift, or none, drops them. */
+        val setFor: String? = null,
+        /** When the rest after the last set here ends (wall clock); null with none (a drop follows at once). */
+        val restEndsAtMs: Long? = null,
+        /** The last set's line here ("Bench press: logged 60 kg × 8."), and its big jump when it asked one. */
+        val setLine: String? = null,
+        val jump: LiftJump? = null,
+        /** A set's answer is out: the ✓ waits for it. */
+        val setPending: Boolean = false,
     ) {
+        /** Health phase 2: /check's check-in block (counts only, never a value); null from an older server. */
+        val checkin: CheckinState? get() = data?.checkin
+        /** The open lift and its next set; null with none open. */
+        val lift: OpenLift? get() = data?.lift
+        /** The open lift's sets waiting on the phone: the ✓ waits for them (the next set is the server's to name). */
+        val setsWaiting: Int get() = SetLine.waiting(lift, queue)
         /** P22: the open debts, the server's own (the last /check, or a make-up's answer). */
         val owed: List<OwedItem> get() = data?.owed.orEmpty()
         /** P22: the server has Duty switched on (/check's dutyOn): the owed cards' actions run. */
@@ -187,6 +214,23 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         data class MadeUp(val line: String, val repaid: Boolean, val undo: (() -> Unit)? = null) : Event
         /** P22: the server refused it (or couldn't be reached: then [retry] sends the same action again, the same clientId). */
         data class MakeUpFailed(val message: String, val retry: (() -> Unit)?) : Event
+        /**
+         * Health phase 2: a check-in landed: the receipt's [line] (the time alone, safe anywhere) and the pick's [words]
+         * (the main display's receipt only), with Undo for [undoMs].
+         */
+        data class CheckinLogged(val id: String, val line: String, val words: String?, val undoMs: Long) : Event
+        /** One the queue landed later: its line alone (never the words), with Undo while its window is still open. */
+        data class CheckinSent(val id: String, val line: String, val undoMs: Long) : Event
+        /** A check-in with no answer waits on the phone; its Undo takes it off the phone. */
+        data class CheckinQueued(val clientId: String) : Event
+        /** The server refused it, in its own words; [retry] (a fault, no answer) sends the same body with the same clientId. */
+        data class CheckinFailed(val message: String, val retry: (() -> Unit)?) : Event
+        data class CheckinUndone(val line: String) : Event
+        /** A set landed: the server's line; [jump] when it asked the big-jump question (the card says where to answer it). */
+        data class SetLogged(val line: String, val jump: LiftJump?) : Event
+        /** A set with no answer waits on the phone; its Undo takes it off the phone. */
+        data class SetQueued(val clientId: String, val message: String) : Event
+        data class SetFailed(val message: String, val retry: (() -> Unit)?) : Event
     }
 
     private val _ui = MutableStateFlow(Ui())
@@ -283,6 +327,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                         _events.tryEmit(Event.Note(SendLine.NOT_SENT_TITLE + ": Done on " + n.item.label + ". " + n.line))
                     }
                     SendLine.Kind.LOG -> Unit
+                    // Health phase 2: a check-in's label is its time, a set's its movement and figures: never a value.
+                    SendLine.Kind.CHECKIN, SendLine.Kind.SET -> _events.tryEmit(Event.Note(SendLine.NOT_SENT_TITLE + ": " + n.item.label + ". " + n.line))
                 }
             }
         }
@@ -296,6 +342,19 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         if (l.item.source != graph.source) return
         // A Done that landed stays off the list until /check (read again now) no longer lists it.
         if (l is Landed.Work) _ui.update { it.copy(workHidden = it.workHidden + l.item.workId.orEmpty()) }
+        // Health phase 2: a check-in the queue landed says so with its line alone (never the words), Undo while it may.
+        if (l is Landed.Checkin) {
+            countCheckin(l.result.day, l.item.at.orEmpty())
+            val serverNow = SendLine.serverNow(System.currentTimeMillis(), offsetMs()).toEpochMilli()
+            _events.tryEmit(Event.CheckinSent(l.result.id, CheckinLine.sent(l.result.line), CheckinLine.undoMs(l.result.undoUntil, serverNow)))
+            return
+        }
+        // A set the queue landed: the lift after it (its next set), no rest timer (it was done a while ago).
+        if (l is Landed.Lift) {
+            setLanded(l.item.liftId.orEmpty(), l.result, restFromMs = null)
+            _events.tryEmit(Event.SetLogged(SetLine.sent(l.item.label, l.result.line), l.result.jump))
+            return
+        }
         if (l !is Landed.Tick) return
         val key = rowKeyOf(l.item) ?: return
         val r = l.result
@@ -744,6 +803,157 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         if (graph.sendQueue.cancel(waiting.clientId)) {
             _ui.update { it.copy(workHidden = it.workHidden - item.id, workClosing = it.workClosing - item.id) }
             _events.tryEmit(Event.Note(SendLine.TAKEN_BACK))
+        } else {
+            _events.tryEmit(Event.Note(SendLine.SENDING_NOW))
+        }
+    }
+
+    // ── The check-in (health phase 2; D1, D2, D5, D9) ──────────────────────────
+
+    /**
+     * A check-in from the sheet: the grid's [cell], the stress level or none, the surface it came from ([via]) and how
+     * long the sheet took. Its instant is fixed here, at the tap (the server's clock as best known), and sent as is on
+     * every try, so a Retry and the queue's replay are the same request and it is logged once. One that gets no answer at
+     * all waits on the phone (CHECKIN) and is booked when it was made. A record (D5): its answer moves only the counts.
+     */
+    fun checkin(cell: CheckinLine.Cell, stress: Int?, via: String, tookMs: Long?, clientId: String = UUID.randomUUID().toString()) {
+        val at = SendLine.serverNow(System.currentTimeMillis(), offsetMs())
+        sendCheckin(CheckinLine.bodyOf(cell, stress, via, at, tookMs), clientId)
+    }
+
+    private fun sendCheckin(body: CheckinBody, clientId: String) {
+        val source = graph.source
+        viewModelScope.launch {
+            val r = graph.api.checkin(body, clientId)
+            if (source != graph.source) return@launch
+            when (r) {
+                is Outcome.Ok -> {
+                    countCheckin(r.value.day, body.at)
+                    val serverNow = SendLine.serverNow(System.currentTimeMillis(), offsetMs()).toEpochMilli()
+                    _events.tryEmit(Event.CheckinLogged(r.value.id, r.value.line, r.value.words, CheckinLine.undoMs(r.value.undoUntil, serverNow)))
+                }
+                is Outcome.Err -> {
+                    // No answer at all: it waits on the phone with the same clientId and body. Demo data never gets here.
+                    if (r.offline && graph.sendQueue.enqueue(QueuedWrite.checkin(clientId, source, body))) {
+                        _events.tryEmit(Event.CheckinQueued(clientId))
+                        return@launch
+                    }
+                    // A fault (or no answer the queue couldn't keep) is sent again as it was; a refusal says why, in the server's words.
+                    val retry = if (r.offline || r.code == "server" || (r.status ?: 0) >= 500) ({ sendCheckin(body, clientId) }) else null
+                    _events.tryEmit(Event.CheckinFailed(r.message, retry))
+                }
+            }
+        }
+    }
+
+    /** The counts follow a check-in that landed (today's count if it is today's, the newest instant), until the next /check. */
+    private fun countCheckin(day: String?, at: String) {
+        _ui.update { u ->
+            val d = u.data ?: return@update u
+            val c = d.checkin ?: return@update u
+            val newest = listOfNotNull(c.lastAt, at.takeIf { TimeLabels.parseInstant(it) != null }).maxByOrNull { TimeLabels.parseInstant(it)?.toEpochMilli() ?: 0L }
+            u.copy(data = d.copy(checkin = c.copy(todayCount = c.todayCount + if (day != null && day == d.day) 1 else 0, lastAt = newest)))
+        }
+    }
+
+    /** The receipt's Undo: the check-in's own Delete. It never waits: with no answer it says so, and the check-in stays for the web. */
+    fun undoCheckin(id: String) {
+        val source = graph.source
+        viewModelScope.launch {
+            val r = graph.api.checkinUndo(id, UUID.randomUUID().toString())
+            if (source != graph.source) return@launch
+            when (r) {
+                is Outcome.Ok -> {
+                    _events.tryEmit(Event.CheckinUndone(r.value.line))
+                    graph.changes.tryEmit("checkin-undo")
+                }
+                is Outcome.Err -> _events.tryEmit(Event.Note(if (r.offline) CheckinLine.UNDO_OFFLINE else r.message))
+            }
+        }
+    }
+
+    /**
+     * Undo on a check-in still waiting on the phone: taken off it; one on its way waits for its answer. It waits only
+     * because its first try got no answer, which may have landed, so the line says where to delete one that did.
+     */
+    fun cancelCheckin(clientId: String) {
+        _events.tryEmit(Event.Note(if (graph.sendQueue.cancel(clientId)) CheckinLine.TAKEN_BACK else SendLine.SENDING_NOW))
+    }
+
+    // ── The open lift's ✓ (health phase 2; D12) ────────────────────────────────
+
+    /**
+     * The lift card's ✓: the next set as /check named it, sent as it is (SetLine.bodyOf), its instant fixed at the tap.
+     * One at a time: while a set's answer is out, or one waits on the phone, the ✓ waits too (the next set is the
+     * server's to name). One that gets no answer at all waits on the phone (SET) and lands once. The answer brings the
+     * rest, the line, a big jump's question (the web's to answer) and the lift after it.
+     */
+    fun logSet(clientId: String = UUID.randomUUID().toString()) {
+        val u = _ui.value
+        val lift = u.lift ?: return
+        val next = lift.next ?: return
+        if (u.setPending || u.setsWaiting > 0) return
+        // The clock is read once: the set's time and the rest's start are both the tap's (the web's LiftLogger counts the
+        // rest from the ✓, not from the answer).
+        val tapMs = System.currentTimeMillis()
+        val doneAt = SendLine.serverNow(tapMs, offsetMs()).toString()
+        val body = SetLine.bodyOf(lift, next, doneAt) ?: return
+        sendSet(body, SetLine.label(next), clientId, tapMs)
+    }
+
+    private fun sendSet(body: LiftSetBody, label: String, clientId: String, tapMs: Long) {
+        val source = graph.source
+        _ui.update { it.copy(setPending = true, setFor = body.sessionId, jump = null) }
+        viewModelScope.launch {
+            val r = graph.api.liftSet(body, clientId)
+            if (source != graph.source) return@launch
+            when (r) {
+                is Outcome.Ok -> {
+                    setLanded(body.sessionId, r.value, restFromMs = tapMs)
+                    _events.tryEmit(Event.SetLogged(r.value.line ?: SetLine.sent(label, null), r.value.jump))
+                }
+                is Outcome.Err -> {
+                    _ui.update { it.copy(setPending = false) }
+                    if (r.offline && graph.sendQueue.enqueue(QueuedWrite.liftSet(clientId, source, label, body))) {
+                        _events.tryEmit(Event.SetQueued(clientId, SetLine.queued(label)))
+                        return@launch
+                    }
+                    // A lift or movement gone, or a lift finished elsewhere: the card follows the server again.
+                    if (r.code == "gone" || r.code == "conflict") graph.changes.tryEmit("lift")
+                    // A Retry is the same set, so its rest still counts from the tap.
+                    val retry = if (r.offline || r.code == "server" || (r.status ?: 0) >= 500) ({ sendSet(body, label, clientId, tapMs) }) else null
+                    _events.tryEmit(Event.SetFailed(r.message, retry))
+                }
+            }
+        }
+    }
+
+    /**
+     * A set's answer: the card's lines, the rest from [restFromMs] (the ✓'s tap, as the web's LiftLogger counts it: a
+     * rest already over when a slow answer lands shows "Rest done"; null, one the queue landed a while ago: no timer),
+     * the lift after it (none read: /check again).
+     */
+    private fun setLanded(sessionId: String, v: LiftSetResult, restFromMs: Long?) {
+        _ui.update { u ->
+            val d = u.data
+            val lift = v.lift
+            u.copy(
+                setPending = false, setFor = sessionId, setLine = v.line, jump = v.jump,
+                restEndsAtMs = SetLine.restEndsAt(restFromMs, v.restSec, u.restEndsAtMs),
+                data = if (d != null && lift != null && d.lift?.sessionId == lift.sessionId) d.copy(lift = lift) else d,
+            )
+        }
+        if (v.lift == null) graph.changes.tryEmit("lift")
+    }
+
+    /**
+     * Undo on a set still waiting on the phone: taken off it; one on its way waits for its answer. Its first try may have
+     * landed, so the line says so, and /check is read again so the card's next set is the server's.
+     */
+    fun cancelSet(clientId: String) {
+        if (graph.sendQueue.cancel(clientId)) {
+            _events.tryEmit(Event.Note(SetLine.TAKEN_BACK))
+            graph.changes.tryEmit("lift")
         } else {
             _events.tryEmit(Event.Note(SendLine.SENDING_NOW))
         }

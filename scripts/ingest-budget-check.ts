@@ -21,12 +21,19 @@
  *      rule). The quick-settings tile opens the quick line at its task section, as the Quick task shortcut does.
  *   5. The check-in on the web (health-2026-10-27.md D2, D3; brief §2.1, §4) is 1 tap to open plus 2: Today's strip and
  *      Body › Mind's Check in open the sheet in one tap; in it the grid tap picks, and a stress tap then saves (while
- *      no word or tag was added), or Save saves the grid alone. The phone's Check row, widget and tile (phase 2) join
- *      this part when they exist.
+ *      no word or tag was added), or Save saves the grid alone. The phone's Check row, widget and tile join it in part 6.
+ *   6. The check-in on the phone (health phase 2; D2; brief §2.4, §4) is 1 tap to open plus 2, the web's count: the
+ *      cover widget's Check in button (48 dp) and the Check in tile (it asks to unlock first on the lock screen) open
+ *      the sheet in one tap, and so do Check's Check in row and the launcher's Check in shortcut; in the sheet the grid
+ *      tap picks and a stress tap saves, or Save saves the grid alone. Check's "2" (brief §4) is the sheet's two, as the
+ *      web's is: the row opens the same sheet as the web's strip (D3) rather than holding the grid inline (§2.4).
+ *   7. A set done as last time is 1 tap on the phone (health phase 2; brief §3.5): the open lift's card on Check has a
+ *      56 dp ✓ that sends the next set as /check names it (the last lift's figures), or queues it (SET) with no answer.
  *
  * What is measured and what is wiring (P6 review): part 2's count is derived (the keys enterAction and the gates take,
  * and the writes tickNamedRowCore makes through its stubs), and so is part 1's key (one keydown through decideBoardKey,
- * whose run is the tick, and nothing left waiting after it). The taps of parts 1, 3, 4 and 5 are wiring pins: they read
+ * whose run is the tick, and nothing left waiting after it). Part 6's and 7's totals are the length of a path whose
+ * every tap is pinned (an unpinned tap fails it). The taps of parts 1, 3, 4, 5, 6 and 7 are wiring pins: they read
  * the source for a path with nothing between the tap and the tick or the save (no confirm, no sheet, no screen
  * opened), so they fail when one is added on that path, and their names say "wiring", never a measured count.
  */
@@ -49,6 +56,8 @@ const QUICK_CHECK_TAPS = 2;
 /** The check-in: one tap opens the sheet, then two (the grid, and a stress level or Save). */
 const CHECK_IN_OPEN_TAPS = 1;
 const CHECK_IN_TAPS = 2;
+/** A set done as last time: the lift card's ✓ (brief §3.5). */
+const SET_TAPS = 1;
 
 const ROOT = join(__dirname, "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8").replace(/\r\n/g, "\n");
@@ -234,10 +243,116 @@ function checkIn(): void {
   );
 }
 
+// ── 6. The check-in on the phone: 1 tap to open + 2 (health phase 2) ────────
+function checkInPhone(): void {
+  console.log(`\n── 6. The check-in on the phone: ${CHECK_IN_OPEN_TAPS} tap to open + ${CHECK_IN_TAPS}`);
+  const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  const sheet = code(read("android/app/src/main/java/com/xtnl/app/ui/check/CheckinSheet.kt"));
+  const screen = code(read("android/app/src/main/java/com/xtnl/app/ui/check/CheckScreen.kt"));
+  const root = code(read("android/app/src/main/java/com/xtnl/app/ui/AppRoot.kt"));
+  const nav = code(read("android/app/src/main/java/com/xtnl/app/ui/Nav.kt"));
+  const activity = code(read("android/app/src/main/java/com/xtnl/app/MainActivity.kt"));
+  const tile = code(read("android/app/src/main/java/com/xtnl/app/tile/CheckinTileService.kt"));
+  const widget = code(read("android/app/src/main/java/com/xtnl/app/widget/TodayWidget.kt"));
+  const rows = code(read("android/app/src/main/java/com/xtnl/app/core/WidgetRows.kt"));
+  const manifest = read("android/app/src/main/AndroidManifest.xml");
+  const xml = read("android/app/src/main/res/xml/shortcuts.xml");
+
+  // The one sheet every surface opens: AppRoot holds it over any screen and opens it on Nav's tick, nothing between.
+  const host =
+    /LaunchedEffect\(nav\.checkin\) \{\s*if \(!nav\.takeCheckin\(\)\) return@LaunchedEffect\s*if \(CheckinLine\.canOpen\(checkVm\.ui\.value\.data\?\.checkin\)\) checkinVia = nav\.checkinVia else snacks\.show\(CheckinLine\.NOT_OPEN\)\s*\}/.test(root) &&
+    /checkinVia\?\.let \{ via ->\s*CheckinSheet\(/.test(root);
+  // A deep link (the widget, the tile, the shortcut): the app takes it as it opens (MainActivity → Nav.open), lands on
+  // Check and ticks the sheet open with its surface.
+  const link =
+    /if \(data\.scheme == "xtnl"\) deepLinks\.value = data/.test(activity) && /link\?\.let \{ nav\.open\(it\); onDeepLinkHandled\(\) \}/.test(root) &&
+    /path == "\/checkin" -> \{\s*tab = Tab\.CHECK\s*checkinVia = CheckinLine\.viaOf\(uri\.getQueryParameter\("via"\)\)\s*checkin\+\+/.test(nav);
+  check("phone (wiring): every surface opens the one sheet AppRoot holds, on Nav's tick, with nothing between (a check-in that isn't live gets a line)", host);
+  check("phone (wiring): xtnl://app/checkin, the deep link, lands on Check with the sheet ticked open (MainActivity → Nav.open)", link);
+
+  // Each surface's opening tap.
+  const widgetOpens =
+    link && /if \(view\.checkin\) CheckinButton\(context\)/.test(widget) &&
+    /GlanceModifier\.height\(WidgetRows\.ROW_DP\.dp\)\.padding\(start = 4\.dp\)\.clickable\(openApp\(context, WidgetRows\.CHECKIN_PATH\)\)/.test(widget) &&
+    // Narrower than 400 dp (the 3 × 2 cover widget) it is the glyph alone, the same 48 dp target and the same one tap.
+    /if \(compact\) GlanceModifier\.size\(WidgetRows\.ROW_DP\.dp\)\.clickable\(openApp\(context, WidgetRows\.CHECKIN_PATH\)\)/.test(widget) &&
+    /const val CHECKIN_PATH = "\/checkin\?via=widget"/.test(rows) && /const val ROW_DP = 48/.test(rows) &&
+    /private fun openApp\(context: Context, path: String\) = actionStartActivity\(\s*Intent\(Intent\.ACTION_VIEW, Uri\.parse\("xtnl:\/\/app\$path"\)\)\.setComponent\(ComponentName\(context, MainActivity::class\.java\)\),\s*\)/.test(widget);
+  const tileOpens =
+    link && /const val CHECKIN_URI = "xtnl:\/\/app\/checkin\?via=tile"/.test(tile) &&
+    /override fun onClick\(\) \{\s*super\.onClick\(\)\s*if \(isLocked\) unlockAndRun \{ open\(\) \} else open\(\)\s*\}/.test(tile) &&
+    /Intent\(Intent\.ACTION_VIEW, Uri\.parse\(CHECKIN_URI\), this, MainActivity::class\.java\)/.test(tile) &&
+    /android:name="\.tile\.CheckinTileService"[\s\S]*?android:permission="android\.permission\.BIND_QUICK_SETTINGS_TILE"[\s\S]*?android\.service\.quicksettings\.action\.QS_TILE/.test(manifest);
+  const rowOpens =
+    /\.clickable\(role = Role\.Button, onClickLabel = "Open the check-in", onClick = onOpen\)/.test(sheet) &&
+    /CheckinRow\(state, ui\.data\?\.day, onOpen = onCheckin,/.test(screen) && (screen.match(/checkin\(ui, onCheckin\)/g) ?? []).length === 2 &&
+    /onCheckin = \{ nav\.checkinVia = "check"; nav\.checkin\+\+ \}/.test(root);
+  const shortcutOpens = link && /android:shortcutId="check_in"[\s\S]*?android:data="xtnl:\/\/app\/checkin"/.test(xml);
+
+  // The sheet's two: tap 1 the grid picks (one tap, nothing to confirm); tap 2 a stress level saves once the grid is
+  // picked, or Save saves the grid alone; the save is the view model's send in that tap (no timer saves on its own).
+  const grid = /detectTapGestures \{ p -> CheckinLine\.cellAt\(p\.x, p\.y, size\.width\.toFloat\(\), size\.height\.toFloat\(\)\)\?\.let\(pick\) \}/.test(sheet);
+  const stressOrSave = /if \(CheckinLine\.stressSaves\(cell\)\) \{\s*stress = i\s*save\(i\)/.test(sheet) && /XButton\(CheckinLine\.SAVE, \{ save\(stress\) \}/.test(sheet);
+  const saves =
+    /onSave\(pick, level, CheckinLine\.tookMs\(openedAt, SystemClock\.elapsedRealtime\(\)\)\)/.test(sheet) &&
+    /onSave = \{ cell, stress, tookMs ->\s*checkinVia = null\s*checkVm\.checkin\(cell, stress, via, tookMs\)/.test(root) &&
+    !/delay\(|LaunchedEffect|postDelayed/.test(sheet);
+  check("phone (wiring): tap 1, the grid: one tap picks the cell (CheckinLine.cellAt), nothing to confirm", grid);
+  check(`phone (wiring): tap 2, a stress level, saves once the grid is picked (grid + stress = ${CHECK_IN_TAPS}); else Save saves (grid + Save = ${CHECK_IN_TAPS})`, stressOrSave);
+  check("phone (wiring): the save is the save: the view model sends it in the same tap (no timer saves on its own), the sheet closing", saves);
+
+  // A path is its taps; a tap not pinned above fails the path (Infinity), whatever else holds.
+  const taps = (...steps: boolean[]) => (steps.every(Boolean) ? steps.length : Infinity);
+  const budget = CHECK_IN_OPEN_TAPS + CHECK_IN_TAPS;
+  const paths: [string, number][] = [
+    ["the cover widget's Check in button (48 dp)", taps(widgetOpens && host, grid, stressOrSave && saves)],
+    ["the Check in tile (on the lock screen it asks to unlock first, so the sheet never shows over it)", taps(tileOpens && host, grid, stressOrSave && saves)],
+    ["Check's Check in row, on both displays (the web strip's way, D3: its 2 are the sheet's)", taps(rowOpens && host, grid, stressOrSave && saves)],
+    ["the launcher's Check in shortcut", taps(shortcutOpens && host, grid, stressOrSave && saves)],
+  ];
+  for (const [name, n] of paths) {
+    check(`phone (wiring): ${name}: ${CHECK_IN_OPEN_TAPS} tap opens the sheet, then ${CHECK_IN_TAPS}: ${n} in all, the budget is ${budget}`, n <= budget, String(n));
+  }
+}
+
+// ── 7. A set done as last time: 1 tap on the phone (health phase 2) ─────────
+function setPhone(): void {
+  console.log(`\n── 7. A set done as last time on the phone: ${SET_TAPS} tap`);
+  const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  const card = code(read("android/app/src/main/java/com/xtnl/app/ui/check/LiftCard.kt"));
+  const screen = code(read("android/app/src/main/java/com/xtnl/app/ui/check/CheckScreen.kt"));
+  const vm = code(read("android/app/src/main/java/com/xtnl/app/ui/check/CheckViewModel.kt"));
+  const line = code(read("android/app/src/main/java/com/xtnl/app/core/SetLine.kt"));
+  // The ✓: a 56 dp button on the open lift's card, its click the card's onSet, on both displays (Check's card).
+  const tick =
+    /if \(next != null && SetLine\.canTick\(next\)\) \{[\s\S]{0,120}?XIconButton\(\s*Glyphs\.Tick, SetLine\.doneLabel\(next\), onSet, size = 56\.dp,/.test(card) &&
+    /val onSet: \(\) -> Unit = \{ feel\?\.press\(\); vm\.logSet\(\) \}/.test(screen) && (screen.match(/lift\(ui, onSet, onOpenWeb\)/g) ?? []).length === 2;
+  // logSet: the next set as /check named it (no field to fill: SetLine.bodyOf copies the last lift's figures, and only
+  // a next with figures to copy has a ✓), sent in the tap, or queued (SET) when it gets no answer at all.
+  const logSet = /fun logSet\(.*\) \{[\s\S]*?\n    \}\n/.exec(vm)?.[0] ?? "";
+  const sendSet = /private fun sendSet\(.*\) \{[\s\S]*?\n    \}\n/.exec(vm)?.[0] ?? "";
+  const sends =
+    /val body = SetLine\.bodyOf\(lift, next, doneAt\) \?: return\s*sendSet\(body, SetLine\.label\(next\), clientId, tapMs\)/.test(logSet) &&
+    /val r = graph\.api\.liftSet\(body, clientId\)/.test(sendSet) &&
+    /if \(r\.offline && graph\.sendQueue\.enqueue\(QueuedWrite\.liftSet\(clientId, source, label, body\)\)\)/.test(sendSet) &&
+    /fun bodyOf\(lift: OpenLift, n: LiftNext, doneAt: String\): LiftSetBody\? \{\s*if \(!canTick\(n\)\) return null/.test(line) &&
+    /fun canTick\(n: LiftNext\?\): Boolean =\s*n != null && n\.fromLast && /.test(line);
+  // Nothing on that path opens a screen or asks: no dialog, sheet, picker or screen between the ✓ and the send.
+  const asks = /Dialog|Sheet|sheetFor|startActivity|Intent|nav\.|onOpenWeb|Picker|Toast/;
+  const quiet = logSet.length > 0 && sendSet.length > 0 && !asks.test(logSet) && !asks.test(sendSet);
+  check("phone (wiring): the lift card's ✓ is a 56 dp button whose tap is the set (onSet → vm.logSet), on the cover screen and the main display", tick);
+  check("phone (wiring): the ✓ sends the next set as /check named it (SetLine.bodyOf, the last lift's figures), or queues it (SET) with no answer", sends);
+  check("phone (wiring): nothing between the ✓ and the send (no dialog, sheet, picker or screen opened)", quiet, `${logSet.length} / ${sendSet.length}`);
+  const n = (tick && sends && quiet ? 1 : Infinity);
+  check(`phone (wiring): a set done as last time is ${n} tap on the lift card, the budget is ${SET_TAPS}`, n <= SET_TAPS, String(n));
+}
+
 void doneNowLine().then(() => {
   quickCheck();
   widgetTick();
   checkIn();
+  checkInPhone();
+  setPhone();
   console.log(`\ningest-budget-check: ${failed ? `${failed} failed` : "all passed"}`);
   process.exit(failed ? 1 : 0);
 });

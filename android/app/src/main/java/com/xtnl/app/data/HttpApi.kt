@@ -260,6 +260,43 @@ class HttpApi(
     // P27: a batch of Health Connect's walks and weigh-ins (the server writes each walk once per record).
     override suspend fun syncHealth(batch: HealthBatch, clientId: String) =
         call("/exercise", JsonObject(healthBody(batch) + ("clientId" to JsonPrimitive(clientId))), HealthSyncResult.serializer(), slow = true)
+
+    // Health phase 2: a check-in, its values in the body only (never a URL), the same body and clientId on every try.
+    override suspend fun checkin(body: CheckinBody, clientId: String) =
+        call("/checkin", checkinJson(body, clientId), CheckinResult.serializer())
+
+    override suspend fun checkinUndo(id: String, clientId: String) =
+        call("/checkin/undo", buildJsonObject { put("id", id); put("clientId", clientId) }, CheckinUndoResult.serializer())
+
+    // Health phase 2: a set of the open lift, the figures in kilograms; never `ord` (the server takes the next place).
+    override suspend fun liftSet(body: LiftSetBody, clientId: String) =
+        call("/lift/set", liftSetJson(body, clientId), LiftSetResult.serializer())
+}
+
+/** POST /checkin's body: the fields the route takes, a skipped stress or an unmeasured time left out (never sent as null). */
+internal fun checkinJson(body: CheckinBody, clientId: String): JsonObject = buildJsonObject {
+    put("at", body.at)
+    put("valence", body.valence)
+    put("energy", body.energy)
+    body.stress?.let { put("stress", it) }
+    put("trigger", body.trigger)
+    put("via", body.via)
+    body.tookMs?.let { put("tookMs", it) }
+    put("clientId", clientId)
+}
+
+/** POST /lift/set's body: the lift, the movement, the tap's instant and the set's own figures, an absent one left out. */
+internal fun liftSetJson(body: LiftSetBody, clientId: String): JsonObject = buildJsonObject {
+    put("sessionId", body.sessionId)
+    put("entryId", body.entryId)
+    put("doneAt", body.doneAt)
+    body.kind?.let { put("kind", it) }
+    body.weightKg?.let { put("weightKg", it) }
+    body.reps?.let { put("reps", it) }
+    body.durationSec?.let { put("durationSec", it) }
+    body.distanceM?.let { put("distanceM", it) }
+    if (body.amrap) put("amrap", true)
+    put("clientId", clientId)
 }
 
 /** The batch as POST /exercise reads it: absent fields left out (an optional climb or origin is never sent as null). */

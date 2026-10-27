@@ -20,8 +20,10 @@
  *   §7  pause and Close the day's old 1-5 scale;
  *   §8  safety: the numbers, checkedOn, the footer, the card's contacts, the decisions' fixed text;
  *   §9  guards: the economy import guard both ways, no Gemini reachable (not even a type), only the known files
- *       import Mind, no value in a URL, a push, /check or a log line, the 'life' reset leaves check-ins alone, the
- *       'mind' cache tag, clientId replay by source;
+ *       import Mind (on the phone's path, re-pinned for phase 2: the check-in's own shape, mind-mobile.ts, and its
+ *       binding, mind-mobile-cores.ts), no value in a URL, a push, /check or a log line (the two check-in route files
+ *       hand a request to its handler and nothing else), the 'life' reset leaves check-ins alone, the 'mind' cache
+ *       tag, clientId replay by source;
  *   §10 the migration (additive only, BEGIN/COMMIT, named CHECKs that match mind.ts, its name) and the schema;
  *   §11 the UI: one grid control (and the two hidden axis ranges beside it for a touch screen reader), the Lifeline
  *       line on the sheet and on every Mind state, no value on Today's strip, the slot only drawn, every value drawn
@@ -786,6 +788,10 @@ function specsOf(src: string): Spec[] {
   for (const m of c.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g)) out.push({ spec: m[1], typeOnly: false });
   return out;
 }
+/** The specifiers named, in order, equal to `want`. */
+function eqSpecs(got: Spec[], want: string[]): boolean {
+  return JSON.stringify(got.map((x) => x.spec)) === JSON.stringify(want);
+}
 function resolveSpec(from: string, spec: string): string | null {
   let base: string;
   if (spec.startsWith("@/")) base = join(ROOT, "src", spec.slice(2));
@@ -818,7 +824,9 @@ function closureOf(starts: string[], types: boolean): { files: Set<string>; pkgs
 }
 const MIND_MODULES = ["src/lib/mind.ts", "src/lib/mind-server.ts", "src/app/actions/mind.ts", ...MIND_COMPONENTS.map((f) => `src/components/mind/${f}`)];
 const MIND_SET = new Set(MIND_MODULES.map((p) => resolve(ROOT, p)));
-const MIND_CODE = ["src/lib/mind.ts", "src/lib/mind-server.ts", "src/app/actions/mind.ts", "src/app/train/mind/page.tsx", ...MIND_COMPONENTS.filter((f) => /\.tsx?$/.test(f)).map((f) => `src/components/mind/${f}`)];
+// Phase 2: the phone's check-in shape (mind-mobile.ts, pure) is held to Mind's code rules too (no economy reached, no
+// Gemini, no pay words); its binding (mind-mobile-cores.ts) names the mobile token and is pinned on its own below.
+const MIND_CODE = ["src/lib/mind.ts", "src/lib/mind-server.ts", "src/app/actions/mind.ts", "src/app/train/mind/page.tsx", "src/lib/mind-mobile.ts", ...MIND_COMPONENTS.filter((f) => /\.tsx?$/.test(f)).map((f) => `src/components/mind/${f}`)];
 const SRC_FILES = filesUnder(join(ROOT, "src"));
 const ECONOMY = [
   "life-economy", "life-tracks", "life-tracks-server", "activity", "mastery", "celebrations", "celebration-detect", "celebration-types", "celebrate", "xp", "streak", "streak-curve",
@@ -834,6 +842,9 @@ check(`the economy list names real files (${ECONOMY.length}: the ledger, streaks
   const hits = ECONOMY.filter((f) => IMPORTS_MIND.test(read(`src/lib/${f}.ts`)));
   check("no economy file imports mind (no XP, MP, streak, quest, side quest, Mall, credit, calibration or celebration from a check-in)", hits.length === 0, hits.join(", "));
   // … and only these files import a Mind module at all (a new importer is a decision, re-pinned here on purpose).
+  // Re-pinned for phase 2 (the phone): the check-in's shape on the phone (mind-mobile.ts: the body's fields, passed on to
+  // logCheckCore untouched, and the grid's words for the answer) and its binding (mind-mobile-cores.ts: Mind's write, its
+  // delete and /check's read narrowed to its counts). No other mobile, push or route file imports Mind.
   const ALLOWED = [
     ...MIND_MODULES,
     "src/app/train/mind/page.tsx",
@@ -841,13 +852,19 @@ check(`the economy list names real files (${ECONOMY.length}: the ledger, streaks
     "src/app/dev/style/train/page.tsx",
     "src/app/dev/style/train/TrainFixtures.tsx",
     "src/components/train/fixtures.ts",
+    "src/lib/mind-mobile.ts",
+    "src/lib/mind-mobile-cores.ts",
   ];
   const importers = SRC_FILES.filter((f) => specsOf(readFileSync(f, "utf8")).some((s) => {
     const r = resolveSpec(f, s.spec);
     return r !== null && MIND_SET.has(r);
   })).map(rel);
   const stray = importers.filter((f) => !ALLOWED.includes(f));
-  check("only Mind's own files, its page, Today's slot and the fixtures import a Mind module (no economy, mobile, push or Gemini file)", stray.length === 0 && importers.includes("src/app/today/page.tsx"), stray.join(", "));
+  check(
+    "only Mind's own files, its page, Today's slot, the fixtures and, on the phone, the check-in's shape and binding import a Mind module (no economy, push or Gemini file, no other mobile file)",
+    stray.length === 0 && importers.includes("src/app/today/page.tsx") && importers.includes("src/lib/mind-mobile.ts") && importers.includes("src/lib/mind-mobile-cores.ts"),
+    stray.join(", ")
+  );
   // … and mind's own files import nothing from the economy, directly or through anything they reach.
   const ECON_IMPORT = new RegExp(`from\\s+["'](?:\\./|@/lib/)(?:${ECONOMY.join("|")})["']`);
   const direct = MIND_CODE.filter((f) => ECON_IMPORT.test(read(f)));
@@ -897,10 +914,58 @@ check(`the economy list names real files (${ECONOMY.length}: the ledger, streaks
     "/dev/style/train's ?state= is one of two fixed names, never a value",
     /const MIND_SHEET_STATES = \["mind-sheet", "mind-sheet-picked"\];/.test(dev) && /typeof raw === "string" && MIND_SHEET_STATES\.includes\(raw\) \? raw : null/.test(dev)
   );
-  const PUSHY = ["src/lib/push-server.ts", "src/lib/push-client.ts", "src/lib/reminders-server.ts", "public/sw.js", "src/lib/mobile-api.ts", "src/lib/mobile-api-server.ts", "src/lib/mobile-api-cores.ts", ...filesUnder(join(ROOT, "src/app/api")).map(rel)];
+  // Re-pinned for phase 2: the check-in's two route files hand a request to its handler with its binding (they name
+  // the binding's module, nothing else; pinned just below), so they leave this sweep. Every other route, the mobile
+  // API's shared modules (its shapes, its handlers, its cores) and every push file still name no value and no Mind module.
+  const CHECKIN_ROUTES = ["src/app/api/mobile/v1/checkin/route.ts", "src/app/api/mobile/v1/checkin/undo/route.ts"];
+  const PUSHY = ["src/lib/push-server.ts", "src/lib/push-client.ts", "src/lib/reminders-server.ts", "public/sw.js", "src/lib/mobile-api.ts", "src/lib/mobile-api-server.ts", "src/lib/mobile-api-cores.ts", ...filesUnder(join(ROOT, "src/app/api")).map(rel).filter((f) => !CHECKIN_ROUTES.includes(f))];
   const MOODY = /\bvalence\b|\bmood\b|moodCheck|MoodCheck|mindPrefs|MindPrefs|lib\/mind\b|lib\/mind-server/i;
   const pushy = PUSHY.filter((f) => existsSync(resolve(ROOT, f)) && MOODY.test(code(read(f))));
   check(`no push, service worker, mobile API or route file reads a check-in (${PUSHY.length} files: no value in a push payload or /check)`, pushy.length === 0, pushy.join(", "));
+  const routeOk = (f: string, handler: string) => {
+    const c = code(read(f));
+    return (
+      eqSpecs(specsOf(read(f)), ["@/lib/mobile-api-server", "@/lib/mind-mobile-cores"]) &&
+      c.includes(`import { ${handler} } from "@/lib/mobile-api-server";`) &&
+      c.includes(`import { realMindDeps } from "@/lib/mind-mobile-cores";`) &&
+      new RegExp(`export async function POST\\(request: Request\\): Promise<Response> \\{\\s*return ${handler}\\(request, realMindDeps\\);\\s*\\}`).test(c) &&
+      !/\bvalence\b|\bmood\b|\benergy\b|\bstress\b|moodCheck|MoodCheck|mind-server|searchParams|console\./i.test(c)
+    );
+  };
+  check(
+    "the check-in's two route files hand the request to handleCheckin and handleCheckinUndo with realMindDeps and nothing else (no value, no query, no log)",
+    existsSync(resolve(ROOT, CHECKIN_ROUTES[0])) && existsSync(resolve(ROOT, CHECKIN_ROUTES[1])) && routeOk(CHECKIN_ROUTES[0], "handleCheckin") && routeOk(CHECKIN_ROUTES[1], "handleCheckinUndo")
+  );
+  {
+    // The phone's binding: Mind's write and delete and one narrowed read, nothing that pays and nothing that logs.
+    const binding = read("src/lib/mind-mobile-cores.ts");
+    const shape = read("src/lib/mind-mobile.ts");
+    const values = (src: string) => specsOf(src).filter((x) => !x.typeOnly).map((x) => x.spec).sort();
+    eq("mind-mobile-cores.ts imports values from the user, mind-server and the mobile token's name only", values(binding), ["./mind-server", "./mobile-api", "./user"]);
+    eq("mind-mobile.ts (the check-in's shape on the phone) imports the life day and mind.ts only: pure, client-safe", values(shape), ["./life-day", "./mind"]);
+    check(
+      "the binding narrows every answer: a logged check-in comes back as its id, day, instant and replay; /check's read as live, ready, paused, todayCount and lastAt (no value, no spread, no log line)",
+      /value: \{ id: res\.value\.id, day: res\.value\.day, at: res\.value\.at, replay: res\.value\.replay \}/.test(code(binding)) &&
+        /return \{ live: v\.live, ready: v\.ready, paused: v\.paused, todayCount: v\.todayCount, lastAt: v\.lastAt \};/.test(code(binding)) &&
+        !/\.\.\.v\b|\.\.\.res\b|\brecent\b|\bvalence\b|console\./.test(code(binding))
+    );
+    const importersOf = (target: string) =>
+      SRC_FILES.filter((f) => specsOf(readFileSync(f, "utf8")).some((x) => resolveSpec(f, x.spec) === resolve(ROOT, target))).map(rel).sort();
+    eq(
+      "on the phone's path, mind-mobile.ts is read by the mobile handlers alone, and mind-mobile-cores.ts by the check-in's two routes and the mobile cores' /check read",
+      [importersOf("src/lib/mind-mobile.ts"), importersOf("src/lib/mind-mobile-cores.ts")],
+      [["src/lib/mobile-api-server.ts"], ["src/app/api/mobile/v1/checkin/route.ts", "src/app/api/mobile/v1/checkin/undo/route.ts", "src/lib/mobile-api-cores.ts"]]
+    );
+    const checkBlock = (() => {
+      const api = code(read("src/lib/mobile-api.ts"));
+      const at = api.indexOf("export function checkCheckinOf");
+      return at < 0 ? "" : api.slice(at, api.indexOf("\n}\n", at));
+    })();
+    check(
+      "/check's `checkin` is four keys copied by name (live, lastAt, todayCount, paused): no value can ride on it, and a cached /check carries none to another phone",
+      checkBlock.length > 0 && /return \{ live: true, lastAt: [^\n]*todayCount: [^\n]*paused: [^\n]*\};/.test(checkBlock) && !/\.\.\./.test(checkBlock)
+    );
+  }
   const consoles = [serverSrc, actionsSrc].flatMap((s) => [...code(s).matchAll(/console\.(?:log|info|warn|error|debug)\((`[^`]*`|[^)]*)\)/g)].map((m) => m[1]));
   const loose = consoles.filter((a) => {
     const inter = [...a.matchAll(/\$\{([^}]*)\}/g)].map((m) => m[1]);

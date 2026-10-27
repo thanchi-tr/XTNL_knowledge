@@ -1,5 +1,6 @@
 package com.xtnl.app.core
 
+import com.xtnl.app.tile.CheckinTileService
 import com.xtnl.app.tile.LogTileService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -49,5 +50,55 @@ class WidgetManifestTest {
         assertEquals("xtnl://app/log?section=task", LogTileService.LOG_URI)
         val shortcuts = file("res/xml/shortcuts.xml").readText()
         assertTrue(shortcuts.contains("android:data=\"${LogTileService.LOG_URI}\""))
+    }
+
+    /** Health phase 2 (D2): a second tile, "Check in", a button bound only by the system, that opens the check-in sheet. */
+    @Test fun theCheckinTileOpensTheSheet() {
+        val s = manifest.elements("service").single { it.attr("name") == ".tile.CheckinTileService" }
+        assertEquals("only the system binds it", "android.permission.BIND_QUICK_SETTINGS_TILE", s.attr("permission"))
+        assertEquals("true", s.attr("exported"))
+        assertEquals("@string/tile_checkin_label", s.attr("label"))
+        assertEquals(listOf("android.service.quicksettings.action.QS_TILE"), s.children("action").map { it.attr("name") })
+        assertEquals("a button, never a switch", "false", s.children("meta-data").single { it.attr("name") == "android.service.quicksettings.TOGGLEABLE_TILE" }.attr("value"))
+        assertEquals("xtnl://app/checkin?via=tile", CheckinTileService.CHECKIN_URI)
+        // The launcher's Check in shortcut opens the same sheet.
+        val shortcuts = file("res/xml/shortcuts.xml").readText()
+        assertTrue(shortcuts.contains("android:shortcutId=\"check_in\"") && shortcuts.contains("android:data=\"xtnl://app/checkin\""))
+        // The tile says nothing about a check-in: no subtitle, no state.
+        val tile = file("java/com/xtnl/app/tile/CheckinTileService.kt").readText()
+        for (word in listOf("subtitle", "STATE_ACTIVE", "lastAt", "todayCount", "valence", "stress")) assertTrue(word, !tile.contains(word))
+    }
+
+    /**
+     * Static shortcuts rank in the order they are declared, and a launcher that shows four (or two, with a notification
+     * showing) drops the last: Check in is second, so it stays; Review, still in the app's own navigation, goes first.
+     */
+    @Test fun checkInIsTheSecondShortcut() {
+        val ids = parse("res/xml/shortcuts.xml").elements("shortcut").map { it.attr("shortcutId") }
+        assertEquals(listOf("quick_check", "check_in", "quick_task", "new_idea", "review"), ids)
+        assertTrue(ids.indexOf("check_in") < 2)
+    }
+
+    /** Health phase 2 adds no permission: the manifest asks for exactly what it asked before (Health Connect's widening is a later phase). */
+    @Test fun noNewPermission() {
+        val declared = manifest.elements("uses-permission").map { it.attr("name") }.toSet()
+        assertEquals(
+            setOf(
+                "android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE", "android.permission.VIBRATE",
+                "android.permission.POST_NOTIFICATIONS", "android.permission.RECEIVE_BOOT_COMPLETED", "android.permission.SCHEDULE_EXACT_ALARM",
+                "android.permission.health.READ_EXERCISE", "android.permission.health.READ_DISTANCE", "android.permission.health.READ_ELEVATION_GAINED",
+                "android.permission.health.READ_WEIGHT", "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
+            ),
+            declared,
+        )
+    }
+
+    /** D9: the offline queue (a waiting check-in holds its values) never leaves the phone in a backup or a transfer. */
+    @Test fun theQueueStaysOnThePhone() {
+        val rules = parse("res/xml/data_extraction_rules.xml")
+        for (part in listOf("cloud-backup", "device-transfer")) {
+            val excluded = rules.elements(part).single().children("exclude").map { it.getAttribute("domain") + ":" + it.getAttribute("path") }
+            assertTrue("$part: $excluded", "file:send-queue.json" in excluded)
+        }
     }
 }

@@ -5,7 +5,7 @@
  * file never reaches Prisma or a model by itself. A route file only hands its request here with the real deps (a
  * route file may export only its methods and segment config).
  *
- *   GET  /check            handleCheck          the Today board and its daily quests, the Yesterday lane (P7), the Review hub's counts (and its fatigue: P30) and the ideas fading, the due work, level, streak, the week audit, the credits wallet (P16), the owed cards (P22), the idle skills and attributes (P28)
+ *   GET  /check            handleCheck          the Today board and its daily quests, the Yesterday lane (P7), the Review hub's counts (and its fatigue: P30) and the ideas fading, the due work, level, streak, the week audit, the credits wallet (P16), the owed cards (P22), the idle skills and attributes (P28), the check-in's counts and the open lift's next set (health phase 2)
  *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick, with its minutes and timer: P7, P23; a reading task's pages: P24), and the skill it fed (P5), its credits (P16), the knee note past 200 raw (P7)
  *   POST /tasks/undo       handleTaskUndo       actions/tasks undoCompletion
  *   POST /tasks/start      handleTaskStart      actions/tasks startTaskTimer (a proof task's timer; P23)
@@ -26,10 +26,15 @@
  *   POST /mall/buy         handleMallBuy        actions/mall buyReward (Buy, then Confirm; P19)
  *   POST /mall/undo        handleMallUndo       actions/mall undoBuy (a purchase undone inside its ten minutes; P19)
  *   POST /exercise         handleExercise       health-ingest-server ingestHealthCore (Health Connect's walks, hikes and weigh-ins; P27)
+ *   POST /checkin          handleCheckin        mind-server logCheckCore (the 5-second check-in; health phase 2)
+ *   POST /checkin/undo     handleCheckinUndo    mind-server deleteCheckCore (the receipt's Undo, the check-in's Delete)
+ *   POST /lift/set         handleLiftSet        training-server logSetCore (the lift logger's "Set done"; health phase 2)
  *
  * The four Mall routes run on MobileMallDeps alone (mall-mobile-cores.ts binds them): the token, the user, the clock,
  * the Mall's read, its add, its buy and its undo. They never hold a paying core (a purchase spends credits only), so a
- * mall* file reaches nothing that pays XP, MP or a point (scripts/credits-check.ts).
+ * mall* file reaches nothing that pays XP, MP or a point (scripts/credits-check.ts). The same holds for the check-in's
+ * two routes (MobileMindDeps, mind-mobile-cores.ts: Mind's write and delete, never the ledger) and the set's
+ * (MobileLiftDeps, lift-mobile-cores.ts: the set's write and the logger's read; Finish stays on the web).
  *
  * Every reply is JSON with Cache-Control: no-store; a thrown error is logged and answers the generic server line,
  * never its message or stack. Writes replay their first successful result for a clientId (mobile-api.ts ReplayCache);
@@ -92,6 +97,12 @@ import {
   EXERCISE_KEYS,
   exerciseReplyOf,
   exerciseRequestOf,
+  LIFT_SET_KEYS,
+  checkCheckinOf,
+  checkLiftOf,
+  liftSetReplyOf,
+  liftSetRequestOf,
+  type MobileCheckinRead,
   MALL_BUY_KEYS,
   MALL_REWARD_KEYS,
   MALL_UNDO_KEYS,
@@ -173,6 +184,8 @@ import type { HcBatch, IngestSummary } from "./health-ingest";
 import type { IngestResult } from "./health-ingest-server";
 import { isDutyLaunched } from "./duty-economy";
 import type { DutyActionResult, MakeUpResult } from "../app/actions/duty";
+import { CHECKIN_KEYS, checkinBodyOf, checkinReplyOf, checkinUndoReplyOf, type CheckinBody, type LoggedCheckin } from "./mind-mobile";
+import type { LiftView, LoggedSet, RawLogSetInput, TrainingResult } from "./training-server";
 
 // ── The cores ───────────────────────────────────────────────────────────────
 
@@ -314,6 +327,44 @@ export interface MobileDeps {
    * source 'import'. Writes only on the live app (lifeWritesEnabled).
    */
   ingestHealth: (userId: string, batch: HcBatch, now: Date) => Promise<IngestResult<IngestSummary & { line: string }>>;
+
+  // GET /check (health phase 2): the check-in's counts and the open lift, each read beside the board, each failing soft.
+  /**
+   * The check-in's switch, pause and counts (mind-mobile-cores loadCheckinRead: Mind's own view, narrowed there to live,
+   * ready, paused, todayCount and lastAt; nothing read before MIND_LAUNCH_DAY). /check's `checkin`. Never a value.
+   */
+  loadCheckin: (userId: string, now: Date) => Promise<MobileCheckinRead>;
+  /** Train › Exercise's own read (training-server loadLiftView: the open lift, its ghosts). /check's `lift`, while one is open. */
+  loadLift: (userId: string, now: Date) => Promise<LiftView>;
+}
+
+/**
+ * What the check-in's two routes run on (health phase 2; mind-mobile-cores.ts binds them): the frame's token and user,
+ * the clock, Mind's write and its delete. Nothing here pays, and every answer is narrowed in the binding: a logged
+ * check-in comes back as its id, life day and instant, never its values.
+ */
+export interface MobileMindDeps {
+  token: () => string | undefined;
+  userId: () => string;
+  now: () => Date;
+  /** mind-server logCheckCore (actions/mind logCheck's core): checked again there, idempotent by the body's clientId. */
+  logCheck: (userId: string, body: CheckinBody, now: Date) => Promise<{ ok: true; value: LoggedCheckin } | { ok: false; error: string }>;
+  /** mind-server deleteCheckCore (the receipt's Undo and each row's Delete): one already gone is deleted 0, never an error. */
+  deleteCheck: (userId: string, id: string) => Promise<{ ok: true; value: { deleted: number } } | { ok: false; error: string }>;
+}
+
+/**
+ * What the set's route runs on (health phase 2; lift-mobile-cores.ts binds them): the frame's token and user, the
+ * clock, the logger's "Set done" and its read. Nothing here pays: Finish and its "Counts as" stay on the web.
+ */
+export interface MobileLiftDeps {
+  token: () => string | undefined;
+  userId: () => string;
+  now: () => Date;
+  /** training-server logSetCore (actions/training logLiftSet's core): one insert per clientId, its place under the movement's lock. */
+  logSet: (userId: string, input: RawLogSetInput, now: Date) => Promise<TrainingResult<LoggedSet>>;
+  /** training-server loadLiftView: the lift after the set (its next set), as /check reads it. */
+  loadLift: (userId: string, now: Date) => Promise<LiftView>;
 }
 
 /**
@@ -459,7 +510,11 @@ function owe(deps: MobileDeps, what: string, task: () => Promise<unknown>): void
  * (Board.streak), present only while STREAK_LAUNCH_DAY is in force; while it is, Duty's lazy settle is awaited before the
  * board's read (settleForStreak). P30: `review.fatigued`, the fatigue in effect (fatiguedKeyOf), present only while
  * FATIGUE_LAUNCH_DAY is in force (null when the read fails). P7: `yesterday`, the Record yesterday sheet's lane off the same
- * board (checkYesterdayOf: its rows, what each pays for yesterday at T 1.00, the sheet's line), always sent.
+ * board (checkYesterdayOf: its rows, what each pays for yesterday at T 1.00, the sheet's line), always sent. Health phase
+ * 2: `checkin`, the check-in's switch, pause and counts (checkCheckinOf over a read narrowed in its binding: never a value,
+ * since a cached /check can move between phones), always sent (none and zero when it can't be drawn or the read fails);
+ * and `lift`, the open lift and its next set by the web logger's prefill (checkLiftOf over Train › Exercise's own
+ * loadLiftView, which closes a lift left open past its day as the page does), present only while a lift is open.
  */
 export async function handleCheck(request: Request, deps: MobileDeps): Promise<Response> {
   return read("check", request, deps, [], async () => {
@@ -473,7 +528,7 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
     // P29: with the streak multiplier in force, Duty's lazy settle too (as on Today), so the rows' xpHint read the d
     // (counted back from the settlement cursor) their ticks pay. At once while it is off; a failure reads on.
     await deps.settleForStreak(userId, now).catch(soft("the settle before the streak", null));
-    const [data, fields, reviewDay, streak, shell, work, graceExtra, audit, wallet, conditions, fatigue, calibration] = await Promise.all([
+    const [data, fields, reviewDay, streak, shell, work, graceExtra, audit, wallet, conditions, fatigue, calibration, checkinRead, liftView] = await Promise.all([
       deps.loadBoard(userId, day, now),
       deps.loadFieldTree(),
       deps.loadReviewDay(userId, day),
@@ -489,8 +544,12 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       deps.loadFatigue(userId, now).catch(soft<FatigueRead>("the review fatigue", null)),
       // P32: null without a read while no calibration can be in force; a failure reads as none (the key stays out).
       deps.loadNextWeek(userId, now).catch(soft<NextWeekView | null>("next week's calibration", null)),
+      // Health phase 2: the check-in's counts (none on a failure) and the open lift (none on a failure).
+      deps.loadCheckin(userId, now).catch(soft<MobileCheckinRead | null>("the check-in", null)),
+      deps.loadLift(userId, now).catch(soft<LiftView | null>("the lift", null)),
     ]);
     const board = buildBoard(data, [], now.getTime());
+    const lift = checkLiftOf(liftView);
     // P30: the fatigue in effect rides on the Review hub's figures (absent while FATIGUE_LAUNCH_DAY is not in force).
     const review = { ...reviewHubOf(fields, now, reviewDay), ...fatiguedKeyOf(fatigue) };
 
@@ -522,6 +581,9 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       level: levelOf(shell),
       // P29: the streak multiplier rides on the board it priced the rows with (absent while it is not in force).
       streak: streakOf(streak, board.streak),
+      // Health phase 2: the check-in's counts, always (no value); the open lift, only while one is open.
+      checkin: checkCheckinOf(checkinRead),
+      ...(lift ? { lift } : {}),
     });
   });
 }
@@ -863,6 +925,65 @@ export async function handleExercise(request: Request, deps: MobileDeps): Promis
     const res = await deps.ingestHealth(deps.userId(), batch, now);
     if (!res.ok) return refusalReply(res.error);
     return okReply(exerciseReplyOf(res.value));
+  });
+}
+
+// ── POST /checkin, /checkin/undo (health phase 2; D1, D2, D9) ──────────────
+
+/**
+ * The 5-second check-in from the phone (the Check screen's row, the cover widget, the tile, a prompt): mind-server
+ * logCheckCore, as Body › Mind's sheet saves one. The body's shape is checked here (mind-mobile checkinBodyOf: 400 when
+ * wrong) and its rules again in the core (mind.ts cleanCheckInput: `at` the phone's own instant, kept up to 7 days back;
+ * MIND_LAUNCH_DAY in force), whose refusals are `conflict` in its own words. The clientId is required: it keys the
+ * replay here and the row itself (MoodCheck's unique userId and clientId), so a resend from the phone's queue lands once
+ * on any instance (the same values answer the first row, `duplicate`). A record, never a reward: no ledger row, no
+ * moment; the same answer frame for every value. The binding hands back the row's id, day and instant alone.
+ */
+export async function handleCheckin(request: Request, deps: MobileMindDeps): Promise<Response> {
+  return write("checkin", request, deps, CHECKIN_KEYS, async (body) => {
+    const parsed = checkinBodyOf(body, clientIdOf(body.clientId));
+    if (!parsed.ok) bad(parsed.error);
+    const now = deps.now();
+    const res = await deps.logCheck(deps.userId(), parsed.value, now);
+    if (!res.ok) return refusalReply(res.error);
+    return okReply(checkinReplyOf(res.value, parsed.value, now));
+  });
+}
+
+/**
+ * The receipt's Undo (mind-server deleteCheckCore: the check-in's own Delete, which never waits for the switch). One
+ * already gone answers `deleted` 0 ("Already deleted."), so a repeat is harmless. The id is POST /checkin's `id`; no value
+ * is sent or answered.
+ */
+export async function handleCheckinUndo(request: Request, deps: MobileMindDeps): Promise<Response> {
+  return write("checkin/undo", request, deps, ["id"], async (body) => {
+    const id = idOf(body.id, "id");
+    const res = await deps.deleteCheck(deps.userId(), id);
+    if (!res.ok) return refusalReply(res.error);
+    return okReply(checkinUndoReplyOf(id, res.value.deleted));
+  });
+}
+
+// ── POST /lift/set (health phase 2; D12, D14-D19) ───────────────────────────
+
+/**
+ * One "Set done" from the phone (the Check screen's lift card, through the phone's queue): training-server logSetCore, as
+ * the web row's ✓ saves one. The body's shape is checked here (liftSetRequestOf: 400 when wrong), its rules in the core
+ * (cleanSetInput's bounds and kinds, the drop chain, the lift open and live), whose refusals are `conflict` in its own
+ * words (`gone` for a lift or a movement that isn't there). The clientId is required: it keys the replay here and the
+ * set's row (a resend answers the set it wrote, on any instance; two devices take their places under the movement's
+ * lock). A record: no ledger row, no moment. A big jump is said in plain words with the web's link (Keep, Confirm and
+ * Fix stay on the web; the set stands as a record until then). Then the lift is read again (the logger's own read), for
+ * the next set (`lift`; null when it is no longer open or that read failed).
+ */
+export async function handleLiftSet(request: Request, deps: MobileLiftDeps): Promise<Response> {
+  return write("lift/set", request, deps, LIFT_SET_KEYS, async (body) => {
+    const input = liftSetRequestOf(body);
+    const userId = deps.userId();
+    const res = await deps.logSet(userId, input, deps.now());
+    if (!res.ok) return refusalReply(res.error);
+    const view = await deps.loadLift(userId, deps.now()).catch(soft<LiftView | null>("the lift after a set", null, "lift/set"));
+    return okReply(liftSetReplyOf(res.value, view));
   });
 }
 

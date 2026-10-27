@@ -95,6 +95,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.xtnl.app.AppGraph
+import com.xtnl.app.core.CheckinLine
 import com.xtnl.app.core.FoldInfo
 import com.xtnl.app.core.HingeOrientation
 import com.xtnl.app.core.Layouts
@@ -102,6 +103,7 @@ import com.xtnl.app.core.NavStyle
 import com.xtnl.app.data.ReviewSummary
 import com.xtnl.app.notify.AuditReminder
 import com.xtnl.app.ui.check.CheckEvents
+import com.xtnl.app.ui.check.CheckinSheet
 import com.xtnl.app.ui.check.CheckScreen
 import com.xtnl.app.ui.check.CheckSpots
 import com.xtnl.app.ui.check.CheckViewModel
@@ -219,6 +221,24 @@ fun AppRoot(
         ) {
             // Check's snacks and moments, on whichever tab the user is on when the server answers.
             CheckEvents(checkVm, checkSpots)
+            // Health phase 2: the check-in sheet, over whichever screen is up. The tile, the cover widget's button and the
+            // launcher shortcut open it by its deep link (Nav.checkin), Check's row the same way. A server that said its
+            // check-in isn't live gets a line instead; one not yet read (a cold start) opens it, and the server decides.
+            var checkinVia by rememberSaveable { mutableStateOf<String?>(null) }
+            LaunchedEffect(nav.checkin) {
+                if (!nav.takeCheckin()) return@LaunchedEffect
+                if (CheckinLine.canOpen(checkVm.ui.value.data?.checkin)) checkinVia = nav.checkinVia else snacks.show(CheckinLine.NOT_OPEN)
+            }
+            checkinVia?.let { via ->
+                CheckinSheet(
+                    via = via,
+                    onDismiss = { checkinVia = null },
+                    onSave = { cell, stress, tookMs ->
+                        checkinVia = null
+                        checkVm.checkin(cell, stress, via, tookMs)
+                    },
+                )
+            }
             BoxWithConstraints(
                 Modifier
                     .fillMaxSize()
@@ -378,6 +398,8 @@ private fun Destinations(
                     onStartReview = { nav.go(Tab.REVIEW); nav.startReview++ },
                     onOpenSettings = { nav.go(Tab.MORE); nav.more = MoreRoute.SETTINGS },
                     onUseDemo = { graph.settings.setDemo(true) },
+                    onCheckin = { nav.checkinVia = "check"; nav.checkin++ },
+                    onOpenWeb = { path -> nav.webPath = path; nav.go(Tab.MORE); nav.more = MoreRoute.WEB },
                 )
                 "log" -> LogScreen(logVm, nav)
                 "review" -> ReviewScreen(reviewVm, nav, reviewSummary, reviewSpots, onBackToCheck = { nav.go(Tab.CHECK) })

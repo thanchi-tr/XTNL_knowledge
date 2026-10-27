@@ -74,6 +74,11 @@ object Glyphs {
     /** A side quest (P31): a signpost, the web's i-side; drawn in ink beside its words, never alone. */
     val Side = line("M12 21V3", "M12 5h6l2 2.5-2 2.5h-6", "M12 12.5H6l-2 2.5 2 2.5h6")
 
+    /** The check-in (health phase 2): the grid's four quadrants, the same for every value. */
+    val Checkin = line("M6.5 4.5h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2z", "M12 4.5v15", "M4.5 12h15", width = 1.7f)
+    /** The open lift (health phase 2): a barbell. */
+    val Lift = line("M3.5 12h17", "M6 8.5v7", "M8.5 7v10", "M15.5 7v10", "M18 8.5v7", width = 1.9f)
+
     /** The Mall (More's row; blueprint P18): the web's bag (the kit's i-bag), what credits are spent on. */
     val Mall = line("M5.5 8.5h13l-1.2 12h-10.6z", "M9 8.5V7a3 3 0 0 1 6 0v1.5")
 

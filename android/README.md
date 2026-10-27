@@ -80,7 +80,7 @@ panes on the main one, also at `xtnl://app/mall`). Then Settings and
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.19 (versionCode 31), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.20 (versionCode 32), so
 it installs over the v1 WebView shell in place.
 
 On **Check**, a long press on any open task opens its **minutes sheet** (blueprint
@@ -140,6 +140,53 @@ never replaces one you typed. The line under the switch says when it last synced
 and what came in, and how many walks were skipped because their app recorded no
 distance.
 
+## The check-in and the open lift (health phase 2)
+
+Health phase 2 (docs/life-plan/health-2026-10-27.md D1, D2, D5, D9, D12) brings
+the 5-second check-in and the lift logger's "Set done" to the phone:
+
+- **The check-in sheet**: one tap on the 9 × 9 grid (pleasantness across,
+  energy up: valence and energy −4..+4, drawn as four soft quadrants with the
+  web's corner words), then, optionally, one of five stress levels ("Not at
+  all" to "Very much"). Once the grid is picked a stress tap saves; Save saves
+  the grid alone. The grid is one control: TalkBack reads its name and its
+  value in words and its actions step it a cell at a time. On the cover screen
+  it takes the width less 16 dp margins (49 dp cells); sideways on the main
+  display it sits beside the stress levels (a shorter window, such as the
+  cover turned sideways, stacks and scrolls). "Need to talk? Lifeline 13 11
+  14" is always on the sheet, pinned under the scroll so it never leaves the
+  screen, a tap that opens the dialer with the number in it (the user presses
+  call; the app asks for no permission). It saves with one neutral haptic, the
+  same for every value, and the receipt is "Logged 14:12" with Undo for 5
+  seconds; on the main display it adds the grid's words ("Logged 14:12 · Calm,
+  content"), never on the cover screen, upright or sideways. The snackbar picks
+  its words as it draws, so folding the phone mid-receipt drops them at once.
+  It is a record: no XP, no colour, no praise, no count.
+- **Where it opens**: a "Check in" row directly under Check's header (only
+  while the server's check-in is live and not paused; it may say "Checked in
+  14:12", the time alone), a second quick-settings tile "Check in", a "Check
+  in" button in the cover widget's title band, and a launcher shortcut; all
+  open `xtnl://app/checkin` (with `?via=tile` or `?via=widget`). None of them
+  shows a value: not the widget, the tile, a notification or the lock screen,
+  and `/check` carries only the counts.
+- **The open lift**: while `/check` says a lift is open, Check shows its card,
+  "Lift · Push day" and "Next: Bench press 60 kg × 8" with a ✓. One tap sends
+  that set as the last lift had it, then the rest the server gives counts down
+  under the server's line, from the tap (none before a drop, 20 s before a
+  rest-pause, as on the web). A big jump is saved as a record and the card says
+  its question (Keep, Confirm, Fix) is the web's, with Open on the web. A next
+  set with nothing to copy, another set and Finish are on the web too.
+- **Offline**: a check-in or a set that gets no answer waits in the offline
+  queue (CHECKIN and SET), each with its own clientId and its own instant fixed
+  at the tap, so one sent later is booked when it was made, once. A check-in
+  more than a week old is never sent. While a set waits, the card offers no
+  second ✓. It waits only because its first try got no answer, which may have
+  landed, so it says "No answer: … If it got through, it's saved once.", and
+  its Undo never says it hadn't left the phone: a check-in's says to delete one
+  that got through in Body › Mind on the web, a set's that it is already
+  logged. The queue's file stays out of backups and phone-to-phone transfers,
+  because a waiting check-in holds its values.
+
 ## The cover-screen widget, the quick tile and the offline queue
 
 Blueprint P8 (decision D34) takes a tick off the app's own screens:
@@ -148,8 +195,10 @@ Blueprint P8 (decision D34) takes a tick off the app's own screens:
   today's open Must and Habit rows, musts first, each with a tick that is **one
   tap**. It is sized for the cover screen (4 × 2 cells there, resizable) and
   shows the rows its height fits, then "+2 more"; on the main display's grid it
-  lays out the same way. The title says "3 open · 2 kept" and what waits to
-  send. It reads the last `/check` of the server in Settings (with that
+  lays out the same way. The title says what waits to send and what was not
+  sent first ("1 not sent · 2 waiting to send"), then "3 open · 2 kept", so a
+  narrow widget cuts the counts, never the queue; under 400 dp wide its Check
+  in button is the glyph alone (a 48 dp target). It reads the last `/check` of the server in Settings (with that
   address's own token), and reads it again when it is drawn and the board is
   more than 15 minutes old or from another day; with demo data on it shows the
   demo's rows ("Today · demo") and ticks them on the phone. A proof or reading
@@ -340,6 +389,14 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
   reading row opening Check, each row's board day, the rows a height fits, a
   widget tick being one tap; WidgetManifestTest, the widget's receiver and size
   and the tile's binding and link);
+- the check-in and the lift (health phase 2: CheckinLineTest, the grid's
+  maths, the web's corner words, the receipt's words off the cover screen,
+  the time it took, the body it sends and the counts-only `/check`;
+  SetLineTest, the card's words and the ✓'s body; SendQueueTest, a check-in
+  and a set queued offline replaying once with their own instant, a check-in
+  older than a week set aside unsent; DemoCheckinTest, the demo answering
+  `/checkin`, its undo, `/lift/set` and `/check`'s two blocks as the server
+  does; WidgetManifestTest, the second tile; NavTest, the deep link);
 - the shapes of the API's responses (a row's proof, timer and pages, the timer
   routes' answer, a row from an older server reading as none of them, the
   Yesterday lane and the knee, and `/exercise`'s counts and the body the sync
@@ -361,7 +418,10 @@ filmed in Full motion at the front and main sizes, one PNG per key frame:
 `<size>-m<moment>-<name>-<ms after the tap>ms.png`. The P8 renders are
 `<size>-offline-queue*.png` and `<size>-offline-log.png` (the demo's board read
 offline from an address that refuses at once, so nothing leaves the PC) and
-`<size>-widget-<cells>.png` (the widget drawn from its RemoteViews).
+`<size>-widget-<cells>.png` (the widget drawn from its RemoteViews). The health
+phase 2 renders are `<size>-checkin-*.png` (the sheet, a pick, the receipt with
+its Undo, the undo), `<size>-check-row.png` and `<size>-lift-*.png` (the card,
+after a ✓ with its rest, the big jump).
 
 ## Install on the phone over USB
 
@@ -498,9 +558,12 @@ Go to **More › Settings › Data › Demo data**, or tap **Try demo data** on 
   app serves it to a small WebView on a private `https://appassets…` origin
   (WebViewAssetLoader) and refuses every other request. Before KaTeX has
   drawn, or if it fails, the TeX source shows in monospace.
-- **Launcher shortcuts**: Quick check, Log a task, New idea and Review. Each
-  opens `xtnl://app/check`, `/log?section=task`, `/idea` or `/review`. The quick
-  tile opens `/log?section=task` too, and the widget `/check`.
+- **Launcher shortcuts**: Quick check, Check in, Log a task, New idea and
+  Review. Each opens `xtnl://app/check`, `/checkin`, `/log?section=task`,
+  `/idea` or `/review`. Check in is second, so a launcher that shows four (or
+  two, with a notification showing) keeps it. The quick tile opens
+  `/log?section=task` too, the Check in tile `/checkin?via=tile`, and the
+  widget `/check` (its Check in button `/checkin?via=widget`).
 - **Full app**: the web app in a WebView.
   - Links on the server's own origin stay in the app; other links open in the
     browser.

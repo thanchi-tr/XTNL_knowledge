@@ -69,6 +69,13 @@ data class CheckData(
     val work: List<WorkItem> = emptyList(),
     val level: LevelInfo? = null,
     val streak: StreakInfo? = null,
+    /**
+     * The 5-second check-in's switch and counts (health phase 2; D1, D2, D9): never a value, so a cached /check that moves
+     * between phones carries none. Null from an older server: no Check in row, no widget button.
+     */
+    val checkin: CheckinState? = null,
+    /** The open lift and the set to do next (health phase 2; D12): present only while a lift is open; null otherwise and from an older server. */
+    val lift: OpenLift? = null,
 )
 
 @Serializable
@@ -964,6 +971,135 @@ data class IdeaResult(
     val domain: String? = null,
     val points: Double? = null,
     val line: String? = null,
+)
+
+// ── The check-in: /check's `checkin`, POST /checkin and /checkin/undo (health phase 2; D1, D2, D5, D9) ──
+
+/**
+ * /check's `checkin`: [live] while the check-in can be drawn (the server's switch in force and its view read), [paused]
+ * while the user paused check-ins on the web (no row and no ask; a check-in sent is still kept), how many today's life
+ * day holds and the newest one's instant. Counts only: nothing here says what any check-in was.
+ */
+@Serializable
+data class CheckinState(val live: Boolean = false, val lastAt: String? = null, val todayCount: Int = 0, val paused: Boolean = false)
+
+/**
+ * What a check-in sends (POST /checkin): [at] the instant of the tap (ISO, the server's clock as best known, fixed at
+ * the tap and sent as is on every try), the grid's pick (whole steps −4..+4), the stress level 0..4 or none, the phone's
+ * surface ([via]: check, widget, tile or notify), the user's own tap ([trigger] self) and how long the sheet took. It
+ * travels only in the body, never in a URL.
+ */
+data class CheckinBody(
+    val at: String,
+    val valence: Int,
+    val energy: Int,
+    val stress: Int? = null,
+    val via: String = "check",
+    val tookMs: Long? = null,
+    val trigger: String = "self",
+)
+
+/**
+ * POST /checkin's answer: [line] the receipt with the time alone ("Logged 14:12"), safe on any surface; [words] the
+ * grid's words for the pick ("Calm, content"), for the main display's receipt only; [undoUntil] when its Undo goes.
+ */
+@Serializable
+data class CheckinResult(
+    val id: String = "",
+    val day: String? = null,
+    val line: String = "",
+    val words: String? = null,
+    val undoUntil: String? = null,
+    val duplicate: Boolean = false,
+)
+
+/** POST /checkin/undo's answer: [deleted] 1, or 0 for one already gone, and the server's line. */
+@Serializable
+data class CheckinUndoResult(val id: String = "", val deleted: Int = 0, val line: String = "")
+
+// ── The lift: /check's `lift` and POST /lift/set (health phase 2; D12, D14 to D19) ──
+
+/** /check's `lift`: the open lift ([sessionId], its [label], when it started) and the set to do next (null when every row is done). */
+@Serializable
+data class OpenLift(val sessionId: String, val label: String? = null, val startedAt: String? = null, val next: LiftNext? = null)
+
+/**
+ * The set to do next, by the web logger's own prefill: where it lands ([entryId], the movement's next [ord]), its kind
+ * and figures (kilograms as stored; a bodyweight movement's signed added load), and its words in [unit]. [fromLast]: the
+ * figures are the last lift's set, so one tap sends them as they are; false: nothing to copy (the figures are null).
+ */
+@Serializable
+data class LiftNext(
+    val entryId: String,
+    val movementKey: String = "",
+    val name: String = "",
+    val ord: Int = 1,
+    val kind: String = "WORKING",
+    val weightKg: Double? = null,
+    val reps: Int? = null,
+    val durationSec: Int? = null,
+    val distanceM: Double? = null,
+    val amrap: Boolean = false,
+    val unit: String = "kg",
+    val fromLast: Boolean = false,
+    /** "60 kg × 8", "24 kg per dumbbell × 10", "hold 1:05"; null with nothing to copy. */
+    val setText: String? = null,
+    /** The logger's grey line under the fields: "last 60 × 8"; null with nothing to copy. */
+    val ghostLine: String? = null,
+)
+
+/**
+ * What a set sends (POST /lift/set): the lift and the movement, [doneAt] the instant of the tap (ISO, fixed at the tap),
+ * and the set as the web row's ✓ sends it: its kind and figures (kilograms, never the unit shown). Never `ord` (the
+ * server takes the movement's next place under its lock) and never an outcome the phone didn't ask (RIR, Failure).
+ */
+data class LiftSetBody(
+    val sessionId: String,
+    val entryId: String,
+    val doneAt: String,
+    val kind: String? = null,
+    val weightKg: Double? = null,
+    val reps: Int? = null,
+    val durationSec: Int? = null,
+    val distanceM: Double? = null,
+    val amrap: Boolean = false,
+)
+
+/** A set as stored (kilograms; [chainOf] the set a drop continues). */
+@Serializable
+data class LiftSet(
+    val id: String = "",
+    val entryId: String = "",
+    val ord: Int = 0,
+    val kind: String = "WORKING",
+    val chainOf: Int? = null,
+    val weightKg: Double? = null,
+    val reps: Int? = null,
+    val rir: Int? = null,
+    val toFailure: Boolean = false,
+    val amrap: Boolean = false,
+    val durationSec: Int? = null,
+    val distanceM: Double? = null,
+    val doneAt: String? = null,
+)
+
+/** The big-jump question in plain words: the set stands as a record; Keep, Confirm and Fix are the web's ([webHref]). */
+@Serializable
+data class LiftJump(val line: String = "", val webHref: String = "/train/exercise")
+
+/**
+ * POST /lift/set's answer: the set, [duplicate] for a resend already saved, [restSec] the rest after it (0: none),
+ * [line] in the web row's words ("Bench press: logged 60 kg × 8 · RIR 2."), [jump] only for a big jump, and [lift] the
+ * lift after the set (null when it is no longer open or the read after failed: /check is read again).
+ */
+@Serializable
+data class LiftSetResult(
+    val set: LiftSet? = null,
+    val duplicate: Boolean = false,
+    val restSec: Int = 0,
+    val line: String? = null,
+    val jump: LiftJump? = null,
+    val lift: OpenLift? = null,
 )
 
 // ── POST /exercise (blueprint P27: Health Connect's walks, hikes and weigh-ins) ──

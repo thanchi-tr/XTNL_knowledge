@@ -9,9 +9,11 @@ import java.util.Locale
  * The offline queue's rules and words (blueprint 5.1b, P8; decision D34). Pure: data/SendQueue keeps what waits and
  * sends it; this says what may wait, which day each item is for, what an answer means, and what the lines read.
  *
- *  - Only three writes ever wait on the phone: a tick (POST /tasks/complete), a quick line (POST /log) and a work
- *    item's Done (POST /work/done). Review answers never do ([Kind.ofPath] knows no other route): an answer is graded
- *    against the card as it is now, and the runner moves on only once it is recorded.
+ *  - Only five writes ever wait on the phone: a tick (POST /tasks/complete), a quick line (POST /log), a work item's
+ *    Done (POST /work/done), a check-in (POST /checkin) and a set of the open lift (POST /lift/set; health phase 2).
+ *    Review answers never do ([Kind.ofPath] knows no other route): an answer is graded against the card as it is now,
+ *    and the runner moves on only once it is recorded. A check-in and a set are records keyed by their own clientId,
+ *    never graded, so they are safe to wait.
  *  - Each item carries its own life day, fixed at the tap, never "today". A tick's is the day of the board its row was
  *    shown on ([tickDayOf]: the web board's own rule, so a board read before 04:00 books its rows on its own day, and
  *    one too old for the server is refused, never booked a day off); a line's and a Done's are the server's clock as
@@ -20,16 +22,21 @@ import java.util.Locale
  *    by its own clock, and refuses an older day). POST /log saves on the server's today and has no day, so a line goes
  *    only while its day is still the server's (read from /check just before): one from an earlier day is kept back
  *    for the user ("Send for today"). A Done marks the work item itself, never a day's row, so it goes whatever the
- *    day; its key only dates it.
+ *    day; its key only dates it. A check-in carries its own instant `at` and a set its own `doneAt`, each fixed at the
+ *    tap (the server's clock as last read), so one sent late is booked when it was made; its day is that instant's. A
+ *    check-in more than a week old is never sent (the server keeps one up to 7 life days back).
  *  - A replay sends the same clientId and the same body as the first try, so the server writes it once (its 10-minute
- *    replay cache, then the cores' own guards: a tick once per day, a line once per capture key, Done idempotent).
+ *    replay cache, then the cores' own guards: a tick once per day, a line once per capture key, Done idempotent, a
+ *    check-in and a set once per clientId).
  */
 object SendLine {
     /** The writes that may wait, by the route each replays. */
     enum class Kind(val path: String) {
         TICK("/tasks/complete"),
         LOG("/log"),
-        WORK_DONE("/work/done");
+        WORK_DONE("/work/done"),
+        CHECKIN("/checkin"),
+        SET("/lift/set");
 
         companion object {
             /** The kind that replays [path], or null: every other route (a review answer above all) never waits. */
@@ -97,6 +104,10 @@ object SendLine {
             Kind.LOG -> if (d != s) Plan.KeepBack(keptBack(day)) else Plan.Send
             // Done marks the work item, not a day's row.
             Kind.WORK_DONE -> Plan.Send
+            // A check-in is booked at its own instant; the server keeps one up to a week back, so an older one never goes.
+            Kind.CHECKIN -> if (d != null && d.isBefore(s.minusDays(CheckinLine.MAX_AGE_DAYS))) Plan.SetAside(CheckinLine.tooOld(day)) else Plan.Send
+            // A set is booked at its own instant inside its lift: the server keeps it there, or says why not.
+            Kind.SET -> Plan.Send
         }
     }
 

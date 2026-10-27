@@ -154,5 +154,22 @@
                 android:name="android.service.quicksettings.TOGGLEABLE_TILE"
                 android:value="false" />
         </service>
+
+        <!-- Health phase 2 (D2): the quick-settings tile "Check in" (tile/CheckinTileService): it opens the check-in sheet,
+             xtnl://app/checkin?via=tile (on the lock screen it asks to unlock first). A button, never a switch: it shows
+             no value and no state. -->
+        <service
+            android:name=".tile.CheckinTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_checkin"
+            android:label="@string/tile_checkin_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="false" />
+        </service>
     </application>
 </manifest>

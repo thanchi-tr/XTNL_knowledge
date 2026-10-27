@@ -9,6 +9,7 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.xtnl.app.core.AuditAlarm
+import com.xtnl.app.core.CheckinLine
 import com.xtnl.app.core.LogSection
 import com.xtnl.app.ui.components.Glyphs
 
@@ -41,17 +42,24 @@ class Nav(tab: Tab = Tab.CHECK, more: MoreRoute = MoreRoute.ROOT, logMode: LogMo
     var focusLog by mutableIntStateOf(0)
     /** Ticks when a deep link asks Review to start a session at once. */
     var startReview by mutableIntStateOf(0)
+    /** Ticks when a deep link opens the check-in sheet (health phase 2: the tile, the widget, the shortcut); [checkinVia] says from where. */
+    var checkin by mutableIntStateOf(0)
+    var checkinVia by mutableStateOf("check")
 
     // The ticks already acted on. A screen's effect starts again each time the screen comes back
     // (another tab, a fold), so a tick is taken once, not read; both reset with the ticks.
     private var focusLogTaken = 0
     private var startReviewTaken = 0
+    private var checkinTaken = 0
 
     /** True once per new [focusLog] tick. */
     fun takeFocusLog(): Boolean = (focusLog > focusLogTaken).also { focusLogTaken = focusLog }
 
     /** True once per new [startReview] tick. */
     fun takeStartReview(): Boolean = (startReview > startReviewTaken).also { startReviewTaken = startReview }
+
+    /** True once per new [checkin] tick. */
+    fun takeCheckin(): Boolean = (checkin > checkinTaken).also { checkinTaken = checkin }
 
     fun go(t: Tab) {
         tab = t
@@ -70,6 +78,8 @@ class Nav(tab: Tab = Tab.CHECK, more: MoreRoute = MoreRoute.ROOT, logMode: LogMo
     /**
      * xtnl://app/<path>, from the launcher shortcuts and the v1 shell's links:
      *   /check, /today           Quick check
+     *   /checkin?via=tile|widget  Quick check, the check-in sheet open over it (health phase 2: the tile, the cover
+     *                            widget's button, the launcher shortcut); `via` names the surface, Check's by default
      *   /log?section=task|weight|idea, /today?capture=task   the quick line, focused
      *   /idea, /add              New idea
      *   /review                  Review, started
@@ -84,6 +94,11 @@ class Nav(tab: Tab = Tab.CHECK, more: MoreRoute = MoreRoute.ROOT, logMode: LogMo
         when {
             path == "/" || path == "/check" || (path == "/today" && uri.getQueryParameter("capture") == null) -> {
                 tab = Tab.CHECK
+            }
+            path == "/checkin" -> {
+                tab = Tab.CHECK
+                checkinVia = CheckinLine.viaOf(uri.getQueryParameter("via"))
+                checkin++
             }
             path == "/log" || (path == "/today" && uri.getQueryParameter("capture") != null) -> {
                 tab = Tab.LOG

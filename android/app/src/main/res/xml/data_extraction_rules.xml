@@ -1,14 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- allowBackup="false" stops cloud backup, but from Android 12 not a phone-to-phone transfer.
      The sealed API tokens can't move (their Keystore key stays on the old phone), and the full
-     app's sign-in cookies shouldn't: both stay behind. Everything else may move. -->
+     app's sign-in cookies shouldn't: both stay behind. Health phase 2 (D9): the offline queue
+     (send-queue.json) stays behind too, since a check-in waiting there holds its values; what
+     waits is sent from the phone it was made on. Everything else may move (the /check cache
+     carries no check-in value). -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="xtnl.tokens.xml" />
         <exclude domain="root" path="app_webview/" />
+        <exclude domain="file" path="send-queue.json" />
+        <exclude domain="file" path="send-queue.json.tmp" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="xtnl.tokens.xml" />
         <exclude domain="root" path="app_webview/" />
+        <exclude domain="file" path="send-queue.json" />
+        <exclude domain="file" path="send-queue.json.tmp" />
     </device-transfer>
 </data-extraction-rules>

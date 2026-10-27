@@ -80,4 +80,17 @@ interface XtnlApi {
      * lands once per record (a resend is a duplicate), the backfill (before [HealthBatch.since]) is recorded only.
      */
     suspend fun syncHealth(batch: HealthBatch, clientId: String): Outcome<HealthSyncResult>
+    /**
+     * The 5-second check-in (health phase 2; D1, D9): one check-in, booked at its own [CheckinBody.at]. [clientId] is
+     * required and keys the row: a retry and the offline queue's replay send the same one with the same body, and it is
+     * logged once. Its values travel only in this body; the answer's line is the time alone.
+     */
+    suspend fun checkin(body: CheckinBody, clientId: String): Outcome<CheckinResult>
+    /** The receipt's Undo: the check-in's own Delete (harmless twice: one already gone answers deleted 0). Never queued. */
+    suspend fun checkinUndo(id: String, clientId: String): Outcome<CheckinUndoResult>
+    /**
+     * One set of the open lift (health phase 2; D12): the web row's ✓, booked at its own [LiftSetBody.doneAt]. [clientId]
+     * is required and keys the set: a resend lands once. Keep, Fix and Finish stay on the web.
+     */
+    suspend fun liftSet(body: LiftSetBody, clientId: String): Outcome<LiftSetResult>
 }

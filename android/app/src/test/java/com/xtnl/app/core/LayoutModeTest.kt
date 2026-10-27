@@ -32,6 +32,15 @@ class LayoutModeTest {
         assertTrue(m.twoPane)
     }
 
+    /** D2: the cover screen by its short side, so the cover turned sideways (751 × 475 dp) is still the cover. */
+    @Test fun theCoverIsTheCoverInEitherOrientation() {
+        assertTrue("the cover, upright or sideways (its short side 475)", Layouts.onCover(475))
+        assertFalse("the main display, upright or sideways (704)", Layouts.onCover(704))
+        assertTrue("a split screen under 600 on its short side: the safe side", Layouts.onCover(460))
+        assertTrue("an unknown size (SMALLEST_SCREEN_WIDTH_DP_UNDEFINED): the safe side", Layouts.onCover(0))
+        assertFalse(Layouts.onCover(600))
+    }
+
     @Test fun widthClassBoundaries() {
         assertEquals(WidthClass.COMPACT, Layouts.widthClass(599.9f))
         assertEquals(WidthClass.MEDIUM, Layouts.widthClass(600f))

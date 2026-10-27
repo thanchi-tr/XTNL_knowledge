@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher shortcut. Check in: the check-in grid's four quadrants.
+     48 dp: the icon's navy chip (r 22) with mint 2 dp round-capped strokes, as the other shortcuts. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:name="chip"
+        android:pathData="M2,24a22,22 0 1,0 44,0a22,22 0 1,0 -44,0z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="6.4" android:startY="2" android:endX="41.6" android:endY="46">
+                <item android:offset="0" android:color="#FF0F1E2E" />
+                <item android:offset="1" android:color="#FF04080F" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:name="frame"
+        android:pathData="M17.5,15.5H30.5A2,2 0 0,1 32.5,17.5V30.5A2,2 0 0,1 30.5,32.5H17.5A2,2 0 0,1 15.5,30.5V17.5A2,2 0 0,1 17.5,15.5z"
+        android:strokeColor="#FF00CC7A"
+        android:strokeWidth="2"
+        android:strokeLineJoin="round"
+        android:strokeAlpha="0.9" />
+    <path
+        android:name="axes"
+        android:pathData="M24,15.5V32.5M15.5,24H32.5"
+        android:strokeColor="#FF3DFFB0"
+        android:strokeWidth="2"
+        android:strokeLineCap="round" />
+</vector>

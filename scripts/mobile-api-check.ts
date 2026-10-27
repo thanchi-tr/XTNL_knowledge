@@ -41,6 +41,16 @@
  *      (P29: Duty's lazy settle awaited after momentum's and before the board's read, as Today does; bound);
  *      review fatigue (P30: `fatigued` on /check's review and on /review/queue, absent while FATIGUE_LAUNCH_DAY is off,
  *      {until} or null once it is in force, null on a failed read; the read bound; the phone's models and review screen);
+ *      health phase 2 (D1, D2, D9, D12): /check's `checkin` (four keys copied by name: no value, word or tag, even from a
+ *      read that carried one; none and zero while it can't be drawn or on a failed read) and `lift` (only while a lift
+ *      is open; its next set by the web logger's own prefill, lift-model initialDraftsOf, the worked movement first);
+ *      POST /checkin (its shape, its clientId required, the core's refusals, the line safe on any surface and the
+ *      grid's words, a replay, through mind-server logCheckCore over an in-memory client: one row per clientId on any
+ *      instance, the 7-day window, the undo) and POST /checkin/undo; POST /lift/set (its shape, kilograms only, its
+ *      clientId required, the Big jump in plain words with the web's link, the lift after it, through training-server
+ *      logSetCore and loadLiftView over an in-memory client: one set per clientId on any instance, the jump against the
+ *      core's own baseline, gone for a movement not in the lift); their own cores (no paying core); the queue's kinds
+ *      (TICK, LOG, WORK_DONE, CHECKIN, SET) and versionCode 32 (2.20);
  *   3. the wiring: each route file hands its request to its handler with the real deps and exports only its method
  *      and dynamic; mobile-api-cores binds each dep to the web's own core (no refresh), and mall-mobile-cores the
  *      Mall's two (the Mall's routes never hold a paying core); the pure modules import no core; the web pages' formulas the app mirrors (pinned in their source); the failure lines the codes key on;
@@ -53,7 +63,7 @@ import { Prisma } from "@prisma/client";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { QuestionType } from "@prisma/client";
-import { addDays, todayKey, weekKeyOf, type DayKey } from "../src/lib/life-day";
+import { addDays, dateColumn, todayKey, weekKeyOf, type DayKey } from "../src/lib/life-day";
 import { CREDITS_LAUNCH_DAY, CREDITS_LAUNCH_DAY_ENV, type CreditsWallet } from "../src/lib/credits";
 import { normTitleOf } from "../src/lib/life-lexicon";
 import { parseRule } from "../src/lib/recurrence";
@@ -182,6 +192,29 @@ import {
   type Reply,
   type ReviewTreeField,
 } from "../src/lib/mobile-api";
+// Health phase 2: the check-in (POST /checkin, its undo, /check's `checkin`) and the set (POST /lift/set, /check's `lift`).
+import {
+  LIFT_ENTRY_GONE,
+  LIFT_GONE,
+  LIFT_JUMP_NOTE,
+  LIFT_NEEDS_CLIENT_ID,
+  LIFT_SET_KEYS,
+  LIFT_WEB_HREF,
+  checkCheckinOf,
+  checkLiftOf,
+  liftNextOf,
+  type MobileCheckinRead,
+} from "../src/lib/mobile-api";
+import { CHECKIN_KEYS, CHECKIN_TEXT_MAX, PHONE_VIAS } from "../src/lib/mind-mobile";
+import { MIND_OFF, UNDO_MS, cellWordsOf, mindOn, receiptLineOf } from "../src/lib/mind";
+import { MIND_NOT_READY } from "../src/lib/mind-server";
+import { loadCheckinRead, realMindDeps } from "../src/lib/mind-mobile-cores";
+import { realLiftDeps } from "../src/lib/lift-mobile-cores";
+import { LIFT_COPY, TRAINING_NOT_READY, type LiftEntryView, type LiftSetView, type LiftView, type LoggedSet, type UserMovementView } from "../src/lib/training-server";
+import { ghostLineOf, setTextOf } from "../src/lib/training";
+import { movementByKey } from "../src/lib/training-library";
+import { initialDraftsOf } from "../src/components/train/lift-model";
+import { prisma } from "../src/lib/prisma";
 import {
   handleCheck,
   handleExercise,
@@ -204,8 +237,13 @@ import {
   handleTaskStop,
   handleWorkDone,
   handleWorkReopen,
+  handleCheckin,
+  handleCheckinUndo,
+  handleLiftSet,
   type MobileDeps,
+  type MobileLiftDeps,
   type MobileMallDeps,
+  type MobileMindDeps,
 } from "../src/lib/mobile-api-server";
 
 let passed = 0;
@@ -823,6 +861,9 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
       ok: true,
       value: { walks: { added: 0, paid: 0, recorded: 0, matched: 0, duplicate: 0, xp: 0 }, weights: { added: 0, kept: 0 }, refused: [], line: "Health Connect: nothing new." },
     }),
+    // Health phase 2: Mind's read as it answers off the switch (nothing read: not live), and no lift open.
+    loadCheckin: async () => ({ live: false, ready: false, paused: false, todayCount: 0, lastAt: null }),
+    loadLift: async (_userId, now) => liftViewOf([], {}, { open: null, today: todayKey(now) }),
   };
   const merged = { ...base, ...over } as MobileDeps;
   const deps = Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, spy(k, fn as (...a: unknown[]) => unknown)])) as unknown as MobileDeps;
@@ -1001,7 +1042,8 @@ async function routes() {
     // Re-pinned for P22: Duty's switch (`dutyOn`) and the open debts (`owed`). P28's `skills` is absent while condition
     // decay is off, so the keys are HEAD's (its own pin below, with the read in force). Re-pinned for P7: the Yesterday
     // lane (`yesterday`), always sent.
-    eq("the documented keys", keysOf(d), ["auditOn", "credits", "daily", "day", "dayLabel", "dutyOn", "fading", "level", "now", "owed", "review", "streak", "tasks", "tasksSummary", "week", "work", "yesterday"]);
+    // Re-pinned for health phase 2: the check-in's counts (`checkin`), always sent; `lift` is absent with no lift open.
+    eq("the documented keys", keysOf(d), ["auditOn", "checkin", "credits", "daily", "day", "dayLabel", "dutyOn", "fading", "level", "now", "owed", "review", "streak", "tasks", "tasksSummary", "week", "work", "yesterday"]);
     check("now is the server's clock; day the life day; dayLabel 'Wed 21 Oct'", d.now === NOW.toISOString() && d.day === TODAY && d.dayLabel === "Wed 21 Oct");
     check(
       "one wave: the board (personal: three arguments), the tree, the day's counts, streak, shell, work, the grace extension, the week audit and the credits wallet (P16), read once each",
@@ -2716,6 +2758,7 @@ async function routes() {
   }
 
   await mallRoutes();
+  await healthRoutes();
 }
 
 // ── GET /mall, POST /mall/rewards (blueprint P18; D30) ───────────────────────
@@ -3051,6 +3094,608 @@ async function mallBuyRoutes() {
   }
 }
 
+// ── Health phase 2: the check-in and the set (health-2026-10-27.md D1, D2, D9, D12, D14-D19) ─────────────────────
+
+/** A body less one field. */
+const without = (o: Record<string, unknown>, key: string): Record<string, unknown> => Object.fromEntries(Object.entries(o).filter(([k]) => k !== key));
+
+/** A spied deps object, as fakes() builds one (each dep's calls recorded by name). */
+function spied<T extends object>(base: T, over: Partial<T>): { deps: T; calls: Calls } {
+  const calls: Calls = {};
+  const merged = { ...base, ...over } as T;
+  const deps = Object.fromEntries(
+    Object.entries(merged).map(([k, fn]) => [
+      k,
+      (...a: unknown[]) => {
+        (calls[k] ??= []).push(a);
+        return (fn as (...x: unknown[]) => unknown)(...a);
+      },
+    ])
+  ) as unknown as T;
+  return { deps, calls };
+}
+
+/** 14:12 in Sydney (AEDT) on Wed 28 Oct 2026: MIND_LAUNCH_DAY (2026-10-27) is in force. */
+const NOW_MIND = new Date("2026-10-28T03:12:00.000Z");
+const MIND_DAY: DayKey = "2026-10-28";
+/** A check-in body as the phone's queue sends it (the cover widget's sheet). */
+const checkinBody = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  at: "2026-10-28T03:11:58.000Z",
+  valence: 2,
+  energy: -1,
+  stress: 1,
+  word: "Sentinelword",
+  tags: ["Work"],
+  trigger: "self",
+  via: "widget",
+  tookMs: 4200,
+  clientId: UUID,
+  ...over,
+});
+
+function mindFakes(over: Partial<MobileMindDeps> = {}) {
+  return spied<MobileMindDeps>(
+    {
+      token: () => undefined,
+      userId: () => "u1",
+      now: () => NOW_MIND,
+      logCheck: async (_userId, body) => ({ ok: true, value: { id: "ck_1", day: MIND_DAY, at: body.at, replay: false } }),
+      deleteCheck: async () => ({ ok: true, value: { deleted: 1 } }),
+    },
+    over
+  );
+}
+
+/** A stored set as training-server's view holds it. */
+function liftSet(o: Partial<LiftSetView> & { id: string; ord: number }): LiftSetView {
+  return { entryId: "e-bench", kind: "WORKING", chainOf: null, weightKg: 60, reps: 8, rir: null, toFailure: false, amrap: false, durationSec: null, distanceM: null, restSec: null, clientId: `c-${o.id}`, doneAt: "2026-10-21T00:05:00.000Z", afterFinish: false, editedAt: null, ...o };
+}
+function liftEntry(o: Partial<LiftEntryView> & { id: string; movementKey: string; ord: number }): LiftEntryView {
+  return { groupNo: null, bodyKg: null, note: null, touchedAt: null, sets: [], ...o };
+}
+/** A LiftView with one open lift of `entries`, each movement's last finished lift's sets in `last` (the ghosts' source). */
+function liftViewOf(entries: LiftEntryView[], last: Record<string, LiftSetView[]>, over: Partial<LiftView> = {}): LiftView {
+  const open = { id: "lift-1", day: TODAY, label: "Push day", startedAt: "2026-10-21T00:00:00.000Z", endedAt: null, createdAt: "2026-10-21T00:00:00.000Z", durationMin: 0, backfill: false, entries, summary: {}, lastSetAt: null };
+  const history = Object.fromEntries(
+    Object.entries(last).map(([k, sets]) => [k, { movementKey: k, last: { sessionId: "lift-0", day: "2026-10-18", bodyKg: null, sets }, recent: [], records: null, moments: [], since: null }])
+  );
+  return { today: TODAY, ready: true, unit: "kg", body: null, open, recent: [], history, movements: [], week: [], closed: [], ...over } as unknown as LiftView;
+}
+/** Last Wednesday's bench press: a warm-up, two working sets and a drop off the second. */
+const BENCH_LAST: LiftSetView[] = [
+  liftSet({ id: "l1", entryId: "e0", ord: 1, kind: "WARMUP", weightKg: 40, reps: 10 }),
+  liftSet({ id: "l2", entryId: "e0", ord: 2 }),
+  liftSet({ id: "l3", entryId: "e0", ord: 3 }),
+  liftSet({ id: "l4", entryId: "e0", ord: 4, kind: "DROP", chainOf: 3, weightKg: 47.5, reps: 8 }),
+];
+const minAt = (min: number) => new Date(Date.parse("2026-10-21T00:00:00.000Z") + min * 60_000).toISOString();
+/** Today's bench press with the first `n` of last week's sets done (three minutes apart from 00:05). */
+const benchToday = (n: number): LiftSetView[] => BENCH_LAST.slice(0, n).map((s, i) => ({ ...s, id: `t${i + 1}`, entryId: "e-bench", clientId: `ct${i + 1}`, doneAt: minAt(5 + i * 3) }));
+/** The open lift: bench press (with `benchDone` sets) then back squat (its own sets, its own last lift). */
+const liftOpen = (benchDone: number, squat: LiftSetView[] = [], squatLast: LiftSetView[] | null = null, over: Partial<LiftView> = {}): LiftView =>
+  liftViewOf(
+    [liftEntry({ id: "e-bench", movementKey: "bench_press", ord: 1, sets: benchToday(benchDone) }), liftEntry({ id: "e-squat", movementKey: "back_squat", ord: 2, sets: squat })],
+    squatLast ? { bench_press: BENCH_LAST, back_squat: squatLast } : { bench_press: BENCH_LAST },
+    over
+  );
+
+/** A set as logSetCore answers it. */
+const loggedSet = (set: Partial<LiftSetView> = {}, over: Partial<LoggedSet> = {}): LoggedSet => ({
+  set: liftSet({ id: "s-new", ord: 3, rir: 2, clientId: UUID, doneAt: "2026-10-21T00:14:30.000Z", ...set }),
+  replay: false,
+  jump: null,
+  jumpLine: null,
+  restSec: 180,
+  ...over,
+});
+const setBody = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ sessionId: "lift-1", entryId: "e-bench", doneAt: "2026-10-21T00:14:30.000Z", clientId: UUID, kind: "WORKING", weightKg: 60, reps: 8, rir: 2, ...over });
+
+function liftFakes(over: Partial<MobileLiftDeps> = {}) {
+  return spied<MobileLiftDeps>(
+    {
+      token: () => undefined,
+      userId: () => "u1",
+      now: () => NOW,
+      logSet: async () => ({ ok: true, value: loggedSet() }),
+      loadLift: async () => liftOpen(3),
+    },
+    over
+  );
+}
+
+// An in-memory stand-in for the Prisma delegates the cores use (the check-in's and the set's), so the real cores run
+// here with no database: equality, `in`, `gte`/`lte`/`lt`/`gt`, `not: null`, a compound key, orderBy and take.
+type MemRow = Record<string, unknown>;
+const isCond = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !(v instanceof Date) && !Array.isArray(v) && !(v instanceof Prisma.Decimal);
+const valueOf = (v: unknown): unknown => (v instanceof Date ? v.getTime() : v instanceof Prisma.Decimal ? Number(v.toString()) : v);
+const sameValue = (a: unknown, b: unknown): boolean => valueOf(a) === valueOf(b);
+const order = (a: unknown, b: unknown): number => {
+  const x = valueOf(a) as number | string;
+  const y = valueOf(b) as number | string;
+  return x < y ? -1 : x > y ? 1 : 0;
+};
+function memMatch(row: MemRow, where: MemRow | undefined): boolean {
+  for (const [k, cond] of Object.entries(where ?? {})) {
+    if (k === "OR") {
+      if (!(cond as MemRow[]).some((w) => memMatch(row, w))) return false;
+      continue;
+    }
+    if (k.includes("_") && isCond(cond) && Object.keys(cond).every((f) => k.split("_").includes(f))) {
+      if (!memMatch(row, cond)) return false;
+      continue;
+    }
+    const v = row[k];
+    if (!isCond(cond)) {
+      if (!sameValue(v, cond)) return false;
+      continue;
+    }
+    for (const [op, x] of Object.entries(cond)) {
+      if (op === "in" && !(x as unknown[]).some((y) => sameValue(v, y))) return false;
+      if (op === "not" && (x === null ? v == null : sameValue(v, x))) return false;
+      if ((op === "gte" || op === "lte" || op === "lt" || op === "gt") && v == null) return false;
+      if (op === "gte" && order(v, x) < 0) return false;
+      if (op === "lte" && order(v, x) > 0) return false;
+      if (op === "lt" && order(v, x) >= 0) return false;
+      if (op === "gt" && order(v, x) <= 0) return false;
+    }
+  }
+  return true;
+}
+class MemTable {
+  rows: MemRow[] = [];
+  private n = 0;
+  constructor(
+    readonly name: string,
+    private readonly log: string[],
+    private readonly prefix: string,
+    private readonly clock: () => Date
+  ) {}
+  private seen(method: string) {
+    this.log.push(`${this.name}.${method}`);
+  }
+  findMany = async (a: { where?: MemRow; orderBy?: unknown; take?: number } = {}) => {
+    this.seen("findMany");
+    const by = (Array.isArray(a.orderBy) ? a.orderBy : a.orderBy ? [a.orderBy] : []) as Record<string, "asc" | "desc">[];
+    const out = this.rows.filter((r) => memMatch(r, a.where));
+    out.sort((x, y) => {
+      for (const o of by) for (const [f, dir] of Object.entries(o)) {
+        const c = x[f] == null ? (y[f] == null ? 0 : -1) : y[f] == null ? 1 : order(x[f], y[f]);
+        if (c !== 0) return dir === "desc" ? -c : c;
+      }
+      return 0;
+    });
+    return (a.take ? out.slice(0, a.take) : out).map((r) => ({ ...r }));
+  };
+  findFirst = async (a: { where?: MemRow; orderBy?: unknown } = {}) => (await this.findMany({ ...a, take: 1 }))[0] ?? null;
+  findUnique = async (a: { where?: MemRow } = {}) => (await this.findMany({ ...a, take: 1 }))[0] ?? null;
+  count = async (a: { where?: MemRow } = {}) => {
+    this.seen("count");
+    return this.rows.filter((r) => memMatch(r, a.where)).length;
+  };
+  aggregate = async (a: { where?: MemRow; _max: Record<string, true> }) => {
+    this.seen("aggregate");
+    const rows = this.rows.filter((r) => memMatch(r, a.where));
+    return { _max: Object.fromEntries(Object.keys(a._max).map((f) => [f, rows.map((r) => r[f]).reduce<unknown>((m, v) => (v != null && (m == null || order(v, m) > 0) ? v : m), null)])) };
+  };
+  create = async (a: { data: MemRow }) => {
+    this.seen("create");
+    const at = this.clock();
+    const row = { id: `${this.prefix}${++this.n}`, createdAt: at, updatedAt: at, ...a.data };
+    this.rows.push(row);
+    return { ...row };
+  };
+  update = async (a: { where: MemRow; data: MemRow }) => {
+    this.seen("update");
+    const row = this.rows.find((r) => memMatch(r, a.where));
+    if (!row) throw new Prisma.PrismaClientKnownRequestError("No record", { code: "P2025", clientVersion: "6" });
+    Object.assign(row, a.data, { updatedAt: this.clock() });
+    return { ...row };
+  };
+  updateMany = async (a: { where: MemRow; data: MemRow }) => {
+    this.seen("updateMany");
+    const rows = this.rows.filter((r) => memMatch(r, a.where));
+    for (const r of rows) Object.assign(r, a.data);
+    return { count: rows.length };
+  };
+  deleteMany = async (a: { where?: MemRow } = {}) => {
+    this.seen("deleteMany");
+    const before = this.rows.length;
+    this.rows = this.rows.filter((r) => !memMatch(r, a.where));
+    return { count: before - this.rows.length };
+  };
+}
+const MEM_METHODS = ["findMany", "findFirst", "findUnique", "count", "aggregate", "create", "update", "updateMany", "deleteMany"] as const;
+/** Puts the tables in place of the client's delegates (and $transaction), runs `body`, then puts the client back. */
+async function withMemDb(tables: MemTable[], body: (inPlace: boolean) => Promise<void>): Promise<void> {
+  const db = prisma as unknown as Record<string, Record<string, unknown>> & { $transaction: unknown };
+  const saved: [string, string, unknown][] = [];
+  const savedTx = db.$transaction;
+  for (const t of tables) for (const m of MEM_METHODS) {
+    saved.push([t.name, m, db[t.name][m]]);
+    db[t.name][m] = t[m];
+  }
+  const tx = async (arg: unknown) => (typeof arg === "function" ? (arg as (c: unknown) => Promise<unknown>)(prisma) : Promise.all(arg as Promise<unknown>[]));
+  db.$transaction = tx;
+  const inPlace = tables.every((t) => MEM_METHODS.every((m) => db[t.name][m] === t[m])) && db.$transaction === tx;
+  try {
+    await body(inPlace);
+  } finally {
+    for (const [model, m, fn] of saved) db[model][m] = fn;
+    db.$transaction = savedTx;
+  }
+}
+
+async function healthRoutes() {
+  section("GET /check: the check-in's counts (health phase 2; D9)");
+  {
+    const { deps, calls } = fakes();
+    const g = await got(handleCheck(get("/check"), deps));
+    const ci = data(g).checkin as Record<string, unknown>;
+    collectKeys(ci);
+    eq("checkin: the documented keys, none and zero while it can't be drawn (MIND_LAUNCH_DAY off, nothing read)", [keysOf(ci), ci], [["lastAt", "live", "paused", "todayCount"], { live: false, lastAt: null, todayCount: 0, paused: false }]);
+    check("checkin: read once, beside the board, at the server's clock", same(calls.loadCheckin, [["u1", NOW]]));
+    // A read that carried more than it should (a binding that leaked) still sends the four, key by key.
+    const leaky = { live: true, ready: true, paused: false, todayCount: 2, lastAt: "2026-10-21T00:05:00.000Z", valence: -3, energy: 2, stress: 4, word: "Sentinelword", tags: ["Sentineltag"], recent: [{ valence: -3 }] } as unknown as MobileCheckinRead;
+    const on = await got(handleCheck(get("/check"), fakes({ loadCheckin: async () => leaky }).deps));
+    eq("checkin: live, the last instant and today's count only", data(on).checkin, { live: true, lastAt: "2026-10-21T00:05:00.000Z", todayCount: 2, paused: false });
+    check("checkin: no value, word or tag ever reaches /check (the reply's raw text names none)", !/Sentinel|valence|"energy"|"stress"|"word"|"tags"/.test(on.raw), on.raw.slice(0, 200));
+    const paused = data(await got(handleCheck(get("/check"), fakes({ loadCheckin: async () => ({ live: true, ready: true, paused: true, todayCount: 0, lastAt: null }) }).deps))).checkin;
+    const notReady = data(await got(handleCheck(get("/check"), fakes({ loadCheckin: async () => ({ live: true, ready: false, paused: true, todayCount: 3, lastAt: "x" }) }).deps))).checkin;
+    const failed = await got(handleCheck(get("/check"), fakes({ loadCheckin: async () => Promise.reject(new Error("mind exploded")) }).deps));
+    eq(
+      "checkin: paused says so; not read (the migration, a failed view) is none and zero, never a stale count; a failed read is none and the check still answers, no message",
+      [paused, notReady, failed.status, data(failed).checkin, /exploded/.test(failed.raw)],
+      [{ live: true, lastAt: null, todayCount: 0, paused: true }, { live: false, lastAt: null, todayCount: 0, paused: false }, 200, { live: false, lastAt: null, todayCount: 0, paused: false }, false]
+    );
+    const src = code("src/lib/mobile-api.ts");
+    const body = src.slice(src.indexOf("export function checkCheckinOf"), src.indexOf("\n}\n", src.indexOf("export function checkCheckinOf")));
+    check("checkCheckinOf copies its four keys by name (no spread of the read)", body.length > 0 && !/\.\.\.r\b/.test(body) && /return \{ live: true, lastAt: /.test(body) && same(checkCheckinOf(null), { live: false, lastAt: null, todayCount: 0, paused: false }));
+  }
+
+  section("GET /check: the open lift and its next set (health phase 2; D12)");
+  {
+    const { deps, calls } = fakes();
+    const none = data(await got(handleCheck(get("/check"), deps)));
+    check("lift: absent with no lift open (the reply reads as before), the logger's read made once at the server's clock", !("lift" in none) && same(calls.loadLift, [["u1", NOW]]));
+    const view = liftOpen(2);
+    const g = await got(handleCheck(get("/check"), fakes({ loadLift: async () => view }).deps));
+    const lift = data(g).lift as Record<string, unknown>;
+    collectKeys(lift);
+    const next = lift.next as Record<string, unknown>;
+    eq("lift: the documented keys, and checkLiftOf over the logger's own view", [keysOf(lift), lift], [["label", "next", "sessionId", "startedAt"], checkLiftOf(view)]);
+    eq(
+      "lift.next: the documented keys",
+      keysOf(next),
+      ["amrap", "distanceM", "durationSec", "entryId", "fromLast", "ghostLine", "kind", "movementKey", "name", "ord", "reps", "setText", "unit", "weightKg"]
+    );
+    eq(
+      "lift.next: two of last week's four bench sets done, the third is next (a working 60 × 8 at place 3), in the logger's words",
+      [next.entryId, next.name, next.ord, next.kind, next.weightKg, next.reps, next.fromLast, next.setText, next.ghostLine, next.unit],
+      ["e-bench", "Bench press", 3, "WORKING", 60, 8, true, "60 kg × 8", "last 60 × 8", "kg"]
+    );
+    const web = initialDraftsOf("e-bench", 2, BENCH_LAST)[0];
+    check(
+      "lift.next is the web logger's own first row (lift-model initialDraftsOf: the last lift's rows past those logged)",
+      web.kind === next.kind && web.fromLast === next.fromLast && web.ghost?.weightKg === next.weightKg && web.ghost?.reps === next.reps && web.amrap === next.amrap
+    );
+    const drop = liftNextOf(liftOpen(3));
+    eq("…after three, the drop (kind DROP, 47.5 × 8: the server chains it to the set before)", [drop?.kind, drop?.weightKg, drop?.reps, drop?.ord, drop?.setText], ["DROP", 47.5, 8, 4, "47.5 kg × 8"]);
+    const squat = liftNextOf(liftOpen(4));
+    eq(
+      "…the bench done, the squat: no set yet and no last lift, so one empty working row (nothing to copy: the app asks for the figures)",
+      squat,
+      { entryId: "e-squat", movementKey: "back_squat", name: "Back squat", ord: 1, kind: "WORKING", weightKg: null, reps: null, durationSec: null, distanceM: null, amrap: false, unit: "kg", fromLast: false, setText: null, ghostLine: null }
+    );
+    check("…every movement's rows done: next is null (+ Set and Finish stay with the user), and the lift block still says the lift", liftNextOf(liftOpen(4, [liftSet({ id: "sq1", entryId: "e-squat", ord: 1, weightKg: 100, reps: 5 })])) === null && checkLiftOf(liftOpen(4, [liftSet({ id: "sq1", entryId: "e-squat", ord: 1 })]))?.next === null);
+    const squatLast = [liftSet({ id: "q1", entryId: "q0", ord: 1, weightKg: 100, reps: 5 }), liftSet({ id: "q2", entryId: "q0", ord: 2, weightKg: 100, reps: 5 })];
+    const worked = liftNextOf(liftOpen(2, [liftSet({ id: "sq1", entryId: "e-squat", ord: 1, weightKg: 100, reps: 5, doneAt: minAt(30) })], squatLast));
+    const workedDone = liftNextOf(liftOpen(2, [1, 2].map((o) => liftSet({ id: `sq${o}`, entryId: "e-squat", ord: o, weightKg: 100, reps: 5, doneAt: minAt(30 + o) })), squatLast));
+    eq(
+      "…the movement being worked comes first (its newest set is the squat's: its second row), and once it is done the first movement in order with a row left",
+      [worked?.entryId, worked?.ord, worked?.setText, workedDone?.entryId, workedDone?.ord],
+      ["e-squat", 2, "100 kg × 5", "e-bench", 3]
+    );
+    const own: UserMovementView = { id: "abc", key: "u:abc", name: "Cable fly", pattern: "PUSH_H", equipment: "CABLE", primaryMuscles: ["chest"], secondaryMuscles: [], load: "EXT", bodyFraction: null, unilateral: false, stepKg: 2.5, restSec: null, archived: false } as UserMovementView;
+    const ownView = liftViewOf([liftEntry({ id: "e-gone", movementKey: "u:gone", ord: 1 }), liftEntry({ id: "e-own", movementKey: "u:abc", ord: 2 })], {}, { movements: [own] });
+    eq("…a movement of the user's own is named from it; a key that no longer resolves is passed over", [liftNextOf(ownView)?.entryId, liftNextOf(ownView)?.name], ["e-own", "Cable fly"]);
+    const lb = liftNextOf(liftOpen(2, [], null, { unit: "lb" }));
+    const bench = movementByKey("bench_press")!;
+    check(
+      "…in the unit Body shows (kilograms stay stored): training.ts setTextOf and ghostLineOf",
+      !!lb && lb.weightKg === 60 && lb.unit === "lb" && lb.setText === setTextOf({ weightKg: 60, reps: 8 }, bench, "lb") && / lb × 8$/.test(lb.setText ?? "") &&
+        lb.ghostLine === ghostLineOf({ from: "LAST_SESSION", fromOrd: 3, draft: { ord: 3, kind: "WORKING", chainOf: null, weightKg: 60, reps: 8, durationSec: null, distanceM: null, amrap: false } }, bench, "lb"),
+      JSON.stringify(lb)
+    );
+    const notReady = data(await got(handleCheck(get("/check"), fakes({ loadLift: async () => ({ ...view, ready: false }) }).deps)));
+    const failed = await got(handleCheck(get("/check"), fakes({ loadLift: async () => Promise.reject(new Error("lift exploded")) }).deps));
+    check("lift: absent before the migration (not ready) and on a failed read, and the check still answers (no message)", !("lift" in notReady) && failed.status === 200 && !("lift" in data(failed)) && !/exploded/.test(failed.raw));
+  }
+
+  section("POST /checkin (health phase 2; D1, D2, D5, D9)");
+  {
+    const { deps, calls } = mindFakes();
+    const g = await got(handleCheckin(post("/checkin", checkinBody({ clientId: UUID.toUpperCase() })), deps));
+    const d = data(g);
+    collectKeys(d);
+    eq("200, ok, no-store, the documented keys", [g.status, g.noStore, keysOf(d)], [200, true, ["day", "duplicate", "id", "line", "undoUntil", "words"]]);
+    eq(
+      "the core gets the body as sent, its clientId lowercased, at the route's clock (the phone's own `at`, its surface and trigger)",
+      calls.logCheck,
+      [["u1", { at: "2026-10-28T03:11:58.000Z", valence: 2, energy: -1, stress: 1, word: "Sentinelword", tags: ["Work"], trigger: "self", via: "widget", promptedAt: null, tookMs: 4200, clientId: UUID }, NOW_MIND]]
+    );
+    const receipt = receiptLineOf({ at: "2026-10-28T03:11:58.000Z", valence: 2, energy: -1 });
+    eq(
+      "the answer: the row's id and day; the line is the time alone ('Logged 14:11', safe on any surface); the words the grid's; line · words is the web sheet's receipt; Undo for UNDO_MS",
+      [d.id, d.day, d.line, d.words, `${d.line} · ${d.words}`, d.undoUntil, d.duplicate],
+      ["ck_1", MIND_DAY, "Logged 14:11", cellWordsOf(2, -1), receipt, new Date(NOW_MIND.getTime() + UNDO_MS).toISOString(), false]
+    );
+    check("the answer names no value: no figure, no word or tag the user sent (the words are the grid's, never theirs)", !/Sentinelword|"Work"|valence|energy|stress/.test(g.raw), g.raw);
+    eq("CHECKIN_KEYS are the body's fields (with clientId); the phone's surfaces are check, widget, tile and notify", [CHECKIN_KEYS, PHONE_VIAS], [["at", "valence", "energy", "stress", "word", "tags", "trigger", "via", "promptedAt", "tookMs"], ["check", "widget", "tile", "notify"]]);
+    // Each with its own clientId (the replay cache would answer a used one with conflict before the shape is read).
+    const badOf = async (body: Record<string, unknown>) => got(handleCheckin(post("/checkin", "clientId" in body ? { ...body, clientId: randomUUID() } : body), mindFakes().deps));
+    const noKey = without(checkinBody(), "clientId");
+    const noAt = without(checkinBody(), "at");
+    const noEnergy = without(checkinBody(), "energy");
+    const bads = await Promise.all(
+      [
+        noKey,
+        noAt,
+        noEnergy,
+        checkinBody({ at: "yesterday" }),
+        checkinBody({ valence: 5 }),
+        checkinBody({ valence: 1.5 }),
+        checkinBody({ valence: "2" }),
+        checkinBody({ stress: 5 }),
+        checkinBody({ stress: -1 }),
+        checkinBody({ word: 7 }),
+        checkinBody({ word: "x".repeat(CHECKIN_TEXT_MAX + 1) }),
+        checkinBody({ tags: "Work" }),
+        checkinBody({ tags: Array.from({ length: 9 }, (_, i) => `t${i}`) }),
+        checkinBody({ tags: [3] }),
+        checkinBody({ trigger: "close" }),
+        checkinBody({ via: "web" }),
+        checkinBody({ via: "today" }),
+        checkinBody({ promptedAt: "soon" }),
+        checkinBody({ tookMs: -1 }),
+        checkinBody({ tookMs: 1.5 }),
+        checkinBody({ mood: 3 }),
+      ].map(badOf)
+    );
+    check(
+      "a wrong shape is bad (400): no clientId, no `at`, a missing or out-of-grid axis, stress outside 0..4, a word or tags that aren't text (or too many), a web-only trigger or surface, a bad promptedAt or tookMs, an unknown field",
+      bads.every((b) => isFail(b, "bad")),
+      bads.map((b) => b.status).join(",")
+    );
+    check("…and no error line repeats a value", bads.every((b) => !/Sentinelword|Work/.test(b.json.error ?? "")) && /clientId is required here/.test(bads[0].json.error ?? ""));
+    const nulls = await got(handleCheckin(post("/checkin", checkinBody({ stress: null, word: null, tags: null, promptedAt: null, tookMs: null, clientId: randomUUID() })), deps));
+    check("the optional fields may be null (absent): stress skipped, no word, no tags", nulls.status === 200 && same((calls.logCheck[1][1] as Record<string, unknown>).tags, []) && (calls.logCheck[1][1] as Record<string, unknown>).stress === null);
+    const refused = await Promise.all(
+      [MIND_OFF, MIND_NOT_READY, "That check-in is more than a week old.", "Couldn't save that. Try again."].map((error) => got(handleCheckin(post("/checkin", checkinBody({ clientId: randomUUID() })), mindFakes({ logCheck: async () => ({ ok: false, error }) }).deps)))
+    );
+    check(
+      "the core's refusals in its words: not open, not ready, a week old → conflict (409); couldn't save → server (500, the queue tries again)",
+      isFail(refused[0], "conflict") && refused[0].json.error === "Check-ins aren't open yet." && isFail(refused[1], "conflict") && isFail(refused[2], "conflict") && isFail(refused[3], "server")
+    );
+    const dup = data(await got(handleCheckin(post("/checkin", checkinBody({ clientId: randomUUID() })), mindFakes({ logCheck: async (_u, b) => ({ ok: true, value: { id: "ck_1", day: MIND_DAY, at: b.at, replay: true } }) }).deps)));
+    check("a resend the core had already logged says duplicate (nothing written)", dup.duplicate === true && dup.id === "ck_1");
+    const r = mindFakes();
+    const k = randomUUID();
+    const first = await got(handleCheckin(post("/checkin", checkinBody({ clientId: k })), r.deps));
+    const again = await got(handleCheckin(post("/checkin", checkinBody({ clientId: k })), r.deps));
+    const changed = await got(handleCheckin(post("/checkin", checkinBody({ clientId: k, valence: -2 })), r.deps));
+    check("a resend with the same clientId and body replays here (the core runs once); the same clientId with another body is conflict", first.raw === again.raw && r.calls.logCheck.length === 1 && isFail(changed, "conflict"));
+    check("behind the token like every route", isFail(await got(handleCheckin(post("/checkin", checkinBody()), mindFakes({ token: () => TOKEN }).deps)), "auth"));
+  }
+
+  section("POST /checkin/undo (health phase 2; D8)");
+  {
+    const { deps, calls } = mindFakes();
+    const g = await got(handleCheckinUndo(post("/checkin/undo", { id: "ck_1" }), deps));
+    collectKeys(data(g));
+    eq("200: the documented keys, deleted, in the Today strip's words; the core gets the user and the id", [g.status, keysOf(data(g)), data(g), calls.deleteCheck], [200, ["deleted", "id", "line"], { id: "ck_1", deleted: 1, line: "Check-in taken back." }, [["u1", "ck_1"]]]);
+    const gone = data(await got(handleCheckinUndo(post("/checkin/undo", { id: "ck_1" }), mindFakes({ deleteCheck: async () => ({ ok: true, value: { deleted: 0 } }) }).deps)));
+    eq("one already gone: deleted 0, 'Already deleted.' (a repeat is harmless)", gone, { id: "ck_1", deleted: 0, line: "Already deleted." });
+    const bads = await Promise.all([{}, { id: "a/b" }, { id: "ck_1", valence: 2 }].map((b) => got(handleCheckinUndo(post("/checkin/undo", b), mindFakes().deps))));
+    check("a missing or wrong id, or any other field, is bad", bads.every((b) => isFail(b, "bad")));
+    const failed = await got(handleCheckinUndo(post("/checkin/undo", { id: "ck_1" }), mindFakes({ deleteCheck: async () => ({ ok: false, error: "Couldn't save that. Try again." }) }).deps));
+    check("the core's couldn't-save is server (500); behind the token", isFail(failed, "server") && isFail(await got(handleCheckinUndo(post("/checkin/undo", { id: "ck_1" }), mindFakes({ token: () => TOKEN }).deps)), "auth"));
+  }
+
+  section("the check-in through Mind's own cores (a stubbed client; health phase 2)");
+  {
+    const log: string[] = [];
+    const clock = () => NOW_MIND;
+    const checks = new MemTable("moodCheck", log, "ck_m", clock);
+    const prefs = new MemTable("mindPrefs", log, "mp_", clock);
+    await withMemDb([checks, prefs], async (inPlace) => {
+      check("the stand-in is in place before any core runs (nothing below reaches a database)", inPlace);
+      if (!inPlace) return;
+      const deps: MobileMindDeps = { ...realMindDeps, token: () => undefined, userId: () => "u-mind", now: () => NOW_MIND };
+      const k = randomUUID();
+      const send = (over: Record<string, unknown> = {}) => got(handleCheckin(post("/checkin", checkinBody({ clientId: k, ...over })), deps));
+      if (!mindOn(MIND_DAY)) {
+        const off = await send();
+        check("(MIND_LAUNCH_DAY not in force here) the real core refuses with its words and writes nothing", isFail(off, "conflict") && off.json.error === MIND_OFF && checks.rows.length === 0);
+        return;
+      }
+      const first = await send();
+      const again = await send();
+      const row = checks.rows[0] ?? {};
+      check(
+        "through the real core (mind-server logCheckCore): one row, the values as sent, the phone's own instant and surface, its key the clientId",
+        first.status === 200 && again.raw === first.raw && checks.rows.length === 1 && row.valence === 2 && row.energy === -1 && row.stress === 1 && row.via === "widget" && row.trigger === "self" &&
+          sameValue(row.at, new Date("2026-10-28T03:11:58.000Z")) && row.clientId === k && data(first).id === row.id && data(first).day === MIND_DAY && data(first).duplicate === false,
+        first.raw
+      );
+      // Another instance (this one's replay cache would answer first): the core itself finds the row its clientId keyed.
+      const parsed = { ...checkinBody({ clientId: k }), promptedAt: null } as unknown as Parameters<MobileMindDeps["logCheck"]>[1];
+      const elsewhere = await realMindDeps.logCheck("u-mind", parsed, NOW_MIND);
+      check(
+        "idempotent by clientId on any instance: a resend that reaches the core answers the first row (replay), nothing written, still one row",
+        elsewhere.ok && elsewhere.value.replay === true && elsewhere.value.id === row.id && checks.rows.length === 1 && log.filter((x) => x === "moodCheck.create").length === 1
+      );
+      check("the binding hands back the row's id, day, instant and replay only (never a value)", elsewhere.ok && same(keysOf(elsewhere.value), ["at", "day", "id", "replay"]));
+      const read = await loadCheckinRead("u-mind", NOW_MIND);
+      eq("/check's read through Mind's own view: its five fields only, today's one check-in and its instant", read, { live: true, ready: true, paused: false, todayCount: 1, lastAt: "2026-10-28T03:11:58.000Z" });
+      const viaCheck = await got(handleCheck(get("/check"), fakes({ loadCheckin: () => loadCheckinRead("u-mind", NOW_MIND) }).deps));
+      check("…and /check over it: the counts, never a value (no figure, word or tag in the raw reply)", same(data(viaCheck).checkin, { live: true, lastAt: "2026-10-28T03:11:58.000Z", todayCount: 1, paused: false }) && !/Sentinelword|Work|valence/.test(viaCheck.raw));
+      const old = await got(handleCheckin(post("/checkin", checkinBody({ clientId: randomUUID(), at: "2026-10-20T03:00:00.000Z" })), deps));
+      const sixDays = await got(handleCheckin(post("/checkin", checkinBody({ clientId: randomUUID(), at: "2026-10-22T03:00:00.000Z" })), deps));
+      check(
+        "the phone's own instant is kept as the core allows: 6 life days back books on its day; 8 is refused in the core's words (409), nothing written",
+        sixDays.status === 200 && data(sixDays).day === "2026-10-22" && isFail(old, "conflict") && old.json.error === "That check-in is more than a week old." && checks.rows.length === 2
+      );
+      const undo = await got(handleCheckinUndo(post("/checkin/undo", { id: String(row.id) }), deps));
+      const undoAgain = await got(handleCheckinUndo(post("/checkin/undo", { id: String(row.id), clientId: randomUUID() }), deps));
+      check("the undo through deleteCheckCore: the row is gone, and a second says already deleted", same(data(undo), { id: row.id, deleted: 1, line: "Check-in taken back." }) && data(undoAgain).deleted === 0 && checks.rows.length === 1);
+      check("only Mind's own tables were touched (no ledger, no other model)", log.every((x) => /^(moodCheck|mindPrefs)\./.test(x)), [...new Set(log)].join(","));
+    });
+  }
+
+  section("POST /lift/set (health phase 2; D12, D14-D19)");
+  {
+    const { deps, calls } = liftFakes();
+    const g = await got(handleLiftSet(post("/lift/set", setBody({ clientId: UUID.toUpperCase() })), deps));
+    const d = data(g);
+    collectKeys(d);
+    collectKeys(d.set);
+    eq("200, no-store, the documented keys (jump absent with no big jump)", [g.status, g.noStore, keysOf(d), keysOf(d.set)], [200, true, ["duplicate", "lift", "line", "restSec", "set"], ["amrap", "chainOf", "distanceM", "doneAt", "durationSec", "entryId", "id", "kind", "ord", "reps", "rir", "toFailure", "weightKg"]]);
+    eq(
+      "the core gets the set as the web row's ✓ sends it, its clientId lowercased, no `ord` (the next place, under the movement's lock), at the route's clock",
+      calls.logSet,
+      [["u1", { sessionId: "lift-1", entryId: "e-bench", clientId: UUID, doneAt: "2026-10-21T00:14:30.000Z", kind: "WORKING", weightKg: 60, reps: 8, rir: 2 }, NOW]]
+    );
+    eq(
+      "the answer: the set as stored, the line in the web row's words, the lift after it (its next: this set's drop), and the web's rest before a drop: none (restAfterOf, not the core's 180)",
+      [d.duplicate, d.restSec, d.line, d.lift, (d.lift as { next: { kind: string } }).next.kind],
+      [false, 0, "Bench press: logged 60 kg × 8 · RIR 2.", checkLiftOf(liftOpen(3)), "DROP"]
+    );
+    {
+      // The rest the phone's timer runs is the web logger's (training.ts restAfterOf), whatever the core booked.
+      const restOf = async (set: Partial<LiftSetView>, view: LiftView | null, restSec = 180) =>
+        data(await got(handleLiftSet(post("/lift/set", setBody({ clientId: randomUUID() })), liftFakes({ logSet: async () => ({ ok: true, value: loggedSet(set, { restSec }) }), loadLift: async () => view ?? Promise.reject(new Error("no read")) }).deps))).restSec;
+      const benchMini = [...BENCH_LAST.slice(0, 3), liftSet({ id: "l4", entryId: "e0", ord: 4, kind: "MINI", chainOf: 3, weightKg: 60, reps: 3 })];
+      const miniView = liftViewOf([liftEntry({ id: "e-bench", movementKey: "bench_press", ord: 1, sets: benchToday(3) })], { bench_press: benchMini });
+      eq("…before this set's rest-pause: 20 s (REST_SEC.BEFORE_MINI)", await restOf({}, miniView), 20);
+      eq("…before a working set: the core's own rest (60 after a warm-up)", await restOf({ ord: 1, kind: "WARMUP", weightKg: 40, reps: 10 }, liftOpen(1), 60), 60);
+      eq("…a drop next on another movement: the core's own rest", await restOf({ entryId: "e-squat", ord: 3 }, liftOpen(3)), 180);
+      eq("…a drop next but not at this set's very next place (a queued set landed out of order): the core's own rest", await restOf({ ord: 2 }, liftOpen(3)), 180);
+      eq("…the read after it failed (no next known): the core's own rest", await restOf({}, null), 180);
+    }
+    check("the logger's read after the set, once, for the user at the route's clock", same(calls.loadLift, [["u1", NOW]]));
+    const jumpLine = "Big jump: 100 kg (best 80). Keep it?";
+    const j = data(await got(handleLiftSet(post("/lift/set", setBody({ clientId: randomUUID(), weightKg: 100 })), liftFakes({ logSet: async () => ({ ok: true, value: loggedSet({ weightKg: 100 }, { jump: { level: "CONFIRM", metric: "HEAVIEST", valueKg: 100, bestKg: 80 }, jumpLine }) }) }).deps)));
+    collectKeys(j.jump);
+    eq(
+      "a big jump: plain words (the core's question less 'Keep it?', then that the set stands as a record) and the web's page; Keep and Fix stay on the web",
+      j.jump,
+      { line: `Big jump: 100 kg (best 80). ${LIFT_JUMP_NOTE}`, webHref: LIFT_WEB_HREF }
+    );
+    check("…its words: no question left, no praise, no '!'", !/Keep it\?|!/.test((j.jump as { line: string }).line) && LIFT_WEB_HREF === "/train/exercise");
+    const dup = data(await got(handleLiftSet(post("/lift/set", setBody({ clientId: randomUUID() })), liftFakes({ logSet: async () => ({ ok: true, value: loggedSet({}, { replay: true }) }) }).deps)));
+    check("a resend the core had already saved: duplicate, in its words", dup.duplicate === true && dup.line === "Bench press: already logged 60 kg × 8 · RIR 2.");
+    const blind = await got(handleLiftSet(post("/lift/set", setBody({ clientId: randomUUID() })), liftFakes({ loadLift: async () => Promise.reject(new Error("lift exploded")) }).deps));
+    check("the read after failing: the set still answers (200), lift null (the app reads /check again), the plain line, no message", blind.status === 200 && data(blind).lift === null && data(blind).line === "Set logged." && !/exploded/.test(blind.raw));
+    const bads = await Promise.all(
+      [
+        without(setBody(), "clientId"),
+        without(setBody(), "doneAt"),
+        setBody({ sessionId: "a/b" }),
+        setBody({ entryId: undefined }),
+        setBody({ doneAt: "now" }),
+        setBody({ kind: "AMRAP" }),
+        setBody({ weightKg: "60" }),
+        setBody({ weight: 60 }),
+        setBody({ reps: 1.5 }),
+        setBody({ rir: 6 }),
+        setBody({ ord: 0 }),
+        setBody({ toFailure: "yes" }),
+        setBody({ distanceM: -1 }),
+      ].map((b) => got(handleLiftSet(post("/lift/set", "clientId" in b ? { ...b, clientId: randomUUID() } : b), liftFakes().deps)))
+    );
+    check(
+      "a wrong shape is bad (400): no clientId (its own line), no doneAt, bad ids, a time that isn't one, an unknown kind, a weight that isn't kilograms (the unit shown is the web's), half a rep, RIR past 4+, set 0, a flag that isn't one",
+      bads.every((b) => isFail(b, "bad")) && bads[0].json.error === LIFT_NEEDS_CLIENT_ID,
+      bads.map((b) => b.status).join(",")
+    );
+    const refusal = (error: string) => got(handleLiftSet(post("/lift/set", setBody({ clientId: randomUUID() })), liftFakes({ logSet: async () => ({ ok: false, error }) }).deps));
+    const [finished, goneLift, goneEntry, notReady, bounds, failed] = await Promise.all([LIFT_COPY.FINISHED, LIFT_COPY.NO_LIFT, LIFT_COPY.ENTRY_GONE, TRAINING_NOT_READY, "Reps from 1 to 100, please.", "Couldn't save that. Try again."].map(refusal));
+    check(
+      "the core's refusals in its words: a lift or a movement gone → gone (404, held equal to training-server's lines); finished, not ready, a bound → conflict (409); couldn't save → server (500)",
+      isFail(goneLift, "gone") && isFail(goneEntry, "gone") && LIFT_GONE === LIFT_COPY.NO_LIFT && LIFT_ENTRY_GONE === LIFT_COPY.ENTRY_GONE &&
+        isFail(finished, "conflict") && finished.json.error === "That lift is finished. Start a new one to log more." && isFail(notReady, "conflict") && isFail(bounds, "conflict") && isFail(failed, "server")
+    );
+    const r = liftFakes();
+    const k = randomUUID();
+    const first = await got(handleLiftSet(post("/lift/set", setBody({ clientId: k })), r.deps));
+    const again = await got(handleLiftSet(post("/lift/set", setBody({ clientId: k })), r.deps));
+    const other = await got(handleLiftSet(post("/lift/set", setBody({ clientId: k, reps: 9 })), r.deps));
+    check("a resend with the same clientId and body replays here (the core runs once); another body with it is conflict", first.raw === again.raw && r.calls.logSet.length === 1 && isFail(other, "conflict"));
+    eq("LIFT_SET_KEYS: the web row's fields, the phone's place and time (and clientId)", LIFT_SET_KEYS, ["sessionId", "entryId", "ord", "kind", "weightKg", "reps", "rir", "toFailure", "amrap", "durationSec", "distanceM", "restSec", "doneAt"]);
+    check("behind the token like every route", isFail(await got(handleLiftSet(post("/lift/set", setBody()), liftFakes({ token: () => TOKEN }).deps)), "auth"));
+  }
+
+  section("the set through the logger's own cores (a stubbed client; health phase 2)");
+  {
+    const log: string[] = [];
+    const NOW_LIFT = new Date("2026-10-28T08:30:00.000Z");
+    const clock = () => NOW_LIFT;
+    const sessions = new MemTable("exerciseSession", log, "S", clock);
+    const entries = new MemTable("exerciseEntry", log, "E", clock);
+    const sets = new MemTable("exerciseSet", log, "X", clock);
+    const tables = [sessions, entries, sets, new MemTable("userMovement", log, "U", clock), new MemTable("bodyWeight", log, "B", clock), new MemTable("weightGoal", log, "G", clock)];
+    const U = "u-lift";
+    const t = (iso: string) => new Date(iso);
+    const header = { userId: U, kind: "LIFT", label: "Push day", angleDeg: 0, distanceKm: 0, note: null, variant: null, poolM: null, avgWatts: null, avgHr: null, maxHr: null, sessionRpe: null, clientId: null };
+    sessions.rows.push(
+      { ...header, id: "S-last", day: dateColumn("2026-10-25"), startedAt: t("2026-10-25T08:00:00.000Z"), endedAt: t("2026-10-25T09:00:00.000Z"), durationMin: 60, createdAt: t("2026-10-25T08:00:00.000Z"), updatedAt: t("2026-10-25T09:00:00.000Z") },
+      { ...header, id: "S-open", day: dateColumn("2026-10-28"), startedAt: t("2026-10-28T08:00:00.000Z"), endedAt: null, durationMin: 0, createdAt: t("2026-10-28T08:00:00.000Z"), updatedAt: t("2026-10-28T08:00:00.000Z") }
+    );
+    const entry = { userId: U, movementKey: "bench_press", ord: 1, groupNo: null, bodyKg: null, note: null };
+    entries.rows.push(
+      { ...entry, id: "E-last", sessionId: "S-last", createdAt: t("2026-10-25T08:01:00.000Z"), updatedAt: t("2026-10-25T08:15:00.000Z") },
+      { ...entry, id: "E-open", sessionId: "S-open", createdAt: t("2026-10-28T08:01:00.000Z"), updatedAt: t("2026-10-28T08:01:00.000Z") }
+    );
+    const lastSet = (ord: number, kind: string, kg: number, reps: number, at: string) => ({
+      id: `X-last${ord}`, userId: U, sessionId: "S-last", entryId: "E-last", movementKey: "bench_press", day: dateColumn("2026-10-25"), ord, kind, chainOf: null, weightKg: kg, reps, rir: null,
+      toFailure: false, amrap: false, durationSec: null, distanceM: null, restSec: null, doneAt: t(at), clientId: `x-last${ord}`, createdAt: t(at), updatedAt: t(at),
+    });
+    sets.rows.push(lastSet(1, "WARMUP", 40, 10, "2026-10-25T08:05:00.000Z"), lastSet(2, "WORKING", 60, 8, "2026-10-25T08:10:00.000Z"), lastSet(3, "WORKING", 60, 8, "2026-10-25T08:15:00.000Z"));
+    await withMemDb(tables, async (inPlace) => {
+      check("the stand-in is in place before any core runs (nothing below reaches a database)", inPlace);
+      if (!inPlace) return;
+      const deps: MobileLiftDeps = { ...realLiftDeps, token: () => undefined, userId: () => U, now: () => NOW_LIFT };
+      const k = randomUUID();
+      const body = { sessionId: "S-open", entryId: "E-open", doneAt: "2026-10-28T08:20:00.000Z", clientId: k, kind: "WARMUP", weightKg: 40, reps: 10 };
+      const first = await got(handleLiftSet(post("/lift/set", body), deps));
+      const again = await got(handleLiftSet(post("/lift/set", body), deps));
+      const mine = () => sets.rows.filter((s) => s.sessionId === "S-open");
+      const next = (g: Got) => ((data(g).lift ?? {}) as { next?: Record<string, unknown> }).next ?? null;
+      check(
+        "through the real core (training-server logSetCore): one set, its own time, its key the clientId, a warm-up's 60 s rest; the next is the last lift's second set (a working 60 × 8 at place 2)",
+        first.status === 200 && again.raw === first.raw && mine().length === 1 && mine()[0].clientId === k && sameValue(mine()[0].doneAt, t("2026-10-28T08:20:00.000Z")) && mine()[0].kind === "WARMUP" &&
+          data(first).restSec === 60 && data(first).line === "Bench press: logged 40 kg × 10." && same([next(first)?.kind, next(first)?.weightKg, next(first)?.reps, next(first)?.ord, next(first)?.fromLast, next(first)?.ghostLine], ["WORKING", 60, 8, 2, true, "last 60 × 8"]),
+        first.raw.slice(0, 400)
+      );
+      // Another instance (this one's replay cache would answer first): the core itself finds the set its clientId wrote.
+      const elsewhere = await realLiftDeps.logSet(U, { ...body, clientId: k }, NOW_LIFT);
+      check("idempotent by clientId on any instance: a resend that reaches the core answers the set it wrote (replay), nothing written", elsewhere.ok && elsewhere.value.replay === true && elsewhere.value.set.id === mine()[0].id && mine().length === 1);
+      const heavy = await got(handleLiftSet(post("/lift/set", { ...body, clientId: randomUUID(), kind: "WORKING", weightKg: 100, reps: 8, doneAt: "2026-10-28T08:25:00.000Z" }), deps));
+      check(
+        "a working set over the 8 weeks' best by more than 15 %: saved as logged (place 2), the jump in plain words against the core's own baseline, the next the last lift's third set",
+        heavy.status === 200 && mine().length === 2 && (data(heavy).set as { ord: number }).ord === 2 &&
+          /^Big jump: (e1RM )?[\d.]+ kg \(best [\d.]+\)\. /.test(String((data(heavy).jump as { line?: string } | undefined)?.line)) &&
+          String((data(heavy).jump as { line?: string } | undefined)?.line).endsWith(LIFT_JUMP_NOTE) && (data(heavy).jump as { webHref?: string } | undefined)?.webHref === LIFT_WEB_HREF &&
+          data(heavy).restSec === 180 && same([next(heavy)?.ord, next(heavy)?.weightKg], [3, 60]),
+        heavy.raw.slice(0, 400)
+      );
+      const gone = await got(handleLiftSet(post("/lift/set", { ...body, clientId: randomUUID(), entryId: "E-none" }), deps));
+      check("a movement that isn't in the lift: gone (404) in the core's words, nothing written", isFail(gone, "gone") && gone.json.error === LIFT_ENTRY_GONE && mine().length === 2);
+      check("only the lift's own tables and the body weight were touched (no ledger, no other model)", log.every((x) => /^(exerciseSession|exerciseEntry|exerciseSet|userMovement|bodyWeight|weightGoal)\./.test(x)), [...new Set(log)].join(","));
+    });
+  }
+}
+
 // ═══ 3. The wiring ════════════════════════════════════════════════════════
 
 function routeFiles(): { path: string; file: string; methods: string[] }[] {
@@ -3094,11 +3739,25 @@ const HANDLER_OF: Record<string, string> = {
   "POST /mall/buy": "handleMallBuy",
   "POST /mall/undo": "handleMallUndo",
   "POST /exercise": "handleExercise",
+  // Health phase 2: the check-in, its undo and the set.
+  "POST /checkin": "handleCheckin",
+  "POST /checkin/undo": "handleCheckinUndo",
+  "POST /lift/set": "handleLiftSet",
 };
 
-/** The deps each route hands over: the Mall's own (mall-mobile-cores: no paying core, P18), else the shared ones. */
+/**
+ * The deps each route hands over: the Mall's own (mall-mobile-cores: no paying core, P18), the check-in's (mind-mobile-cores:
+ * Mind's write and delete, health phase 2), the set's (lift-mobile-cores: the set's write and the logger's read), else the
+ * shared ones.
+ */
 const DEPS_OF = (key: string): { name: string; from: string } =>
-  key.endsWith(" /mall") || key.includes(" /mall/") ? { name: "realMallDeps", from: "@/lib/mall-mobile-cores" } : { name: "realMobileDeps", from: "@/lib/mobile-api-cores" };
+  key.endsWith(" /mall") || key.includes(" /mall/")
+    ? { name: "realMallDeps", from: "@/lib/mall-mobile-cores" }
+    : key.endsWith(" /checkin") || key.includes(" /checkin/")
+      ? { name: "realMindDeps", from: "@/lib/mind-mobile-cores" }
+      : key.includes(" /lift/")
+        ? { name: "realLiftDeps", from: "@/lib/lift-mobile-cores" }
+        : { name: "realMobileDeps", from: "@/lib/mobile-api-cores" };
 
 function wiring() {
   section("the route files");
@@ -3259,7 +3918,7 @@ function wiring() {
   eq("every dep the handlers use is bound in mobile-api-cores, and nothing else", bound, depNames);
 
   section("the pure modules stay pure");
-  for (const f of ["src/lib/mobile-api.ts", "src/lib/mobile-api-server.ts"]) {
+  for (const f of ["src/lib/mobile-api.ts", "src/lib/mobile-api-server.ts", "src/lib/mind-mobile.ts"]) {
     const src = read(f);
     const valueImports = [...src.matchAll(/^import (?!type )[^;]*? from "([^"]+)";/gm)].map((m) => m[1]);
     const bad = valueImports.filter((m) => /prisma|\/actions\/|mobile-api-cores|^next\/|gemini|scheduled-tasks-server|\.\/tasks$|review-data|^@\//.test(m));
@@ -3279,9 +3938,14 @@ function wiring() {
   })();
   const leaks = clients.filter((p) => /MOBILE_API_TOKEN|mobile-api/.test(readFileSync(join(ROOT, p), "utf8")));
   check("no client module reads the token or imports the mobile API", leaks.length === 0 && clients.length > 10, leaks.join(", "));
-  const tokenReaders = ["src/lib/mobile-api.ts", "src/lib/mobile-api-server.ts", "src/lib/mobile-api-cores.ts", "src/lib/mall-mobile-cores.ts"].filter((f) => /process\.env/.test(code(f)));
-  // Re-pinned for P18: the Mall's own cores read the token too (the same env name).
-  eq("only the cores (mobile-api-cores, and mall-mobile-cores for the Mall's routes) read process.env", tokenReaders, ["src/lib/mobile-api-cores.ts", "src/lib/mall-mobile-cores.ts"]);
+  const tokenReaders = ["src/lib/mobile-api.ts", "src/lib/mobile-api-server.ts", "src/lib/mind-mobile.ts", "src/lib/mobile-api-cores.ts", "src/lib/mall-mobile-cores.ts", "src/lib/mind-mobile-cores.ts", "src/lib/lift-mobile-cores.ts"].filter((f) => /process\.env/.test(code(f)));
+  // Re-pinned for P18: the Mall's own cores read the token too (the same env name). Re-pinned for health phase 2: so do
+  // the check-in's and the set's.
+  eq(
+    "only the cores (mobile-api-cores, and the Mall's, the check-in's and the set's own) read process.env",
+    tokenReaders,
+    ["src/lib/mobile-api-cores.ts", "src/lib/mall-mobile-cores.ts", "src/lib/mind-mobile-cores.ts", "src/lib/lift-mobile-cores.ts"]
+  );
 
   section("the web formulas the app mirrors");
   const page = code("src/app/review/page.tsx");
@@ -3412,6 +4076,98 @@ function wiring() {
     return out.sort();
   })();
   eq("only the four Mall route files import mall-mobile-cores", mallImporters, ["src/app/api/mobile/v1/mall/buy/route.ts", "src/app/api/mobile/v1/mall/rewards/route.ts", "src/app/api/mobile/v1/mall/route.ts", "src/app/api/mobile/v1/mall/undo/route.ts"]);
+
+  // Health phase 2: the check-in's and the set's own cores, and /check's two reads.
+  section("the check-in's and the set's cores (health phase 2)");
+  bind(
+    "/check's check-in read is mind-mobile-cores loadCheckinRead(userId, now) (Mind's view narrowed to its counts), and its lift Train › Exercise's own loadLiftView(userId, now)",
+    /import \{ loadCheckinRead \} from "\.\/mind-mobile-cores";[\s\S]*import \{ loadLiftView \} from "\.\/training-server";[\s\S]*loadCheckin: \(userId, now\) => loadCheckinRead\(userId, now\),\s*loadLift: \(userId, now\) => loadLiftView\(userId, now\),/
+  );
+  const mindCores = code("src/lib/mind-mobile-cores.ts");
+  const liftCores = code("src/lib/lift-mobile-cores.ts");
+  check(
+    "mind-mobile-cores: the token, the user and the clock as the shared cores read them",
+    /token: \(\) => process\.env\[MOBILE_TOKEN_ENV\],\s*userId: \(\) => getCurrentUserId\(\),\s*now: \(\) => new Date\(\),/.test(mindCores)
+  );
+  check(
+    "mind-mobile-cores: the check-in is mind-server logCheckCore(userId, body, now) at the route's clock, its answer narrowed to the row's id, day, instant and replay (never a value)",
+    /logCheck: async \(userId, body, now\) => \{\s*const res = await logCheckCore\(userId, body, now\);\s*return res\.ok \? \{ ok: true, value: \{ id: res\.value\.id, day: res\.value\.day, at: res\.value\.at, replay: res\.value\.replay \} \} : \{ ok: false, error: res\.error \};\s*\},/.test(mindCores)
+  );
+  check("mind-mobile-cores: the undo is deleteCheckCore(userId, id), the check-in's own Delete", /deleteCheck: \(userId, id\) => deleteCheckCore\(userId, id\),/.test(mindCores));
+  check(
+    "mind-mobile-cores: /check's read is loadMindView(userId, now) with live, ready, paused, todayCount and lastAt copied by name, nothing else",
+    /export async function loadCheckinRead\(userId: string, now: Date\): Promise<MobileCheckinRead> \{\s*const v = await loadMindView\(userId, now\);\s*return \{ live: v\.live, ready: v\.ready, paused: v\.paused, todayCount: v\.todayCount, lastAt: v\.lastAt \};\s*\}/.test(mindCores) &&
+      !/\.\.\.v\b|\.\.\.res\b|recent|valence|energy|stress/.test(mindCores)
+  );
+  check(
+    "lift-mobile-cores: the token, the user and the clock; the set is training-server logSetCore(userId, input, now); the read after it loadLiftView(userId, now)",
+    /token: \(\) => process\.env\[MOBILE_TOKEN_ENV\],\s*userId: \(\) => getCurrentUserId\(\),\s*now: \(\) => new Date\(\),/.test(liftCores) &&
+      /logSet: \(userId, input, now\) => logSetCore\(userId, input, now\),/.test(liftCores) &&
+      /loadLift: \(userId, now\) => loadLiftView\(userId, now\),/.test(liftCores)
+  );
+  const valueImportsOf = (src: string) => [...src.matchAll(/^import (?!type )[^;]*? from "([^"]+)";/gm)].map((m) => m[1]).sort();
+  eq(
+    "the check-in's and the set's cores import values from the user, their own core and the token's name only (never mobile-api-cores, an action or the ledger)",
+    [valueImportsOf(mindCores), valueImportsOf(liftCores)],
+    [["./mind-server", "./mobile-api", "./user"], ["./mobile-api", "./training-server", "./user"]]
+  );
+  const keysOfDeps = (src: string, name: string) => {
+    const at = src.indexOf(`export const ${name}`);
+    return [...src.slice(at, src.indexOf("\n};", at)).matchAll(/^\s{2}(\w+): /gm)].map((m) => m[1]).sort();
+  };
+  const depsIn = (name: string) => {
+    const at = depsSrc.indexOf(`export interface ${name}`);
+    return [...depsSrc.slice(at, depsSrc.indexOf("\n}", at)).matchAll(/^\s{2}(\w+): /gm)].map((m) => m[1]).sort();
+  };
+  eq(
+    "every dep the check-in's and the set's handlers use is bound in their cores, and nothing else (no paying core among them)",
+    [keysOfDeps(mindCores, "realMindDeps"), keysOfDeps(liftCores, "realLiftDeps")],
+    [depsIn("MobileMindDeps"), depsIn("MobileLiftDeps")]
+  );
+  check(
+    "MobileMindDeps and MobileLiftDeps hold no paying core (no completeTask, submitReview, makeUp, finish, link or ledger)",
+    [...depsIn("MobileMindDeps"), ...depsIn("MobileLiftDeps")].every((k) => ["token", "userId", "now", "logCheck", "deleteCheck", "logSet", "loadLift"].includes(k))
+  );
+  const importersOf = (mod: string) => {
+    const out: string[] = [];
+    const walk = (d: string) => {
+      for (const f of readdirSync(d)) {
+        const p = join(d, f);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(f) && !p.replace(/\\/g, "/").endsWith(`${mod}.ts`) && new RegExp(`["'](?:@/lib/|\\./|\\.\\./lib/)${mod}["']`).test(code(relative(ROOT, p).replace(/\\/g, "/")))) out.push(relative(ROOT, p).replace(/\\/g, "/"));
+      }
+    };
+    walk(join(ROOT, "src"));
+    return out.sort();
+  };
+  eq(
+    "who imports them: the check-in's two route files and mobile-api-cores (its /check read) import mind-mobile-cores; the set's route file alone lift-mobile-cores",
+    [importersOf("mind-mobile-cores"), importersOf("lift-mobile-cores")],
+    [["src/app/api/mobile/v1/checkin/route.ts", "src/app/api/mobile/v1/checkin/undo/route.ts", "src/lib/mobile-api-cores.ts"], ["src/app/api/mobile/v1/lift/set/route.ts"]]
+  );
+  check(
+    "the check-in's and the set's route files never import mobile-api-cores (no paying core reaches them)",
+    ["src/app/api/mobile/v1/checkin/route.ts", "src/app/api/mobile/v1/checkin/undo/route.ts", "src/app/api/mobile/v1/lift/set/route.ts"].every((f) => !/mobile-api-cores|realMobileDeps/.test(code(f)))
+  );
+  const mindMobile = code("src/lib/mind-mobile.ts");
+  eq("mind-mobile.ts (the body's shape) imports Mind's rules and the life day only: pure, no economy, no server module", valueImportsOf(mindMobile), ["./life-day", "./mind"]);
+  const apiServerSrc = code("src/lib/mobile-api-server.ts");
+  const checkinSrc = apiServerSrc.slice(apiServerSrc.indexOf("export async function handleCheckin("), apiServerSrc.indexOf("export async function handleCheckinUndo("));
+  check(
+    "handleCheckin hands the body to the core alone (deps.logCheck), and its answer names no value but the grid's words",
+    /const parsed = checkinBodyOf\(body, clientIdOf\(body\.clientId\)\);\s*if \(!parsed\.ok\) bad\(parsed\.error\);/.test(checkinSrc) &&
+      /const res = await deps\.logCheck\(deps\.userId\(\), parsed\.value, now\);/.test(checkinSrc) &&
+      /return okReply\(checkinReplyOf\(res\.value, parsed\.value, now\)\);/.test(checkinSrc) &&
+      !/console\.|soft\(/.test(checkinSrc)
+  );
+  check(
+    "the check-in's answer: its line the time alone, its words the grid's (cellWordsOf), never the user's own word or tags",
+    /line: `Logged \$\{clockOf\(logged\.at\)\}`,\s*words: cellWordsOf\(body\.valence, body\.energy\),/.test(mindMobile) && !/body\.word|body\.tags|body\.stress/.test(mindMobile.slice(mindMobile.indexOf("export function checkinReplyOf")))
+  );
+  check(
+    "the economy: a check-in and a set write only what the web cores write (logCheckCore and logSetCore touch no ledger table; mind-check and lift-check pin the cores)",
+    !/activityEvent|recordActivity|activityOp/.test(code("src/lib/mind-server.ts")) && !/activityEvent|recordActivity|activityOp/.test(code("src/lib/training-server.ts"))
+  );
 
   section("the work read");
   const sched = code("src/lib/scheduled-tasks-server.ts");
@@ -3584,10 +4340,18 @@ function wiring() {
   const sendLine = read("android/app/src/main/java/com/xtnl/app/core/SendLine.kt");
   const queue = read("android/app/src/main/java/com/xtnl/app/data/SendQueue.kt");
   const widgetTick = read("android/app/src/main/java/com/xtnl/app/widget/WidgetTick.kt");
-  const kinds = [...sendLine.matchAll(/^\s+(?:TICK|LOG|WORK_DONE)\("(\/[\w/]+)"\)/gm)].map((m) => m[1]);
+  // Re-pinned on purpose for health phase 2: the check-in (CHECKIN) and the set (SET) wait too, each with its own clientId
+  // and its own instant; a review answer still never does.
+  const kinds = [...sendLine.matchAll(/^\s+(?:TICK|LOG|WORK_DONE|CHECKIN|SET)\("(\/[\w/]+)"\)/gm)].map((m) => m[1]);
+  const kindNames = [...sendLine.matchAll(/^\s+([A-Z_]+)\("\/[\w/]+"\)[,;]/gm)].map((m) => m[1]);
   check(
-    "the queue replays exactly POST /tasks/complete, /log and /work/done, each a MOBILE_ENDPOINTS write; POST /review/answer never waits",
-    JSON.stringify(kinds) === JSON.stringify(["/tasks/complete", "/log", "/work/done"]) &&
+    "the queue's kinds are exactly TICK, LOG, WORK_DONE, CHECKIN and SET (health phase 2; the Android stage adds the last two)",
+    JSON.stringify(kindNames) === JSON.stringify(["TICK", "LOG", "WORK_DONE", "CHECKIN", "SET"]),
+    JSON.stringify(kindNames)
+  );
+  check(
+    "the queue replays exactly POST /tasks/complete, /log, /work/done, /checkin and /lift/set, each a MOBILE_ENDPOINTS write; POST /review/answer never waits",
+    JSON.stringify(kinds) === JSON.stringify(["/tasks/complete", "/log", "/work/done", "/checkin", "/lift/set"]) &&
       kinds.every((k) => MOBILE_ENDPOINTS.some((e) => e.method === "POST" && e.path === k)) &&
       MOBILE_ENDPOINTS.some((e) => e.method === "POST" && e.path === "/review/answer") && !kinds.includes("/review/answer") &&
       !/sendQueue|QueuedWrite/.test(read("android/app/src/main/java/com/xtnl/app/ui/review/ReviewViewModel.kt")),
@@ -3652,6 +4416,47 @@ function wiring() {
   );
   check("Android: versionCode 30 (2.18) or later for the widget, the tile and the offline queue", Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 30);
   check("Android: versionCode 31 (2.19) or later for the P8 review (the board's day on a tick, the cache followed after a tick, the queue's lines alone wait on /check)", Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 31 && Number(/versionName "2\.(\d+)"/.exec(gradle)?.[1] ?? 0) >= 19);
+  // Health phase 2 (the Android stage): demo data answers every new route, as the server does, and the app's queue
+  // replays a check-in and a set with their own instant; nothing on the phone shows a check-in's value off its sheet.
+  const demoApi = read("android/app/src/main/java/com/xtnl/app/data/DemoApi.kt");
+  const checkinLine = read("android/app/src/main/java/com/xtnl/app/core/CheckinLine.kt");
+  const widgetRows = read("android/app/src/main/java/com/xtnl/app/core/WidgetRows.kt");
+  check(
+    "DemoApi (health phase 2): answers POST /checkin, /checkin/undo and /lift/set, and sends /check's checkin (counts only) and lift",
+    /override suspend fun checkin\(body: CheckinBody, clientId: String\): Outcome<CheckinResult>/.test(demoApi) &&
+      /override suspend fun checkinUndo\(id: String, clientId: String\): Outcome<CheckinUndoResult>/.test(demoApi) &&
+      /override suspend fun liftSet\(body: LiftSetBody, clientId: String\): Outcome<LiftSetResult>/.test(demoApi) &&
+      /checkin = CheckinState\(\s*live = true, lastAt = checks\.maxByOrNull \{ it\.at \}\?\.at\?\.toString\(\),\s*todayCount = /.test(demoApi) &&
+      /lift = liftNow\(\),/.test(demoApi) &&
+      /"That check-in is more than a week old\."/.test(demoApi) && /"Check-in taken back\."/.test(demoApi) && /"Already deleted\."/.test(demoApi) &&
+      /"That lift is no longer here\."/.test(demoApi) && /"That movement is no longer in this lift\."/.test(demoApi)
+  );
+  check(
+    "Android (health phase 2): a queued check-in replays its own `at` and a set its own `doneAt` (the first try's body), and the app's /check model holds only the check-in's counts",
+    /SendLine\.Kind\.CHECKIN -> api\.checkin\(item\.checkinBody\(\), item\.clientId\)/.test(queue) &&
+      /SendLine\.Kind\.SET -> api\.liftSet\(item\.setBody\(\), item\.clientId\)/.test(queue) &&
+      /data class CheckinState\(val live: Boolean = false, val lastAt: String\? = null, val todayCount: Int = 0, val paused: Boolean = false\)/.test(models) &&
+      /Kind\.CHECKIN -> if \(d != null && d\.isBefore\(s\.minusDays\(CheckinLine\.MAX_AGE_DAYS\)\)\)/.test(sendLine)
+  );
+  check(
+    "Android (health phase 2, D2): the receipt's words stay off the cover screen, the widget's Check in button says nothing more, the sheet's Lifeline line dials (never calls)",
+    /fun receipt\(line: String, words: String\?, cover: Boolean\): String =\s*if \(cover \|\| words\.isNullOrBlank\(\)\) line else "\$line · \$words"/.test(checkinLine) &&
+      /const val CHECKIN = "Check in"/.test(widgetRows) && /const val CHECKIN_PATH = "\/checkin\?via=widget"/.test(widgetRows) &&
+      /Intent\(Intent\.ACTION_DIAL, Uri\.parse\(CheckinLine\.LIFELINE_TEL\)\)/.test(read("android/app/src/main/java/com/xtnl/app/ui/check/CheckinSheet.kt")) &&
+      !/CALL_PHONE/.test(read("android/app/src/main/AndroidManifest.xml"))
+  );
+  check(
+    "Android (health phase 2 review): the receipt's words are picked as the snackbar draws, by the display's short side (the cover sideways is the cover), and demo data rests as restAfterOf does (none before a drop, 20 s before a rest-pause)",
+    /if \(e\.undoMs > 0\) snacks\.show\(receipt, "Undo", forMs = e\.undoMs, coverMessage = e\.line\)/.test(screen) &&
+      /val onCover = Layouts\.onCover\(LocalConfiguration\.current\.smallestScreenWidthDp\)/.test(read("android/app/src/main/java/com/xtnl/app/ui/Snacks.kt")) &&
+      /after\.next\?\.entryId == m\.entryId && after\.next\.kind == "DROP" -> 0/.test(demoApi) && /after\.next\?\.entryId == m\.entryId && after\.next\.kind == "MINI" -> 20/.test(demoApi)
+  );
+  // Health phase 2: the check-in on the Check screen, the cover widget, the tile and the shortcut; SET in the queue.
+  check(
+    "Android: versionCode 32 (2.20) or later for the check-in and the set (health phase 2: CHECKIN and SET in the queue, /check's checkin and lift)",
+    Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 32 && Number(/versionName "2\.(\d+)"/.exec(gradle)?.[1] ?? 0) >= 20,
+    `${/versionCode (\d+)\b/.exec(gradle)?.[1]} / ${/versionName "([^"]+)"/.exec(gradle)?.[1]}`
+  );
 }
 
 // ═══ 4. The doc and the package ══════════════════════════════════════════
@@ -3954,6 +4759,49 @@ function docs() {
       /the line is refused with the reason \(409\)/.test(doc) &&
       /It is null too for a line that ticked the row it names/.test(doc)
   );
+
+  // Health phase 2 (D1, D2, D9, D12): the check-in's and the set's contract, and the privacy rules the app leans on.
+  {
+    const flat = doc.replace(/\s+/g, " ");
+    check("the check-in's and the set's request fields are in the doc", [...CHECKIN_KEYS, ...LIFT_SET_KEYS, "id"].every((k) => doc.includes(`"${k}"`) || doc.includes(`\`${k}\``)));
+    check(
+      "the doc says the queue's five kinds (TICK, LOG, WORK_DONE, CHECKIN, SET) and that a check-in and a set carry their own instant",
+      /Only `POST \/tasks\/complete`, `POST \/log`, `POST \/work\/done`, `POST \/checkin` and `POST \/lift\/set` ever wait \(the queue's kinds TICK, LOG, WORK_DONE, CHECKIN and SET\); a review answer never does\./.test(flat) &&
+        /A check-in carries its own instant `at` and a set its own `doneAt`, each fixed at the tap/.test(flat)
+    );
+    check(
+      "the doc's privacy rules: values only in POST /checkin's body, never in a URL or query, /check (counts only), the widget, the tile, a notification, the lock screen, a push payload, a log line or Gemini",
+      /a check-in's values \(its valence, energy, stress, word and tags\) travel only in `POST \/checkin`'s body/.test(flat) &&
+        /They are never in a URL or a query string, in `\/check` \(its `checkin` block is a switch and counts\), on the cover widget, the tile, a notification or the lock screen, in a push payload or a log line, and never reach Gemini\./.test(flat) &&
+        /\*\*It carries no value\*\*: never a valence, an energy, a stress level, a word or a tag, because a cached `\/check` can move between phones/.test(flat)
+    );
+    check(
+      "the doc's receipt: the line is the time alone and safe on any surface; the words are for the main screen's sheet only; Lifeline 13 11 14 as a tap-to-call with no permission; the same haptic for every value",
+      /`line` is the receipt's frame with the time alone \("Logged 14:12", as Today's strip says it\), \*\*safe on any surface\*\*/.test(flat) &&
+        /for the main screen's sheet only/.test(flat) && /never on the cover, the tile, a notification or the lock screen/.test(flat) &&
+        /"Need to talk\? Lifeline 13 11 14" as a tap-to-call that opens the dialer with the number filled in \(the user presses call; the app asks for no permission\)/.test(flat) &&
+        /the same neutral haptic \(`Scores\.checkIn`\) for every value/.test(flat)
+    );
+    check(
+      "the doc's set: its clientId required, `ord` left out (the movement's next place), kilograms only, and the Big jump answered on the web (the set stands as a record; Keep, Confirm and Fix are the web's)",
+      /`clientId` \(\*\*required\*\*, a UUID: the set's key\)/.test(flat) && /the app leaves it out/.test(flat) && /`weightKg` \(kilograms, as stored: never the unit shown/.test(flat) &&
+        /\*\*The set is saved as logged, as a record\*\*: no column holds an answer/.test(flat) && /The web's Finish summary asks again \(Keep, or Confirm for more than twice the best\)/.test(flat) && flat.includes(LIFT_JUMP_NOTE)
+    );
+    check(
+      "the doc's /check: `checkin` always sent (live, paused, todayCount, lastAt), `lift` present only while a lift is open, its next set by the web logger's own prefill",
+      /`checkin` \(health phase 2; decisions D1, D2, D9\): the 5-second check-in's switch and counts, always sent\./.test(flat) &&
+        /`lift` \(health phase 2; decisions D12, D14 to D19\): the open lift and the set to do next, present only while a lift is open/.test(flat) &&
+        /`next`: the set to do next, by the web logger's own prefill/.test(flat)
+    );
+    check(
+      "the doc names only the surfaces built: Set done from Check's lift card (a widget row and a notification later), only Check's row says the time, the widget and the tile say just \"Check in\", the rest before a drop or rest-pause is the web's",
+      /"Set done" from the phone \(the Check screen's lift card; a cover-widget row and an ongoing notification are a later phase\)/.test(flat) &&
+        /because Check's lift card draws from the app's cached `\/check`/.test(flat) &&
+        /Only Check's row says when the last one was \("Checked in 14:32"\), and only for today's life day; the cover widget and the tile show no time, no count and no value, just "Check in"/.test(flat) &&
+        /0, none, when the lift's next set is this set's own drop \(the same movement, the very next place\), 20 s before its rest-pause/.test(flat) &&
+        !/the cover widget's "Next" row|cover widget and an ongoing notification draw from|The widget, the tile and a notification may say when the last one was/.test(flat)
+    );
+  }
 
   section("the package");
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
