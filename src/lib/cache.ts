@@ -68,7 +68,12 @@ export type CacheTag =
    * follow-ups' facts (crm-server loadFollowUpFacts). Customer, log, scheduled task and collection writes clear it.
    * Not the shell's.
    */
-  | "work";
+  | "work"
+  /**
+   * Places, the location check-in (LocationCheckin, LocationPhoto; src/lib/places-server.ts): the list and each visit's
+   * page. Every save, edit, delete and photo upload clears it. Not the shell's: nothing in the shell reads a visit.
+   */
+  | "places";
 
 /**
  * Every tag the shell's read depends on (shell-data.ts). Not 'words': word
@@ -76,7 +81,8 @@ export type CacheTag =
  * reads them, so the shell does not rebuild for them. Not 'work' either: the
  * work tabs' search index is read by the work frame, never by the shell. Nor
  * 'training': the lift logger's sets feed nothing the shell reads (a lift's
- * start and Finish clear 'exercise', which is the shell's).
+ * start and Finish clear 'exercise', which is the shell's). Nor 'places': a
+ * visit feeds nothing the shell reads (Places has no count on its tab).
  */
 export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight", "roadmap", "exercise", "mind"];
 

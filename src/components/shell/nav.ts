@@ -1,11 +1,11 @@
 /**
- * FROZEN CONTRACT — the information architecture: Ideas · Tasks · + · Body,
- * and the game layer and Settings behind the profile button (the crest).
+ * FROZEN CONTRACT — the information architecture: Ideas · Tasks · + · Body ·
+ * Places, and the game layer and Settings behind the profile button (the crest).
  * Pure (the checks import it).
  *
- *   SECTIONS                 the three sections, their sub-pages, and the paths they own
+ *   SECTIONS                 the four sections, their sub-pages, and the paths they own
  *   PROFILE                  the profile menu: Character, Skills, Emblems, Loadout, Mall, Moments, Stats, Settings
- *   sectionOf(pathname)      "ideas" | "tasks" | "body" | null (null on a profile page)
+ *   sectionOf(pathname)      "ideas" | "tasks" | "body" | "places" | null (null on a profile page)
  *   isProfilePath(pathname)  a profile page: no tab is current, the profile button is
  *   groupOf(pathname)        the section or PROFILE a path sits in, or null
  *   activeSub(pathname)      the sub-page href that is current (longest match), in either
@@ -38,6 +38,13 @@
  * Mall (blueprint P18, decision D30; a compatible addition): the row after
  * Loadout, /you/mall (MALL_PATH), lists the rewards the user prices in
  * credits. Only what the user lists is priced; #play stays free.
+ *
+ * Places (the user's request of 2026-11-01, "a completely different tab"; a
+ * compatible addition): the fourth section, after Body, /places (Visits: every
+ * check-in, newest first, a place visited again grouped) and /places/new (Check
+ * in: photos, four star ratings, a short summary). A visit (/places/<id>) and
+ * its edit (/places/<id>/edit) light Visits. A record, never a reward: no count
+ * on its tab, and the '+' on it captures a task, as off every other section.
  */
 import type { IconName } from "@/components/ui/Icon";
 import type { CaptureMode } from "@/components/capture/events";
@@ -46,7 +53,7 @@ import { customersPathOf } from "../../lib/customers";
 import { ordersPathOf } from "../../lib/work-orders";
 import { dealsPathOf } from "../../lib/deals";
 
-export type SectionId = "ideas" | "tasks" | "body";
+export type SectionId = "ideas" | "tasks" | "body" | "places";
 /** A section, or the profile menu ("you"). */
 export type NavGroupId = SectionId | "you";
 
@@ -111,6 +118,18 @@ export const SECTIONS: readonly Section[] = [
       { href: "/train/exercise", label: "Exercise" },
       // The check-in's home (health-2026-10-27.md D23: "This week, Exercise, Mind"; a compatible addition).
       { href: "/train/mind", label: "Mind" },
+    ],
+  },
+  {
+    // Places (2026-11-01): the location check-in, its own section (src/lib/places.ts).
+    id: "places",
+    label: "Places",
+    href: "/places",
+    icon: "pin",
+    prefixes: ["/places"],
+    subs: [
+      { href: "/places", label: "Visits" },
+      { href: "/places/new", label: "Check in" },
     ],
   },
 ];
@@ -296,6 +315,8 @@ export const DEV_STYLE_PAGES: readonly SubPage[] = [
   // ui-motion.md §9.1–§9.2 (M0a, M0b): the glyph gallery and the shader slots.
   { href: "/dev/style/glyphs", label: "Glyphs" },
   { href: "/dev/style/fx", label: "Shader" },
+  // Places (2026-11-01): the list, the form, a visit and the not-ready line on fixtures.
+  { href: "/dev/style/places", label: "Places fixtures" },
 ];
 
 /**
@@ -336,6 +357,9 @@ export function titleFor(pathname: string | null | undefined, dayKey?: string): 
   if (work === "tasks") return { eyebrow: "Work", title: "Tasks" };
   if (work === "agenda") return { eyebrow: "Work", title: "Agenda" };
   if (under(path, WORK_BOARD_PATH)) return { eyebrow: "Work", title: "Agenda" };
+  // A visit (/places/<id>) and its edit: the place's name is data (the page's own heading), so 'Places · Visit'.
+  const visit = /^\/places\/([^/]+)(\/edit)?\/?$/.exec(path);
+  if (visit && visit[1] !== "new" && visit[1] !== "photo") return { eyebrow: "Places", title: visit[2] ? "Edit visit" : "Visit" };
   const id = groupOf(path);
   if (!id) return { eyebrow: null, title: "XTNL" };
   const group = sectionById(id);

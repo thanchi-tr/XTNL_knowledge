@@ -70,8 +70,8 @@ export interface StepContext {
   dutyLive?: boolean;
 }
 
-/** The welcome: the three sections and the one character. */
-export const WELCOME_COPY = "Ideas, Tasks and Body: three sections, and one character that grows from all of them. Here is the short version.";
+/** The welcome: the four sections (Places since 2026-11-01, a record that grows nothing) and the one character. */
+export const WELCOME_COPY = "Ideas, Tasks and Body grow one character. Places keeps the spots you check in at. Here is the short version.";
 /** The '+' fits the section it is pressed in (nav.ts captureModeOf); the line's chips show what it read. */
 export const CAPTURE_COPY = "The + fits the section: an idea, a task or a weigh-in. Type ‘pay rent fri 30m !’ and chips show what it read. Plain rules, no AI guessing.";
 /** Ideas: reviews, and the sub-pages beside them. */

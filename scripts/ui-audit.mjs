@@ -160,6 +160,10 @@ const REAL_ROUTES = [
   "/train",
   // Body › Mind (health-2026-10-27.md phase 1): its render only reads (loadMindView, or countChecks while the switch is off).
   "/train/mind",
+  // Places (2026-11-01): Visits and Check in only read (loadPlacesView); a visit's page needs a real id, so its states
+  // are audited on /dev/style/places.
+  "/places",
+  "/places/new",
 ];
 /**
  * /dev/style/roadmap?state=… (roadmap F23): R5's FIXTURE_STATES, read from
@@ -211,6 +215,27 @@ const FIXTURE_ROUTES = [
   "/dev/style/train",
   // The check-in sheet opened on load (blank, and already picked), so its targets, overlaps and 12 px floor are measured.
   ...["mind-sheet", "mind-sheet-picked"].map((s) => `/dev/style/train?state=${s}`),
+  // Places (2026-11-01): every state together, then each alone (src/components/places/fixtures.ts PLACES_FIXTURE_STATES).
+  "/dev/style/places",
+  ...[
+    "list-empty",
+    "list-grouped",
+    "list-group-open",
+    "list-no-match",
+    "list-not-ready",
+    "list-failed",
+    "form-empty",
+    "form-filled",
+    "form-not-ready",
+    "form-photo-states",
+    "form-unsent",
+    "form-location-off",
+    "visit-four-photos",
+    "visit-two-ratings",
+    "visit-delete-armed",
+    "visit-not-ready",
+    "visit-gone",
+  ].map((s) => `/dev/style/places?state=${s}`),
   ...ROADMAP_FIXTURE_STATES.map((s) => `/dev/style/roadmap?state=${s}`),
   // ui-motion (§9.1): the glyph gallery and the shader slots (the WAIT weave running).
   "/dev/style/glyphs",

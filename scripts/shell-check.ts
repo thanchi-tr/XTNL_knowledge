@@ -8,11 +8,11 @@
  * runtime is reached (import() only), /today and /review never reaching a
  * shader slot or the runtime, and no 3D library. No DB, no browser.
  *
- * The three sections (Ideas · Tasks · Body): the nav model, the profile menu
+ * The four sections (Ideas · Tasks · Body · Places, Places since 2026-11-01): the nav model, the profile menu
  * (Character, Skills, Emblems, Loadout, Mall, Moments, Stats, Settings, out of
  * the tabs; /skills labelled Emblems since blueprint P2, D6; /you/skills, the
  * real skills, since P5; /you/mall, the rewards priced in credits, since P18),
- * the '+' that starts the section's mode, and the chrome's source (three
+ * the '+' that starts the section's mode, and the chrome's source (four
  * tabs and the +, the profile buttons, the menu sheet, chrome.css).
  *
  * Run: npx tsx scripts/shell-check.ts
@@ -111,12 +111,34 @@ function checkPending(name: string, problems: string[], pending: Record<string, 
 }
 const eq = (name: string, got: unknown, want: unknown) => check(name, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 
-// ── nav: Ideas · Tasks · + · Body, and the profile menu out of the tabs ────
-eq("nav: exactly three sections, in order: Ideas, Tasks, Body", SECTIONS.map((s) => [s.id, s.label, s.href]), [
+// ── nav: Ideas · Tasks · + · Body · Places, and the profile menu out of the tabs ────
+// Re-pinned on purpose for Places (the user's request of 2026-11-01, "a completely different tab (outside of idea, body,
+// task)"): a fourth section after Body, /places, with the pin icon.
+eq("nav: exactly four sections, in order: Ideas, Tasks, Body, Places", SECTIONS.map((s) => [s.id, s.label, s.href]), [
   ["ideas", "Ideas", "/review"],
   ["tasks", "Tasks", "/today"],
   ["body", "Body", "/train"],
+  ["places", "Places", "/places"],
 ]);
+eq("nav: Places' sub-pages: Visits (/places), Check in (/places/new); its icon the kit's pin", [sectionById("places").icon, sectionById("places").subs.map((s) => [s.label, s.href, s.also ?? []])], [
+  "pin",
+  [
+    ["Visits", "/places", []],
+    ["Check in", "/places/new", []],
+  ],
+]);
+eq(
+  "nav: /places, /places/new, a visit and its edit are Places; a visit and its edit light Visits; /placesx is nothing",
+  ["/places", "/places/new", "/places/ck123", "/places/ck123/edit", "/placesx"].map((p) => [sectionOf(p), activeSub(p)]),
+  [["places", "/places"], ["places", "/places/new"], ["places", "/places"], ["places", "/places"], [null, null]]
+);
+eq("nav: the Places titles from the path (no ShellTitle swap): Visits, Check in, Visit, Edit visit", ["/places", "/places/new", "/places/ck123", "/places/ck123/edit"].map((p) => titleFor(p)), [
+  { eyebrow: "Places", title: "Visits" },
+  { eyebrow: "Places", title: "Check in" },
+  { eyebrow: "Places", title: "Visit" },
+  { eyebrow: "Places", title: "Edit visit" },
+]);
+eq("nav: the Places fixtures page is in the dev strip, titled from the path", [DEV_STYLE_PAGES.find((p) => p.href === "/dev/style/places")?.label ?? null, titleFor("/dev/style/places").title], ["Places fixtures", "Places fixtures"]);
 eq("nav: Ideas' sub-pages: Review, Library, New idea, Roadmap, Fields & Domains", sectionById("ideas").subs.map((s) => [s.label, s.href, s.also ?? []]), [
   ["Review", "/review", ["/workspace"]],
   ["Library", "/library", []],
@@ -281,9 +303,9 @@ check(
 // ── the '+' adapts: the section's capture mode ─────────────────────────────
 {
   eq(
-    "capture mode: Ideas starts an idea, Body a weigh-in, Tasks, the profile and anything else a task",
-    ["/review", "/library/abc", "/add", "/you/roadmap", "/structure", "/today", "/today/week", "/train", "/train/exercise", "/you", "/settings", "/dev/style", "/nowhere"].map(captureModeOf),
-    ["idea", "idea", "idea", "idea", "idea", "task", "task", "body", "body", "task", "task", "task", "task"]
+    "capture mode: Ideas starts an idea, Body a weigh-in, Tasks, Places, the profile and anything else a task",
+    ["/review", "/library/abc", "/add", "/you/roadmap", "/structure", "/today", "/today/week", "/train", "/train/exercise", "/places", "/places/new", "/you", "/settings", "/dev/style", "/nowhere"].map(captureModeOf),
+    ["idea", "idea", "idea", "idea", "idea", "task", "task", "body", "body", "task", "task", "task", "task", "task", "task"]
   );
   eq("capture mode: no path is a task", [captureModeOf(null), captureModeOf(undefined)], ["task", "task"]);
   eq("capture mode: each mode starts the line with its own grammar (task: empty, idea: 'idea: ', body: 'weight ')", CAPTURE_MODE_START, { task: null, idea: "idea: ", body: "weight " });
@@ -374,16 +396,17 @@ check(
     check("phone strip: the section strip keeps the page's 16 px gutter and leaves from 600 (the top bar carries the tabs there)", /padding:\s*2px 16px/.test(body("nav.sec-tabs")) && /display:\s*none/.test(body("nav.sec-tabs", /min-width:\s*600px/)));
     check("phone strip: the profile strip leaves from 600 too (you.css)", youCss.some((r) => r.at.some((a) => /min-width:\s*600px/.test(a)) && /\.you-tabs/.test(r.selector) && /display:\s*none/.test(r.body)));
   }
-  // Re-pinned for the check-in (D23): Body's strip has three tabs (This week, Exercise, Mind).
+  // Re-pinned for the check-in (D23): Body's strip has three tabs (This week, Exercise, Mind). Re-pinned for Places
+  // (2026-11-01): its strip has two (Visits, Check in), so it shows.
   eq(
-    "phone strip: each section's tabs, from nav.ts (Ideas 5, Tasks 4, Body 3; all over one page, so all shown)",
+    "phone strip: each section's tabs, from nav.ts (Ideas 5, Tasks 4, Body 3, Places 2; all over one page, so all shown)",
     SECTIONS.map((x) => [x.id, x.subs.length]),
-    [["ideas", 5], ["tasks", 4], ["body", 3]]
+    [["ideas", 5], ["tasks", 4], ["body", 3], ["places", 2]]
   );
   check(`tabs at 344: the Ideas strip (${widthAt(sectionById("ideas").subs.map((x) => x.label))} px at least) scrolls, so its cue matters`, widthAt(sectionById("ideas").subs.map((x) => x.label)) > 312);
 }
 
-// ── the chrome's source: three tabs and the +, the profile buttons and menu ─
+// ── the chrome's source: four tabs and the +, the profile buttons and menu ─
 {
   const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
   const chrome = code(read("src/components/shell/Chrome.tsx"));
@@ -396,14 +419,16 @@ check(
   const tabBar = fn(chrome, "TabBar");
   const rail = fn(chrome, "Rail");
   const sidebar = fn(chrome, "Sidebar");
+  // Re-pinned for Places (2026-11-01): five cells, the + in the middle (Ideas · Tasks · + · Body · Places).
   check(
-    "tab bar: Ideas · Tasks · + · Body, and nothing else (no You tab)",
-    /\{tab\(ideas\)\}\s*\{tab\(tasks\)\}\s*<button type="button" className="tab tab-plus"[\s\S]*?<\/button>\s*\{tab\(body\)\}\s*<\/nav>/.test(tabBar) && /const \[ideas, tasks, body\] = SECTIONS;/.test(tabBar) && !/href=\{you|href="\/you"|<Crest/.test(tabBar),
+    "tab bar: Ideas · Tasks · + · Body · Places, and nothing else (no You tab)",
+    /\{tab\(ideas\)\}\s*\{tab\(tasks\)\}\s*<button type="button" className="tab tab-plus"[\s\S]*?<\/button>\s*\{tab\(body\)\}\s*\{tab\(places\)\}\s*<\/nav>/.test(tabBar) && /const \[ideas, tasks, body, places\] = SECTIONS;/.test(tabBar) && !/href=\{you|href="\/you"|<Crest/.test(tabBar),
     tabBar.slice(0, 120)
   );
-  check("rail: Capture, the three sections, then the profile button (the crest, 'You')", /className="r-plus"[\s\S]*SECTIONS\.map[\s\S]*rail-grow[\s\S]*<button type="button" className="r-you" aria-label=\{crestLabel\(data\?\.character\)\} \{\.\.\.profile\}>\s*<Crest[^>]*size=\{34\}[^>]*\/>\s*You\s*<\/button>/.test(rail));
+  check("badges: Places has no count on its tab (a record: countFor answers 0 for it)", /if \(id === "body"\) return data\.badges\.train;\s*\/\/[^\n]*\n\s*return 0;/.test(read("src/components/shell/Chrome.tsx")));
+  check("rail: Capture, the four sections, then the profile button (the crest, 'You')", /className="r-plus"[\s\S]*SECTIONS\.map[\s\S]*rail-grow[\s\S]*<button type="button" className="r-you" aria-label=\{crestLabel\(data\?\.character\)\} \{\.\.\.profile\}>\s*<Crest[^>]*size=\{34\}[^>]*\/>\s*You\s*<\/button>/.test(rail));
   check(
-    "sidebar: the character card is the profile button (its button covers the card; the meter stays outside it), then Capture, then the three sections",
+    "sidebar: the character card is the profile button (its button covers the card; the meter stays outside it), then Capture, then the four sections",
     /<div className="sb-char">[\s\S]*?<button type="button" className="sb-me" aria-label=\{crestLabel\(c\)\} \{\.\.\.profile\}>[\s\S]*?<\/button>[\s\S]*?<Meter [\s\S]*?className="btn btn-primary btn-block sb-capture"[\s\S]*SECTIONS\.map/.test(sidebar) && !/<Link className="sb-char"/.test(sidebar)
   );
   check("sidebar: the owed pill sits on Tasks", /const owed = s\.id === "tasks" \? data\?\.owed\.count \?\? 0 : 0;/.test(sidebar));
@@ -444,9 +469,27 @@ check(
 
   const css = cssRules(read("src/components/shell/chrome.css"));
   const rule = (sel: string) => css.find((r) => r.selector.replace(/\s+/g, " ").trim() === sel)?.body ?? "";
-  check("chrome.css: the tab bar lays out four cells, outranking components.css's .tabbar", /grid-template-columns:\s*repeat\(4, 1fr\)/.test(rule("nav.tabbar")));
+  check("chrome.css: the tab bar lays out five cells (four tabs and the +), outranking components.css's .tabbar", /grid-template-columns:\s*repeat\(5, 1fr\)/.test(rule("nav.tabbar")));
   check("chrome.css: the crest is a bare button; current on a profile page", /border:\s*0/.test(rule("button.crest-btn")) && /background:\s*var\(--raised\)/.test(rule('button.crest-btn[aria-current="true"]')));
   check("chrome.css: the rail's profile button shows current", /background:\s*var\(--raised\)/.test(rule('.rail button.r-you[aria-current="true"]')));
+  {
+    // Re-pinned for Places (2026-11-01) on purpose: a fourth section pushed You (the profile menu) below a short
+    // landscape phone's screen (the Fold's cover screen leaves about 350 px under Chrome's bars), so the rail scrolls
+    // rather than hide it, and under 440 px tall it closes up to fit.
+    const plain = (sel: string) => css.filter((r) => r.selector.replace(/\s+/g, " ").trim() === sel && !r.at.some((a) => /^@media/.test(a))).map((r) => r.body).join(";");
+    const short = (sel: string) => css.filter((r) => r.selector.replace(/\s+/g, " ").trim() === sel && r.at.some((a) => /min-width:\s*600px/.test(a) && /max-height:\s*440px/.test(a))).map((r) => r.body).join(";");
+    check("chrome.css: the rail never hides You: taller than its screen, it scrolls (overflow-y auto, contained, no bar drawn)", /overflow-y:\s*auto/.test(plain("nav.rail")) && /overscroll-behavior:\s*contain/.test(plain("nav.rail")) && /scrollbar-width:\s*none/.test(plain("nav.rail")));
+    const pxOf = (body: string, prop: string) => Number(new RegExp(`(?:^|;|\\s)${prop}\\s*:\\s*([\\d.]+)px`).exec(body)?.[1] ?? 0);
+    const itemMin = pxOf(short("nav.rail a, nav.rail button"), "min-height");
+    const pad = /padding:\s*(\d+)px 0 (\d+)px/.exec(short("nav.rail"));
+    const plusMargin = pxOf(short("nav.rail .r-plus"), "margin-bottom");
+    check("chrome.css: a rail under 440 px tall closes up (no gaps, short ends, 48 px items: at least 44 px targets)", /gap:\s*0/.test(short("nav.rail")) && !!pad && itemMin >= 44 && /margin-bottom:\s*\d+px/.test(short("nav.rail .r-plus")));
+    // Capture: its 48 px tile, the 4 px gap and a 14 px label; You: the 34 px crest, the gap and its label.
+    const capture = Math.max(itemMin, 48 + 4 + 14);
+    const you = Math.max(itemMin, 34 + 4 + 14);
+    const height = Number(pad?.[1] ?? 99) + capture + plusMargin + SECTIONS.length * itemMin + you + Number(pad?.[2] ?? 99);
+    check(`chrome.css: the short rail's ${SECTIONS.length} sections, Capture and You fit 340 px (${height} px)`, height <= 340);
+  }
   check("chrome.css: the sidebar card's button covers the card and keeps a visible focus ring", /position:\s*absolute/.test(rule(".sb-me::after")) && /inset:\s*0/.test(rule(".sb-me::after")) && /outline:\s*2px solid var\(--focus\)/.test(rule(".sb-me:focus-visible::after")) && /position:\s*relative/.test(rule(".sidebar .sb-char")));
   const row = rule(".pm-row");
   const px = (body: string, prop: string) => Number(new RegExp(`(?:^|;|\\s)${prop}\\s*:\\s*([\\d.]+)px`).exec(body)?.[1] ?? 0);

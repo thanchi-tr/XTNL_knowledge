@@ -1,0 +1,144 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   PLACES — the location check-in (src/components/places): the list (Visits), the form (Check in, Edit) and a visit's
+   page. Imported by the pages that draw them (src/app/places/**, /dev/style/places), never by a component, so the
+   checks can render the components. Namespaced pl- (a global sheet is never removed on navigation, and no name may be
+   a Tailwind utility). Built on the kit: .card .pad .sunk .btn .chip .t-*.
+   Floors: 12 px text, 44 px targets (every star, every Not rated, every Remove, every row), 16 px inputs at every width.
+   Tokens only (no new colour): the stars are ink, filled or drawn; a rating's hue never says anything. Nothing here
+   animates, and nothing moves layout in a transition. Laid out at 344 first (312 px of content).
+   ===================================================================== */
+@layer components {
+  .pl-page { display: flex; flex-direction: column; gap: 16px; padding-top: 12px; }
+  .pl-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .pl-head h1 { margin: 0; }
+  .pl-note { margin: 0; }
+
+  /* ---------- inputs: 16 px at every width (the phone never zooms) ---------- */
+  .pl-input {
+    display: block; width: 100%; min-width: 0; min-height: 44px; border-radius: var(--r-ctl);
+    border: 1px solid var(--line-ctl); background: var(--sunken);
+    padding: 10px 14px; font: 500 16px/1.4 var(--font-ui); color: var(--ink-0);
+  }
+  .pl-input::placeholder { color: var(--ink-2); }
+  .pl-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  textarea.pl-input { min-height: 104px; resize: vertical; }
+  .pl-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .pl-label { margin: 0; font: 600 13px/18px var(--font-ui); color: var(--ink-1); }
+  .pl-label .pl-opt { font-weight: 400; color: var(--ink-2); }
+  .pl-count { margin: 0; align-self: flex-end; font: 400 12px/16px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  /* ---------- the list ---------- */
+  .pl-search { position: relative; }
+  .pl-search svg.i { position: absolute; left: 12px; top: 12px; color: var(--ink-2); pointer-events: none; }
+  .pl-search .pl-input { padding-left: 40px; }
+  .pl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .pl-card { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: start; padding: 12px; min-height: 88px; }
+  a.pl-card:hover { background: var(--raised); }
+  a.pl-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .pl-thumb { width: 64px; height: 64px; border-radius: 12px; object-fit: cover; display: block; background: var(--sunken); border: 1px solid var(--line-2); }
+  .pl-thumb-none { display: grid; place-items: center; color: var(--ink-2); }
+  .pl-thumb-none svg.i { width: 24px; height: 24px; }
+  .pl-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .pl-name { margin: 0; font: 600 16px/21px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  /* A page's heading that is a place's name (a visit, its Edit): the base .t-display-m type, wrapped at 344. */
+  .pl-title { overflow-wrap: anywhere; }
+  .pl-meta { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
+  .pl-line { margin: 0; font: 400 14px/19px var(--font-ui); color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---------- stars, read only ---------- */
+  .pl-stars { display: inline-flex; align-items: center; gap: 1px; color: var(--ink-0); }
+  .pl-stars svg.i { width: 15px; height: 15px; stroke-width: 1.6; color: var(--ink-2); }
+  .pl-stars svg.i.pl-on { fill: currentColor; color: var(--ink-0); }
+  .pl-score { font: 600 13px/18px var(--font-ui); color: var(--ink-0); font-variant-numeric: tabular-nums; }
+  .pl-rated { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* ---------- a place visited again ---------- */
+  .pl-group { padding: 0; overflow: hidden; }
+  .pl-group > .pl-card { border-radius: 0; }
+  /* The group clips its card (overflow: hidden), so the card's ring is drawn inside it, its top corners the card's
+     inner rounding (r-card less the 1 px border), as the toggle's and the rows' rings are. */
+  .pl-group > a.pl-card:focus-visible { outline-offset: -2px; border-radius: calc(var(--r-card) - 1px) calc(var(--r-card) - 1px) 0 0; }
+  .pl-toggle {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; padding: 0 12px;
+    border: 0; border-top: 1px solid var(--line-1); background: transparent; color: var(--ink-1); font: 600 13px/18px var(--font-ui); text-align: left; cursor: pointer;
+  }
+  .pl-toggle:hover { background: var(--raised); color: var(--ink-0); }
+  .pl-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .pl-toggle svg.i { width: 18px; height: 18px; transform: rotate(90deg); }
+  .pl-toggle[aria-expanded="true"] svg.i { transform: rotate(-90deg); }
+  .pl-visits { list-style: none; margin: 0; padding: 0 0 6px; border-top: 1px solid var(--line-1); }
+  .pl-row { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-height: 52px; padding: 6px 12px; color: inherit; text-decoration: none; }
+  .pl-row:hover { background: var(--raised); }
+  .pl-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+  /* ---------- the form ---------- */
+  .pl-form { display: flex; flex-direction: column; gap: 18px; }
+  .pl-sec { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+  .pl-sec-h { margin: 0; font: 600 15px/20px var(--font-ui); color: var(--ink-0); }
+  .pl-loc { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .pl-loc .btn { min-height: 44px; }
+  /* The pin beside its coordinates (preflight makes the svg a block, so the line is a flex row and the text one span). */
+  .pl-loc-line { display: flex; align-items: center; gap: 6px; margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-1); overflow-wrap: anywhere; min-width: 0; }
+
+  /* A rating: one radio group of Not rated and five stars. The name and the chosen word on the first row, Not rated at
+     its end; the five 44 px stars on the second (220 px: they fit 344 inside a card). */
+  .pl-rates { display: flex; flex-direction: column; gap: 14px; }
+  .pl-rate { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head none" "stars stars"; align-items: center; gap: 2px 8px; }
+  .pl-rate-h { grid-area: head; margin: 0; min-width: 0; font: 600 14px/19px var(--font-ui); color: var(--ink-0); }
+  .pl-rate-h .pl-rate-w { font-weight: 400; color: var(--ink-2); }
+  .pl-rate-stars { grid-area: stars; display: flex; gap: 0; }
+  .pl-star { position: relative; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 10px; color: var(--ink-2); cursor: pointer; }
+  .pl-star svg.i { width: 28px; height: 28px; stroke-width: 1.6; }
+  .pl-star[data-on] { color: var(--ink-0); }
+  .pl-star[data-on] svg.i { fill: currentColor; }
+  .pl-star:hover { background: var(--raised); }
+  .pl-star:has(input:focus-visible), .pl-none:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .pl-none {
+    grid-area: none; position: relative; display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: var(--r-pill);
+    border: 1px solid var(--line-ctl); color: var(--ink-1); font: 600 13px/18px var(--font-ui); white-space: nowrap; cursor: pointer;
+  }
+  .pl-none:hover { background: var(--raised); }
+  .pl-none:has(input:checked) { background: var(--ink-0); color: var(--page); border-color: var(--ink-0); }
+  .pl-rate:has(input:disabled) .pl-star, .pl-rate:has(input:disabled) .pl-none { cursor: not-allowed; opacity: .6; }
+  .pl-overall { margin: 0; display: flex; align-items: center; gap: 8px; font: 600 14px/19px var(--font-ui); color: var(--ink-0); }
+
+  /* The photos: two a row on a phone, four from 600; each tile's Remove is a 44 px button on its corner. */
+  .pl-photos { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  @media (min-width: 600px) { .pl-photos { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .pl-tile { position: relative; aspect-ratio: 1 / 1; border-radius: 12px; overflow: hidden; background: var(--sunken); border: 1px solid var(--line-2); }
+  .pl-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* A tile's line sits at its foot, clear of the Remove on its corner (4 + 44 px above it); four lines fit the 4-up tiles from 600. */
+  .pl-tile-note { position: absolute; inset: 0; display: grid; place-items: end center; padding: 52px 8px 8px; text-align: center; font: 600 12px/16px var(--font-ui); color: var(--ink-1); }
+  .pl-tile .pl-remove {
+    position: absolute; top: 4px; right: 4px; width: 44px; height: 44px; border-radius: 12px;
+    background: var(--overlay); border: 1px solid var(--line-ctl); color: var(--ink-0);
+  }
+  .pl-adds { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pl-add { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border-radius: var(--r-ctl); border: 1px solid var(--line-ctl); color: var(--ink-0); font: 600 14px/19px var(--font-ui); cursor: pointer; }
+  .pl-add:hover { background: var(--raised); }
+  .pl-add:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .pl-add:has(input:disabled) { opacity: .45; cursor: not-allowed; }
+  .pl-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .pl-foot .btn { min-height: 48px; flex: 1 0 140px; }
+  .pl-errors { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+
+  /* ---------- a visit's page ---------- */
+  .pl-hero { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .pl-full { display: block; width: 100%; height: auto; border-radius: var(--r-card); background: var(--sunken); border: 1px solid var(--line-2); }
+  .pl-ratings { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; }
+  .pl-ratings dt, .pl-ratings dd { margin: 0; min-height: 40px; display: flex; align-items: center; border-top: 1px solid var(--line-1); }
+  .pl-ratings dt { font: 500 14px/19px var(--font-ui); color: var(--ink-1); }
+  .pl-ratings dd { justify-content: flex-end; gap: 8px; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
+  .pl-ratings dt:first-of-type, .pl-ratings dt:first-of-type + dd { border-top: 0; }
+  .pl-summary { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .pl-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pl-confirm { display: flex; flex-direction: column; gap: 10px; }
+  .pl-geo { display: inline-flex; align-items: center; min-height: 44px; color: var(--ink-1); text-decoration: underline; text-underline-offset: 3px; font: 500 13px/18px var(--font-ui); }
+  .pl-geo:hover { color: var(--ink-0); }
+  .pl-geo:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 6px; }
+
+  /* ---------- the fixtures page ---------- */
+  .pl-fx { display: flex; flex-direction: column; gap: 28px; }
+  .pl-fx-state { display: flex; flex-direction: column; gap: 8px; }
+}

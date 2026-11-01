@@ -2355,3 +2355,91 @@ model TaskSession {
   @@index([userId, templateId])
   @@schema("public")
 }
+
+// ── Places: the location check-in (migration 20270105000000_place_checkins; the user's request of 2026-11-01) ──
+// Its own section beside Ideas, Tasks and Body (src/components/shell/nav.ts). A record, never a reward: nothing in the
+// economy reads these tables, and no check-in (or any value it holds) pays XP, MP, a streak day, a quest, a side-quest
+// input, a Mall credit or a calibration input. No check-in is an ActivityEvent, so the 'life' reset never deletes one
+// (as it never deletes a weigh-in) and each one is deleted on its own, with its photos. src/lib/places.ts holds the
+// rules (the input, the place key, the overall, the grouping, the photo checks); src/lib/places-server.ts is their only
+// reader and writer, fail soft. Nothing reaches Gemini.
+
+/// One visit: the place as the user named it (placeName, 1..80) and that name folded (placeKey: case, spacing and
+/// accents; repeat visits share it), an optional address (1..160), an optional location (lat, lng and its accuracy in
+/// metres, only from a "Use my location" tap), when the user was there (visitedAt) and its life day (day), four ratings
+/// (service, food, premises, parking: each 1..5 stars or null, "Not rated"), and an optional plain-text summary
+/// (1..280). The overall is the mean of the given ratings to one decimal, derived on read and never stored. Keyed by
+/// clientId (a resend answers the row it wrote). A plain userId with no foreign key. Every timestamp is timestamptz.
+/// Not expressible in Prisma 6: CHECK "LocationCheckin_placeName_check" (1..80 characters), CHECK
+/// "LocationCheckin_placeKey_check" (1..160), CHECK "LocationCheckin_address_check" (null or 1..160), CHECK
+/// "LocationCheckin_lat_check" (null or -90..90), CHECK "LocationCheckin_lng_check" (null or -180..180), CHECK
+/// "LocationCheckin_accuracyM_check" (null or 0..100000), CHECK "LocationCheckin_location_check" (lat and lng both or
+/// neither; an accuracy only with them), CHECK "LocationCheckin_service_check", "LocationCheckin_food_check",
+/// "LocationCheckin_premises_check" and "LocationCheckin_parking_check" (each null or 1..5), CHECK
+/// "LocationCheckin_summary_check" (null or 1..280 characters) and CHECK "LocationCheckin_clientId_check" (1..64).
+model LocationCheckin {
+  id        String   @id @default(cuid())
+  userId    String
+  /// What the user called it (places.ts NAME_MAX).
+  placeName String
+  /// The name folded for grouping (places.ts placeKeyOf).
+  placeKey  String
+  address   String?
+  /// Where the user was: only from a "Use my location" tap; both or neither.
+  lat       Float?
+  lng       Float?
+  /// The reading's accuracy in whole metres; null without a location.
+  accuracyM Int?
+  visitedAt DateTime @db.Timestamptz(3)
+  /// The life day of visitedAt (src/lib/life-day.ts dayKeyOf).
+  day       DateTime @db.Date
+  /// 1..5 stars each; null is "Not rated".
+  service   Int?     @db.SmallInt
+  food      Int?     @db.SmallInt
+  premises  Int?     @db.SmallInt
+  parking   Int?     @db.SmallInt
+  /// Plain text, at most 280 characters (places.ts SUMMARY_MAX).
+  summary   String?
+  clientId  String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([userId, clientId])
+  /// The list's read: a user's visits, newest first.
+  @@index([userId, visitedAt])
+  /// A visit's other visits to the same place.
+  @@index([userId, placeKey])
+  @@schema("public")
+}
+
+/// One stored image of a visit: its place among the visit's four (ord 0..3) and its size (kind: 'full', long edge at
+/// most 1600 px and 1.5 MB; 'thumb', at most 480 px and 256 KB, what the list loads). Resized and re-encoded in the
+/// browser (its metadata, GPS included, left behind) and checked again on the server (places.ts photoOf). Served by
+/// GET /places/photo/<id> with an immutable cache: an id is never reused. A plain checkinId with no foreign key: a
+/// check-in's delete removes its photos in the same transaction.
+/// Not expressible in Prisma 6: CHECK "LocationPhoto_ord_check" (0..3), CHECK "LocationPhoto_kind_check" (full |
+/// thumb), CHECK "LocationPhoto_mime_check" (image/jpeg | image/webp), CHECK "LocationPhoto_width_check" and
+/// "LocationPhoto_height_check" (1..1600), CHECK "LocationPhoto_thumb_check" (a thumb at most 480 px each way), CHECK
+/// "LocationPhoto_sizeBytes_check" (1..1572864 and the length of bytes) and CHECK "LocationPhoto_thumbSize_check" (a
+/// thumb at most 262144 bytes).
+model LocationPhoto {
+  id        String   @id @default(cuid())
+  userId    String
+  checkinId String
+  /// Its place among the visit's photos, 0..3 (places.ts PHOTOS_MAX).
+  ord       Int      @db.SmallInt
+  /// full | thumb (places.ts PHOTO_KINDS).
+  kind      String
+  /// image/jpeg | image/webp (places.ts PHOTO_MIMES).
+  mime      String
+  width     Int      @db.SmallInt
+  height    Int      @db.SmallInt
+  bytes     Bytes
+  sizeBytes Int
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([checkinId, ord, kind])
+  /// The list's read: a user's thumbnails (their sizes and ids, never their bytes).
+  @@index([userId, kind])
+  @@schema("public")
+}

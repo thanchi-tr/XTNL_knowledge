@@ -2,13 +2,14 @@
 
 /**
  * The three chromes, chosen by viewport media query (components.css; chrome.css adds the
- * three-section tab bar and the profile buttons):
- *   <TabBar/>   < 600       Ideas · Tasks · [+ 52 px ink tile] · Body. 64 + safe area. The
- *                           profile button is the top bar's crest (TopBar.tsx).
- *   <Rail/>     600–1279    + Capture at the top, Ideas, Tasks, Body, then the crest (You,
- *                           the profile button) at the bottom; items 72×62.
+ * four-section tab bar and the profile buttons):
+ *   <TabBar/>   < 600       Ideas · Tasks · [+ 52 px ink tile] · Body · Places (five cells;
+ *                           Places since 2026-11-01). 64 + safe area. The profile button is
+ *                           the top bar's crest (TopBar.tsx).
+ *   <Rail/>     600–1279    + Capture at the top, Ideas, Tasks, Body, Places, then the crest
+ *                           (You, the profile button) at the bottom; items 72×62.
  *   <Sidebar/>  ≥ 1280      the character card (the profile button), Capture (kbd C; every
- *                           Capture answers c and Alt+N), the three sections with the open
+ *                           Capture answers c and Alt+N), the four sections with the open
  *                           one's sub-pages, an ink count per section and an owed pill for debt.
  *                           Tasks lists its work tabs after Board, then the '+' while a slot is free.
  * Counts are ink badges that render nothing at 0; only debt is owed-coloured. Every Capture
@@ -35,7 +36,9 @@ function countFor(id: SectionId, data: ShellData | null): number {
   if (!data) return 0;
   if (id === "ideas") return data.badges.study;
   if (id === "tasks") return data.badges.today;
-  return data.badges.train;
+  if (id === "body") return data.badges.train;
+  // Places is a record: no count on its tab.
+  return 0;
 }
 
 function badgeLabel(id: SectionId, n: number): string {
@@ -55,7 +58,7 @@ export function TabBar() {
   const data = useShell((s) => s.data);
   const capture = useCapture();
   const current = sectionOf(pathname);
-  const [ideas, tasks, body] = SECTIONS;
+  const [ideas, tasks, body, places] = SECTIONS;
   const tab = (s: Section) => {
     const n = countFor(s.id, data);
     return (
@@ -76,6 +79,7 @@ export function TabBar() {
         </span>
       </button>
       {tab(body)}
+      {tab(places)}
     </nav>
   );
 }

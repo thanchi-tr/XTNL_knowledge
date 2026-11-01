@@ -1180,7 +1180,14 @@ console.log("— migration");
   check("the migration is where the decisions name it (shipping order: mind_checks, then strength_sets)", SQL.length > 0 && read("docs/life-plan/health-2026-10-27.md").includes(`\`${MIGRATION}\` (phases 3–4)`));
   check("its name avoids the words other checks reserve (health, ingest, hc_, connect, audit, mobile, roadmap)", !/health|ingest|hc_|connect|audit|mobile|roadmap/i.test(MIGRATION));
   const newest = readdirSync(join(ROOT, "prisma/migrations")).filter((d) => /^\d{14}_/.test(d)).sort();
-  check("it is the newest migration, after mind_checks", newest[newest.length - 1] === MIGRATION && newest[newest.length - 2] === "20270103000000_mind_checks", newest.slice(-2).join(", "));
+  // Re-pinned on purpose for Places (2026-11-01): 20270105000000_place_checkins follows it (two new tables of its own;
+  // scripts/places-check.ts pins that it touches none of these), so this one is the migration right after mind_checks.
+  const at = newest.indexOf(MIGRATION);
+  check(
+    "it follows mind_checks directly, and only place_checkins (Places' own two tables) comes after it",
+    at > 0 && newest[at - 1] === "20270103000000_mind_checks" && JSON.stringify(newest.slice(at + 1)) === JSON.stringify(["20270105000000_place_checkins"]),
+    newest.slice(-3).join(", ")
+  );
   const header = SQL.split("\n").filter((l) => l.startsWith("--")).join("\n");
   check(
     "the header says what it adds, that it is additive only, the target ref (never XTNL_thesis), the apply commands, that the code tolerates its absence, and that a record pays nothing",
